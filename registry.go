@@ -186,6 +186,17 @@ func (r *Registry) hasLocked(ref string) bool {
 	return false
 }
 
+// Resources returns all resources stored in the registry across all namespaces.
+func (r *Registry) Resources() []Resource {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	res := make([]Resource, 0, len(r.resources))
+	for _, v := range r.resources {
+		res = append(res, v)
+	}
+	return res
+}
+
 // ─── Base Registry — Resolver (workspace-root scope) ─────────────────────────────
 
 // ResolveResource implements Resolver for the base Registry.

@@ -41,6 +41,8 @@ type Metadata struct {
 	Description string `yaml:"description"`
 	// DisplayName is an optional pretty-printed label for UIs.
 	DisplayName string `yaml:"displayName"`
+	// Labels are arbitrary key-value pairs for categorisation and filtering.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the Metadata.
@@ -77,6 +79,9 @@ func (b *BaseResource) GetKind() Kind { return b.Kind }
 
 // GetName implements Resource.
 func (b *BaseResource) GetName() string { return b.Metadata.Name }
+
+// GetMetadata implements Resource.
+func (b *BaseResource) GetMetadata() Metadata { return b.Metadata }
 
 // GetNamespace implements Resource.
 func (b *BaseResource) GetNamespace() string { return b.Namespace }

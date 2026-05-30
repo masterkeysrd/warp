@@ -20,6 +20,8 @@ type Resource interface {
 	// QualifiedName returns the "namespace/Kind/name" key that uniquely
 	// identifies this resource in the registry.
 	QualifiedName() string
+	// GetMetadata returns the resource's Metadata block.
+	GetMetadata() Metadata
 }
 
 // Standard namespace identifiers. These are reserved; plugins must not use them.

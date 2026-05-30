@@ -1,12 +1,24 @@
 # warp
 
-The `warp` package implements the **Warp Open Agent Specification** — a
+The `warp` package implements the **Workspace Agent Resource Protocol (WARP)** — a
 provider-agnostic, declarative format for defining AI agents and their
 supporting resources.
+
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 Warp is not tied to any particular LLM provider, orchestration framework, or
 runtime. Any tool that understands the format can load and execute the same
 resource files unchanged.
+
+## Getting Started
+
+To add `warp` to your Go project:
+
+```bash
+go get github.com/your-username/warp
+```
+
+(Replace `your-username` with the appropriate repository path once hosted.)
 
 ## File Format
 
@@ -92,7 +104,7 @@ by kind into three sub-directories:
 - **`Registry`** – holds parsed resources indexed by their FS-relative path.
   - `Agents`, `Skills`, `Commands` — typed maps.
   - `Validate() error` — checks required fields and resolves Agent cross-references.
-- **`Loader`** — walks an `fs.FS` and parses every `.md` file it finds.
+- **`Loader`** – walks an `fs.FS` and parses every `.md` file it finds.
   - `NewLoader(fsys fs.FS) *Loader`
   - `Load() (*Registry, error)`
 - **`Load(root string) (*Registry, error)`** — loads resources from the given
@@ -101,3 +113,11 @@ by kind into three sub-directories:
   `.agents` directory in the current working directory.
 - **`Parse(content string) (*ParseResult, error)`** — parses a single warp
   Markdown string and returns the typed resource.
+
+## Contributing
+
+We welcome contributions! Please see the `CONTRIBUTING.md` file (if available) or open an issue to discuss your proposed changes.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).

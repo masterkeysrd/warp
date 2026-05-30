@@ -16,15 +16,6 @@ func makeSkillResource(ns, name string) *Skill {
 	}}
 }
 
-func makeAgentResource(ns, name string) *Agent {
-	return &Agent{BaseResource: BaseResource{
-		APIVersion: "warp/v1alpha1",
-		Kind:       KindAgent,
-		Metadata:   Metadata{Name: name},
-		Namespace:  ns,
-	}}
-}
-
 func makeCommandResource(ns, name string) *Command {
 	return &Command{BaseResource: BaseResource{
 		APIVersion: "warp/v1alpha1",
@@ -254,7 +245,7 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 	gpIdx := strings.Index(merged.Spec.Instructions, "grandparent")
 	pIdx := strings.Index(merged.Spec.Instructions, "parent")
 	cIdx := strings.Index(merged.Spec.Instructions, "child")
-	if !(gpIdx < pIdx && pIdx < cIdx) {
+	if gpIdx >= pIdx || pIdx >= cIdx {
 		t.Errorf("unexpected instruction order: gp=%d p=%d c=%d in %q",
 			gpIdx, pIdx, cIdx, merged.Spec.Instructions)
 	}

@@ -49,15 +49,6 @@ var namespacePriority = map[string]int{
 	NamespaceSystem:    40,
 }
 
-// standardNamespaceOrder lists the standard namespaces in descending priority
-// order (highest-priority first). Used by short-name resolution.
-var standardNamespaceOrder = []string{
-	NamespaceLocal,
-	NamespaceWorkspace,
-	NamespaceUser,
-	NamespaceSystem,
-}
-
 // NamespacePriority returns the numeric priority for a namespace name.
 // Unknown namespaces return 0.
 func NamespacePriority(ns string) int {

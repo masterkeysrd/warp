@@ -1,4 +1,4 @@
-# Workspace Agent Resource Specification (WARP)
+# Workspace Agent Resource Protocol (WARP)
 
 **Version:** `warp/v1alpha1`
 

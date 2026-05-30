@@ -52,5 +52,9 @@ func (in *CommandSpec) DeepCopy() *CommandSpec {
 		out.Tools = make([]string, len(in.Tools))
 		copy(out.Tools, in.Tools)
 	}
+	if in.Hints != nil {
+		out.Hints = make([]string, len(in.Hints))
+		copy(out.Hints, in.Hints)
+	}
 	return out
 }

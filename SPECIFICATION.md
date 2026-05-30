@@ -38,6 +38,7 @@ execute Warp resources without modification.
 8. [Parsing Algorithm](#8-parsing-algorithm)
 9. [Plugins & Adapters](#9-plugins--adapters)
 10. [Standard Namespaces](#10-standard-namespaces)
+11. [Templating](#11-templating)
 
 ---
 
@@ -813,7 +814,48 @@ Adapters are responsible for:
 
 ---
 
-## 10. Standard Namespaces
+## 11. Templating
+
+WARP provides a unified templating system for rendering the `instructions` field of any resource. Runtimes **should** expand these templates before sending prompts to the LLM. 
+
+The reference implementation uses Go's `text/template` engine, but with a preprocessing step to support a developer-friendly shorthand syntax.
+
+### Shorthand Substitution
+
+You can use shell-style variables directly in your Markdown instructions:
+
+- **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
+- **Positional Arguments:** `$1`, `$2` (typically used in Commands)
+- **Command Hints:** If a Command defines `hints: ["ticker"]`, you can use `$ticker` to refer to the first positional argument.
+- **Escaping:** Use `$$` to output a literal `$`.
+
+_Under the hood, the runtime translates `$Var` into Go template syntax `{{.Var}}` and `$1` into `{{index . "1"}}`._
+
+### Flattened Resource Context
+
+To minimize boilerplate, the template context is "flattened." You do not need to write `.Metadata.Name` or `.Spec.Models`. The following variables are lifted to the top level:
+
+*   `Name` (from `metadata.name`)
+*   `DisplayName` (from `metadata.displayName`, falls back to `Name`)
+*   `Description` (from `metadata.description`)
+*   `Labels` (from `metadata.labels`)
+*   `Models`, `Skills`, `Tools`, `Commands`, `Triggers`, `Hints`, `Temperature` (lifted from the respective `spec` fields).
+
+### Advanced Templating
+
+Because it is backed by Go templates, you can write complex logic for arrays or conditionals:
+
+```markdown
+I am $DisplayName.
+My skills are:
+{{range .Skills}}
+- {{.}}
+{{end}}
+```
+
+### System Globals
+
+Implementors (runtimes) can inject a `Globals` map during rendering. WARP restricts globals to project/workspace-related context (e.g., `PWD`, `WorkspaceRoot`, `CurrentProject`) rather than arbitrary OS environment variables to maintain portability and security. You access them just like any other variable: `$PWD`.
 
 The following namespace identifiers are reserved and carry fixed priorities in the resolution
 hierarchy. Plugins and adapters **must not** register resources under these names.

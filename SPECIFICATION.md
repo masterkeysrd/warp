@@ -316,6 +316,10 @@ metadata:
   name: generate-report
   description: Produce a structured equity research report.
   displayName: Generate Report
+spec:
+  models: ["gpt-4o-mini"]
+  tools: ["local/Tool/read-file"]
+  hints: ["ticker", "year"]
 ---
 
 # Generate Report

@@ -55,7 +55,7 @@ kind: Agent
 metadata:
   name: test-agent
 spec:
-  model: gpt-4
+  models: ["gpt-4"]
 ---
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "test-agent.md"), []byte(agentMd), 0644); err != nil {

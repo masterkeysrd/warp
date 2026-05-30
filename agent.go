@@ -30,6 +30,10 @@ type AgentSpec struct {
 	// Instructions is the persona prompt populated from the Markdown body of
 	// the file (below the closing front-matter delimiter).
 	Instructions string `yaml:"instructions"`
+	// Triggers defines the architectural constraints on what can invoke this agent
+	// (e.g., "human", "agent"). An empty list means the agent can be triggered
+	// by anything.
+	Triggers []string `yaml:"triggers,omitempty"`
 	// Model is the LLM model identifier to use, e.g. "gpt-4o".
 	Model string `yaml:"model"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).

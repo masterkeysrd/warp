@@ -179,6 +179,7 @@ runtime.
 | Field         | Type     | Required | Default | Description                                                                                        |
 |---------------|----------|:--------:|---------|----------------------------------------------------------------------------------------------------|
 | `extends`     | string   |          | —       | Qualified Name (`namespace/Agent/name`) or Short Name of another Agent to extend. When set, the engine merges the parent's `skills` and `tools` arrays with the child's (parent entries first) and concatenates their Markdown instructions (parent first, then child). |
+| `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent (e.g. `["human"]`, `["agent"]`, `["system"]`). An empty list means it can be triggered by anything. |
 | `model`       | string   |          | —       | LLM model identifier (e.g. `gpt-4o`, `claude-3-5-sonnet`). Interpretation is runtime-specific.    |
 | `temperature` | float    |          | `0.0`   | Sampling temperature in the range `0.0`–`2.0`. Higher values produce more varied output.          |
 | `tools`       | string[] |          | `[]`    | Names or qualified refs of `Tool` resources this agent may use. An empty list means no restriction. |

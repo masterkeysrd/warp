@@ -34,8 +34,10 @@ type AgentSpec struct {
 	// (e.g., "human", "agent"). An empty list means the agent can be triggered
 	// by anything.
 	Triggers []string `yaml:"triggers,omitempty"`
-	// Model is the LLM model identifier to use, e.g. "gpt-4o".
-	Model string `yaml:"model"`
+	// Models is a prioritized list of LLM model identifiers to use (e.g.,
+	// ["gpt-4o", "claude-3-5-sonnet"]). The runtime should attempt to use the
+	// first available model.
+	Models []string `yaml:"models,omitempty"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature float64 `yaml:"temperature"`
 	// Tools is a list of resource refs (names or paths) restricting which
@@ -56,6 +58,14 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	}
 	out := new(AgentSpec)
 	*out = *in
+	if in.Triggers != nil {
+		out.Triggers = make([]string, len(in.Triggers))
+		copy(out.Triggers, in.Triggers)
+	}
+	if in.Models != nil {
+		out.Models = make([]string, len(in.Models))
+		copy(out.Models, in.Models)
+	}
 	if in.Tools != nil {
 		out.Tools = make([]string, len(in.Tools))
 		copy(out.Tools, in.Tools)

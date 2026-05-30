@@ -30,7 +30,7 @@ metadata:
   name: my-agent
   description: A helpful assistant.
 spec:
-  model: gpt-4o
+  models: ["gpt-4o"]
   temperature: 0.7
   skills:
     - skills/finance.md

@@ -1,0 +1,274 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/masterkeysrd/warp/blob/main/schema/warp.json",
+  "title": "Workspace Agent Resource Protocol (WARP)",
+  "description": "Schema for WARP resources (Agents, Skills, Commands, etc.)",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["warp/v1alpha1"],
+      "description": "The version of the WARP specification."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "Workspace",
+        "Context",
+        "Agent",
+        "Skill",
+        "Command",
+        "ModelProvider",
+        "Tool",
+        "MCP",
+        "Toolkit"
+      ],
+      "description": "The type of WARP resource."
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique identifier for the resource within its kind."
+        },
+        "description": {
+          "type": "string",
+          "description": "Short human-readable summary of the resource."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Optional pretty-printed label for UIs."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Arbitrary key-value pairs for categorisation and filtering."
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "Agent" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "extends": {
+                "type": "string",
+                "description": "Qualified Name or Short Name of another Agent to extend."
+              },
+              "models": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Prioritized list of LLM models. The runtime uses the first available."
+              },
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2,
+                "description": "Sampling temperature (0.0-2.0)."
+              },
+              "tools": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Tool resources this agent may use."
+              },
+              "skills": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Skill resources this agent is allowed to use."
+              },
+              "commands": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Command resources this agent can invoke."
+              },
+              "triggers": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Entities that can invoke this agent (e.g., 'human', 'agent', 'system')."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "Command" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "models": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Preferred models for this command. Overrides agent defaults."
+              },
+              "tools": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Tools allowed during this command execution."
+              },
+              "hints": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Ordered list of argument names for UI and templates."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "Workspace" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "properties": {
+              "projects": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Directories to load as active projects."
+              },
+              "defaultProvider": {
+                "type": "string",
+                "description": "Provider to use when an agent omits spec.models."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "ModelProvider" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "required": ["type", "endpoint"],
+            "properties": {
+              "type": { "type": "string", "description": "e.g., ollama, openai, anthropic" },
+              "endpoint": { "type": "string", "description": "API base URL" },
+              "defaultModel": { "type": "string" },
+              "auth": { "type": "object" },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "name", "label", "limits"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "label": { "type": "string" },
+                    "limits": {
+                      "type": "object",
+                      "required": ["context", "output"],
+                      "properties": {
+                        "context": { "type": "integer" },
+                        "output": { "type": "integer" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "Tool" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "required": ["command", "description"],
+            "properties": {
+              "command": { "type": "array", "items": { "type": "string" } },
+              "description": { "type": "string" },
+              "env": { "type": "object", "additionalProperties": { "type": "string" } },
+              "parameters": { "type": "object", "description": "JSON Schema for tool arguments" },
+              "annotations": {
+                "type": "object",
+                "properties": {
+                  "isOpenWorld": { "type": "boolean" },
+                  "isDangerous": { "type": "boolean" },
+                  "isReadOnly": { "type": "boolean" },
+                  "isIdempotent": { "type": "boolean" },
+                  "userHint": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "MCP" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "required": ["command"],
+            "properties": {
+              "command": { "type": "array", "items": { "type": "string" } },
+              "env": { "type": "object", "additionalProperties": { "type": "string" } },
+              "annotations": { "type": "object" },
+              "tools": {
+                "type": "object",
+                "properties": {
+                  "include": { "type": "array", "items": { "type": "string" } },
+                  "exclude": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "overrides": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "Toolkit" } } },
+      "then": {
+        "properties": {
+          "spec": {
+            "type": "object",
+            "required": ["tools"],
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["$ref"],
+                      "properties": { "$ref": { "type": "string" } }
+                    },
+                    {
+                      "type": "object",
+                      "required": ["name", "command", "description"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "command": { "type": "array", "items": { "type": "string" } },
+                        "description": { "type": "string" },
+                        "parameters": { "type": "object" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

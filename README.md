@@ -114,6 +114,34 @@ by kind into three sub-directories:
 - **`Parse(content string) (*ParseResult, error)`** — parses a single warp
   Markdown string and returns the typed resource.
 
+## Validation & Tooling
+
+### CLI Tool
+Warp includes a CLI tool for validating your resources and workspaces.
+
+```bash
+# Build the tool
+go build -o warp ./cmd/warp
+
+# Validate a workspace
+./warp validate .
+```
+
+### JSON Schema
+A JSON Schema is available at [`schema/warp.json`](schema/warp.json) to provide real-time validation and autocompletion in IDEs like VS Code.
+
+To use it in VS Code, add the following to your settings (requires the YAML extension):
+
+```json
+"yaml.schemas": {
+  "https://raw.githubusercontent.com/masterkeysrd/warp/main/schema/warp.json": [
+    "**/.agents/**/*.md",
+    "**/AGENT.md",
+    "**/WORKSPACE.md"
+  ]
+}
+```
+
 ## Contributing
 
 We welcome contributions! Please see the `CONTRIBUTING.md` file (if available) or open an issue to discuss your proposed changes.

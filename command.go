@@ -25,6 +25,16 @@ type CommandSpec struct {
 	// Instructions is the directive prompt populated from the Markdown body
 	// of the file (below the closing front-matter delimiter).
 	Instructions string `yaml:"instructions"`
+	// Models is a prioritized list of LLM model identifiers to use for this
+	// command (e.g., ["gpt-4o-mini", "claude-3-haiku"]). Overrides agent defaults.
+	Models []string `yaml:"models,omitempty"`
+	// Tools is a list of resource refs (names or paths) restricting which
+	// Tool resources can be used while executing this command.
+	Tools []string `yaml:"tools,omitempty"`
+	// Hints is an ordered list of argument hints (e.g., ["ticker", "year"])
+	// that UIs can use for autocompletion and runtimes can use for positional
+	// template substitution.
+	Hints []string `yaml:"hints,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the CommandSpec.
@@ -34,5 +44,13 @@ func (in *CommandSpec) DeepCopy() *CommandSpec {
 	}
 	out := new(CommandSpec)
 	*out = *in
+	if in.Models != nil {
+		out.Models = make([]string, len(in.Models))
+		copy(out.Models, in.Models)
+	}
+	if in.Tools != nil {
+		out.Tools = make([]string, len(in.Tools))
+		copy(out.Tools, in.Tools)
+	}
 	return out
 }

@@ -160,6 +160,13 @@ func (r *Registry) Validate() error {
 				}
 			}
 		}
+		if cmd, ok := res.(*Command); ok {
+			for _, toolRef := range cmd.Spec.Tools {
+				if !r.hasLocked(toolRef) {
+					return fmt.Errorf("command %s references missing tool: %s", name, toolRef)
+				}
+			}
+		}
 	}
 	return nil
 }

@@ -35,7 +35,7 @@ spec:
   skills:
     - skills/finance.md
   commands:
-    - cmd/report.md
+    - commands/report.md
 ---
 
 # My Agent
@@ -85,16 +85,19 @@ registry, err := warp.NewLoader(testFS).Load()
 ## Directory Layout
 
 The default root directory is `.agents`. Inside it, resources are organised
-by kind into three sub-directories:
+by kind into sub-directories:
 
 ```
 .agents/
-├── cmd/              # Command definitions
+├── commands/         # Command definitions
 │   └── report.md     # kind: Command
 ├── defs/             # Agent definitions
 │   └── analyst.md    # kind: Agent
-└── skills/           # Skill definitions
-    └── finance.md    # kind: Skill
+├── skills/           # Skill definitions
+│   └── finance.md    # kind: Skill
+├── tools/            # Tool definitions
+├── mcps/             # MCP server definitions
+└── providers/        # Model Provider definitions
 ```
 
 ## API Reference

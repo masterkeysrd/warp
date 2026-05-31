@@ -245,7 +245,7 @@ spec:
     - skills/finance.md
     - skills/sql.md
   commands:
-    - cmd/generate-report.md
+    - commands/generate-report.md
 ---
 
 # Analyst
@@ -470,7 +470,7 @@ server.
 | `include` | string[] | Glob patterns for tools to expose.                    |
 | `exclude` | string[] | Glob patterns for tools to block (applied after include).|
 
-#### Full example (`mcp/sqlite.yaml`)
+#### Full example (`mcps/sqlite.yaml`)
 
 ```yaml
 apiVersion: warp/v1alpha1
@@ -640,9 +640,11 @@ A typical multi-project workspace:
 ```
 WORKSPACE.md              # Root Authority — defines projects
 .agents/                  # Workspace-global resources
+│   ├── defs/
+│   │   └── analyst.md
 │   ├── skills/
 │   │   └── coding.md
-│   └── cmd/
+│   └── commands/
 │       └── review.md
 services/
 ├── api/
@@ -650,8 +652,9 @@ services/
 │   └── .agents/          # Project-local resources
 │       ├── skills/
 │       │   └── grpc.md
-│       └── cmd/
+│       └── commands/
 │           └── gen-proto.md
+
 └── auth/
     ├── AGENT.md
     └── .agents/
@@ -665,7 +668,7 @@ A minimal single-project setup (no `WORKSPACE.md` needed):
 AGENT.md                  # Context for the single project
 .agents/
 ├── skills/
-└── cmd/
+└── commands/
 ```
 
 ---

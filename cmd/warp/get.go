@@ -3,12 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/masterkeysrd/warp"
-	"github.com/masterkeysrd/warp/internal/fetcher"
 )
 
 type exportMock struct {
@@ -33,70 +31,20 @@ func runGet(args []string) {
 
 	fmt.Printf("Fetching plugin %s@%s...\n", source, version)
 
-	cacheDir, err := fetcher.Fetch(source, version)
+	resources, err := warp.DiscoverPluginResources(source, version)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error fetching plugin: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error discovering resources: %v\n", err)
 		os.Exit(1)
 	}
 
-	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
-	content, err := os.ReadFile(pluginPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Try PLUGIN.yaml
-			pluginPath = filepath.Join(cacheDir, "PLUGIN.yaml")
-			content, err = os.ReadFile(pluginPath)
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: repository does not contain a valid PLUGIN.md manifest\n")
-			os.Exit(1)
-		}
-	}
-
-	result, err := warp.Parse(pluginPath, string(content))
-	if err != nil || result.Kind != warp.KindPlugin {
-		fmt.Fprintf(os.Stderr, "Error: failed to parse plugin manifest: %v\n", err)
-		os.Exit(1)
-	}
-	pluginRes := result.Resource.(*warp.Plugin)
-
-	resourceDir := pluginRes.Spec.ResourceDir
-	if resourceDir == "" {
-		resourceDir = ".agents"
-	}
-	absResourceDir := filepath.Join(cacheDir, resourceDir)
-
-	// Build a temporary loader to discover actual resources in the exported directory
-	provider := warp.NewFSResourceProvider(os.DirFS(absResourceDir))
-	tempReg, err := provider.LoadResources()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading resources from plugin: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Filter tempReg based on pluginRes.Spec.Exports (we'll implement glob filtering later, for now we list all)
+	// Filter based on pluginRes.Spec.Exports (we'll implement glob filtering later, for now we list all)
 	var discoveredExports []exportMock
-
-	for _, a := range tempReg.Agents {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(a.Kind), name: a.GetName(), description: a.GetMetadata().Description})
-	}
-	for _, s := range tempReg.Skills {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(s.Kind), name: s.GetName(), description: s.GetMetadata().Description})
-	}
-	for _, c := range tempReg.Commands {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(c.Kind), name: c.GetName(), description: c.GetMetadata().Description})
-	}
-	for _, p := range tempReg.ModelProviders {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(p.Kind), name: p.GetName(), description: p.GetMetadata().Description})
-	}
-	for _, t := range tempReg.Tools {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(t.Kind), name: t.GetName(), description: t.GetMetadata().Description})
-	}
-	for _, m := range tempReg.MCPs {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(m.Kind), name: m.GetName(), description: m.GetMetadata().Description})
-	}
-	for _, tk := range tempReg.Toolkits {
-		discoveredExports = append(discoveredExports, exportMock{kind: string(tk.Kind), name: tk.GetName(), description: tk.GetMetadata().Description})
+	for _, r := range resources {
+		discoveredExports = append(discoveredExports, exportMock{
+			kind:        string(r.Kind),
+			name:        r.Name,
+			description: r.Description,
+		})
 	}
 
 	fmt.Printf("Plugin '%s' exposes %d resources.\n", source, len(discoveredExports))

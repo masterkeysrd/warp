@@ -194,3 +194,83 @@ func updateLockFile(lockPath, source, version, dirHash, manifestHash, manifestNa
 
 	return os.WriteFile(lockPath, []byte(sb.String()), 0644)
 }
+
+// DiscoveredResource holds information about a discovered resource in a plugin.
+type DiscoveredResource struct {
+	Kind        Kind
+	Name        string
+	Description string
+}
+
+// DiscoverPluginResources fetches the plugin at the given source and version,
+// and returns the list of all resources exposed by it.
+func DiscoverPluginResources(source, version string) ([]DiscoveredResource, error) {
+	cacheDir, err := fetcher.Fetch(source, version)
+	if err != nil {
+		return nil, fmt.Errorf("fetching plugin: %w", err)
+	}
+
+	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
+	content, err := os.ReadFile(pluginPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			pluginPath = filepath.Join(cacheDir, "PLUGIN.yaml")
+			content, err = os.ReadFile(pluginPath)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("repository does not contain a valid PLUGIN.md or PLUGIN.yaml manifest: %w", err)
+		}
+	}
+
+	result, err := Parse(pluginPath, string(content))
+	if err != nil || result.Kind != KindPlugin {
+		return nil, fmt.Errorf("failed to parse plugin manifest: %w", err)
+	}
+	pluginRes := result.Resource.(*Plugin)
+
+	resourceDir := pluginRes.Spec.ResourceDir
+	if resourceDir == "" {
+		resourceDir = ".agents"
+	}
+	absResourceDir := filepath.Join(cacheDir, resourceDir)
+
+	provider := NewFSResourceProvider(os.DirFS(absResourceDir))
+	tempReg, err := provider.LoadResources()
+	if err != nil {
+		return nil, fmt.Errorf("loading resources from plugin: %w", err)
+	}
+
+	var resources []DiscoveredResource
+
+	appendResource := func(k Kind, name, desc string) {
+		resources = append(resources, DiscoveredResource{
+			Kind:        k,
+			Name:        name,
+			Description: desc,
+		})
+	}
+
+	for _, a := range tempReg.Agents {
+		appendResource(a.Kind, a.GetName(), a.GetMetadata().Description)
+	}
+	for _, s := range tempReg.Skills {
+		appendResource(s.Kind, s.GetName(), s.GetMetadata().Description)
+	}
+	for _, c := range tempReg.Commands {
+		appendResource(c.Kind, c.GetName(), c.GetMetadata().Description)
+	}
+	for _, p := range tempReg.ModelProviders {
+		appendResource(p.Kind, p.GetName(), p.GetMetadata().Description)
+	}
+	for _, t := range tempReg.Tools {
+		appendResource(t.Kind, t.GetName(), t.GetMetadata().Description)
+	}
+	for _, m := range tempReg.MCPs {
+		appendResource(m.Kind, m.GetName(), m.GetMetadata().Description)
+	}
+	for _, tk := range tempReg.Toolkits {
+		appendResource(tk.Kind, tk.GetName(), tk.GetMetadata().Description)
+	}
+
+	return resources, nil
+}

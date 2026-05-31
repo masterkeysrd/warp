@@ -67,4 +67,11 @@
 //
 // After loading, call [Workspace.Validate] to verify structural correctness
 // and resolve cross-references declared inside Agent specs.
+//
+// # Programmatic Plugin Installation & Discovery
+//
+// Use [DiscoverPluginResources] to inspect external plugins and [InstallPlugin] to fetch and configure them programmatically:
+//
+//	resources, err := warp.DiscoverPluginResources("github.com/acme/finance-skills", "v1.2.0")
+//	err = warp.InstallPlugin(".", "github.com/acme/finance-skills", "v1.2.0", []string{"Skill/hello"})
 package warp

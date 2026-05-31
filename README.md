@@ -82,6 +82,23 @@ var testFS embed.FS
 registry, err := warp.NewLoader(testFS).Load()
 ```
 
+### Programmatic Plugin Discovery
+
+```go
+// Discovers resources exposed by a plugin before installing it.
+resources, err := warp.DiscoverPluginResources("github.com/acme/finance-skills", "v1.2.0")
+for _, r := range resources {
+    fmt.Printf("Resource: %s/%s (%s)\n", r.Kind, r.Name, r.Description)
+}
+```
+
+### Programmatic Plugin Installation
+
+```go
+// Installs a plugin into the workspace at the current directory.
+err := warp.InstallPlugin(".", "github.com/acme/finance-skills", "v1.2.0", []string{"Skill/hello"})
+```
+
 ## Directory Layout
 
 The default root directory is `.agents`. Inside it, resources are organised
@@ -116,6 +133,8 @@ by kind into sub-directories:
   `.agents` directory in the current working directory.
 - **`Parse(content string) (*ParseResult, error)`** — parses a single warp
   Markdown string and returns the typed resource.
+- **`DiscoverPluginResources(source, version string) ([]DiscoveredResource, error)`** — fetches the plugin at the given source/version and returns the list of all resources exposed by it.
+- **`InstallPlugin(workspaceDir, source, version string, imports []string) error`** — downloads a plugin, computes its hashes, writes them to `warp.lock`, and registers the plugin in `WORKSPACE.md`.
 
 ## Validation & Tooling
 

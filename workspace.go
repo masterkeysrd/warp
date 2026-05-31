@@ -50,11 +50,30 @@ func (w *WorkspaceDef) DeepCopy() *WorkspaceDef {
 
 // WorkspaceDefSpec contains configuration for a Workspace resource.
 type WorkspaceDefSpec struct {
-	Projects        []string `yaml:"projects"`
-	DefaultProvider string   `yaml:"defaultProvider"`
-	DefaultAgent    string   `yaml:"defaultAgent"`
-	Plugins         []string `yaml:"plugins"`
-	Instructions    string   `yaml:"instructions"`
+	Projects        []string          `yaml:"projects"`
+	DefaultProvider string            `yaml:"defaultProvider"`
+	DefaultAgent    string            `yaml:"defaultAgent"`
+	Plugins         []WorkspacePlugin `yaml:"plugins"`
+	Instructions    string            `yaml:"instructions"`
+}
+
+// WorkspacePlugin defines an external repository to load as a plugin.
+type WorkspacePlugin struct {
+	Source    string          `yaml:"source"`
+	Version   string          `yaml:"version"`
+	Namespace string          `yaml:"namespace"`
+	Imports   *ResourceFilter `yaml:"imports"`
+}
+
+// DeepCopy returns a deep copy of the WorkspacePlugin.
+func (in *WorkspacePlugin) DeepCopy() *WorkspacePlugin {
+	if in == nil {
+		return nil
+	}
+	out := new(WorkspacePlugin)
+	*out = *in
+	out.Imports = in.Imports.DeepCopy()
+	return out
 }
 
 // DeepCopy returns a deep copy of the WorkspaceDefSpec.
@@ -69,8 +88,10 @@ func (in *WorkspaceDefSpec) DeepCopy() *WorkspaceDefSpec {
 		copy(out.Projects, in.Projects)
 	}
 	if in.Plugins != nil {
-		out.Plugins = make([]string, len(in.Plugins))
-		copy(out.Plugins, in.Plugins)
+		out.Plugins = make([]WorkspacePlugin, len(in.Plugins))
+		for i, p := range in.Plugins {
+			out.Plugins[i] = *p.DeepCopy()
+		}
 	}
 	return out
 }

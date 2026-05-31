@@ -13,7 +13,8 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: warp [command] [options]\n\n")
 		fmt.Fprintf(os.Stderr, "Commands:\n")
-		fmt.Fprintf(os.Stderr, "  validate [path]    Validate a WARP workspace or resource directory\n\n")
+		fmt.Fprintf(os.Stderr, "  validate [path]    Validate a WARP workspace or resource directory\n")
+		fmt.Fprintf(os.Stderr, "  get [package]      Get and install a WARP plugin\n\n")
 		flag.PrintDefaults()
 	}
 
@@ -28,6 +29,8 @@ func main() {
 	switch command {
 	case "validate":
 		runValidate(flag.Args()[1:])
+	case "get":
+		runGet(flag.Args()[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		flag.Usage()

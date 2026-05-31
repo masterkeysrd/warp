@@ -3,9 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"charm.land/huh/v2"
+	"github.com/masterkeysrd/warp"
+	"github.com/masterkeysrd/warp/internal/fetcher"
+	"github.com/masterkeysrd/warp/internal/hasher"
+	"gopkg.in/yaml.v3"
 )
 
 type exportMock struct {
@@ -30,16 +35,57 @@ func runGet(args []string) {
 
 	fmt.Printf("Fetching plugin %s@%s...\n", source, version)
 
-	// TODO: Actually fetch the repository and parse PLUGIN.md to get the real exports.
-	// For this initial implementation, we simulate discovering exported resources.
-	discoveredExports := []exportMock{
-		{"Agent", "analyst", "Senior financial analyst persona"},
-		{"Skill", "analysis", "Deep financial data analysis"},
-		{"Skill", "market-research", "Broad market trends and indicators"},
-		{"Command", "fetch-ticker", "Retrieves live ticker data"},
-		{"Command", "generate-tax-report", "Generates compliant tax reports"},
-		{"Tool", "read-file", "Read a local file"},
+	cacheDir, err := fetcher.Fetch(source, version)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching plugin: %v\n", err)
+		os.Exit(1)
 	}
+
+	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
+	content, err := os.ReadFile(pluginPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Try PLUGIN.yaml
+			pluginPath = filepath.Join(cacheDir, "PLUGIN.yaml")
+			content, err = os.ReadFile(pluginPath)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: repository does not contain a valid PLUGIN.md manifest\n")
+			os.Exit(1)
+		}
+	}
+
+	result, err := warp.Parse(pluginPath, string(content))
+	if err != nil || result.Kind != warp.KindPlugin {
+		fmt.Fprintf(os.Stderr, "Error: failed to parse plugin manifest: %v\n", err)
+		os.Exit(1)
+	}
+	pluginRes := result.Resource.(*warp.Plugin)
+
+	resourceDir := pluginRes.Spec.ResourceDir
+	if resourceDir == "" {
+		resourceDir = ".agents"
+	}
+	absResourceDir := filepath.Join(cacheDir, resourceDir)
+
+	// Build a temporary loader to discover actual resources in the exported directory
+	provider := warp.NewFSResourceProvider(os.DirFS(absResourceDir))
+	tempReg, err := provider.LoadResources()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading resources from plugin: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Filter tempReg based on pluginRes.Spec.Exports (we'll implement glob filtering later, for now we list all)
+	var discoveredExports []exportMock
+
+	for _, a := range tempReg.Agents { discoveredExports = append(discoveredExports, exportMock{kind: string(a.Kind), name: a.GetName(), description: a.GetMetadata().Description}) }
+	for _, s := range tempReg.Skills { discoveredExports = append(discoveredExports, exportMock{kind: string(s.Kind), name: s.GetName(), description: s.GetMetadata().Description}) }
+	for _, c := range tempReg.Commands { discoveredExports = append(discoveredExports, exportMock{kind: string(c.Kind), name: c.GetName(), description: c.GetMetadata().Description}) }
+	for _, p := range tempReg.ModelProviders { discoveredExports = append(discoveredExports, exportMock{kind: string(p.Kind), name: p.GetName(), description: p.GetMetadata().Description}) }
+	for _, t := range tempReg.Tools { discoveredExports = append(discoveredExports, exportMock{kind: string(t.Kind), name: t.GetName(), description: t.GetMetadata().Description}) }
+	for _, m := range tempReg.MCPs { discoveredExports = append(discoveredExports, exportMock{kind: string(m.Kind), name: m.GetName(), description: m.GetMetadata().Description}) }
+	for _, tk := range tempReg.Toolkits { discoveredExports = append(discoveredExports, exportMock{kind: string(tk.Kind), name: tk.GetName(), description: tk.GetMetadata().Description}) }
 
 	fmt.Printf("Plugin '%s' exposes %d resources.\n", source, len(discoveredExports))
 
@@ -58,7 +104,7 @@ func runGet(args []string) {
 		),
 	)
 
-	err := form.Run()
+	err = form.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Aborted.")
 		os.Exit(1)
@@ -133,6 +179,124 @@ func runGet(args []string) {
 		}
 	}
 
-	// TODO: Actually rewrite WORKSPACE.md and update warp.lock
-	fmt.Println("\n(Note: WORKSPACE.md mutation and warp.lock generation will be implemented in the next step)")
+	// Update warp.lock
+	dirHash, err := hasher.DirHash(absResourceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error computing directory hash: %v\n", err)
+		os.Exit(1)
+	}
+
+	manifestHash, err := hasher.FileHash(pluginPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error computing manifest hash: %v\n", err)
+		os.Exit(1)
+	}
+
+	lockPath := "warp.lock"
+	lockEntry := fmt.Sprintf("%s %s %s\n%s %s/%s %s\n", source, version, dirHash, source, version, filepath.Base(pluginPath), manifestHash)
+
+	f, err := os.OpenFile(lockPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error updating warp.lock: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(lockEntry); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing to warp.lock: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Update WORKSPACE.md
+	wsPath := "WORKSPACE.md"
+	wsContent, err := os.ReadFile(wsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Create synthetic WORKSPACE.md
+			wsContent = []byte("---\napiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: workspace\n---\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "Error reading WORKSPACE.md: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	wsParts := strings.SplitN(string(wsContent), "---", 3)
+	var frontMatter, body string
+	if len(wsParts) < 3 {
+		frontMatter = "apiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: workspace"
+		body = strings.TrimSpace(string(wsContent))
+	} else {
+		frontMatter = wsParts[1]
+		body = wsParts[2]
+	}
+
+	var node yaml.Node
+	if err = yaml.Unmarshal([]byte(frontMatter), &node); err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing WORKSPACE.md front-matter: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create new plugin entry
+	inferredNamespace := source
+	if lastSlash := strings.LastIndex(source, "/"); lastSlash != -1 {
+		inferredNamespace = source[lastSlash+1:]
+	}
+	
+	newPlugin := warp.WorkspacePlugin{
+		Source:    source,
+		Version:   version,
+		Namespace: inferredNamespace,
+	}
+	if mode == "specific" {
+		newPlugin.Imports = &warp.ResourceFilter{
+			Include: selectedResources,
+		}
+	}
+
+	// Find or create 'spec' and 'plugins'
+	root := node.Content[0]
+	var specNode *yaml.Node
+	for i := 0; i < len(root.Content); i += 2 {
+		if root.Content[i].Value == "spec" {
+			specNode = root.Content[i+1]
+			break
+		}
+	}
+
+	if specNode == nil {
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "spec"}, &yaml.Node{Kind: yaml.MappingNode})
+		specNode = root.Content[len(root.Content)-1]
+	}
+
+	var pluginsNode *yaml.Node
+	for i := 0; i < len(specNode.Content); i += 2 {
+		if specNode.Content[i].Value == "plugins" {
+			pluginsNode = specNode.Content[i+1]
+			break
+		}
+	}
+
+	if pluginsNode == nil {
+		specNode.Content = append(specNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "plugins"}, &yaml.Node{Kind: yaml.SequenceNode})
+		pluginsNode = specNode.Content[len(specNode.Content)-1]
+	}
+
+	// Marshal new plugin to node
+	var pluginNode yaml.Node
+	pBytes, _ := yaml.Marshal(newPlugin)
+	yaml.Unmarshal(pBytes, &pluginNode)
+	
+	pluginsNode.Content = append(pluginsNode.Content, pluginNode.Content[0])
+
+	updatedFrontMatter, _ := yaml.Marshal(&node)
+	finalContent := fmt.Sprintf("---\n%s---\n%s", string(updatedFrontMatter), body)
+
+	if err := os.WriteFile(wsPath, []byte(finalContent), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing WORKSPACE.md: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\n✅ Plugin installed successfully!")
+	fmt.Printf("   - Updated %s\n", wsPath)
+	fmt.Printf("   - Updated %s\n", lockPath)
 }

@@ -79,13 +79,27 @@ func runGet(args []string) {
 	// Filter tempReg based on pluginRes.Spec.Exports (we'll implement glob filtering later, for now we list all)
 	var discoveredExports []exportMock
 
-	for _, a := range tempReg.Agents { discoveredExports = append(discoveredExports, exportMock{kind: string(a.Kind), name: a.GetName(), description: a.GetMetadata().Description}) }
-	for _, s := range tempReg.Skills { discoveredExports = append(discoveredExports, exportMock{kind: string(s.Kind), name: s.GetName(), description: s.GetMetadata().Description}) }
-	for _, c := range tempReg.Commands { discoveredExports = append(discoveredExports, exportMock{kind: string(c.Kind), name: c.GetName(), description: c.GetMetadata().Description}) }
-	for _, p := range tempReg.ModelProviders { discoveredExports = append(discoveredExports, exportMock{kind: string(p.Kind), name: p.GetName(), description: p.GetMetadata().Description}) }
-	for _, t := range tempReg.Tools { discoveredExports = append(discoveredExports, exportMock{kind: string(t.Kind), name: t.GetName(), description: t.GetMetadata().Description}) }
-	for _, m := range tempReg.MCPs { discoveredExports = append(discoveredExports, exportMock{kind: string(m.Kind), name: m.GetName(), description: m.GetMetadata().Description}) }
-	for _, tk := range tempReg.Toolkits { discoveredExports = append(discoveredExports, exportMock{kind: string(tk.Kind), name: tk.GetName(), description: tk.GetMetadata().Description}) }
+	for _, a := range tempReg.Agents {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(a.Kind), name: a.GetName(), description: a.GetMetadata().Description})
+	}
+	for _, s := range tempReg.Skills {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(s.Kind), name: s.GetName(), description: s.GetMetadata().Description})
+	}
+	for _, c := range tempReg.Commands {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(c.Kind), name: c.GetName(), description: c.GetMetadata().Description})
+	}
+	for _, p := range tempReg.ModelProviders {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(p.Kind), name: p.GetName(), description: p.GetMetadata().Description})
+	}
+	for _, t := range tempReg.Tools {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(t.Kind), name: t.GetName(), description: t.GetMetadata().Description})
+	}
+	for _, m := range tempReg.MCPs {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(m.Kind), name: m.GetName(), description: m.GetMetadata().Description})
+	}
+	for _, tk := range tempReg.Toolkits {
+		discoveredExports = append(discoveredExports, exportMock{kind: string(tk.Kind), name: tk.GetName(), description: tk.GetMetadata().Description})
+	}
 
 	fmt.Printf("Plugin '%s' exposes %d resources.\n", source, len(discoveredExports))
 
@@ -118,7 +132,7 @@ func runGet(args []string) {
 		for _, exp := range discoveredExports {
 			byKind[exp.kind] = append(byKind[exp.kind], exp)
 		}
-		
+
 		results := make(map[string]*[]string)
 		var groups []*huh.Group
 
@@ -131,18 +145,29 @@ func runGet(args []string) {
 			options := make([]huh.Option[string], len(resources))
 			for i, exp := range resources {
 				qualified := fmt.Sprintf("%s/%s", exp.kind, exp.name)
-				displayKey := fmt.Sprintf("%-20s  (%s)", exp.name, exp.description)
+				var displayKey string
+				if exp.description != "" {
+					displayKey = fmt.Sprintf("%-20s  (%s)", exp.name, exp.description)
+				} else {
+					displayKey = exp.name
+				}
 				options[i] = huh.NewOption(displayKey, qualified).Selected(true)
 			}
 
 			var selected []string
 			results[kind] = &selected
 
+			fieldHeight := len(options) + 2
+			if fieldHeight > 12 {
+				fieldHeight = 12
+			}
+
 			group := huh.NewGroup(
 				huh.NewMultiSelect[string]().
 					Title(fmt.Sprintf("Select %ss to include", kind)).
 					Options(options...).
-					Value(results[kind]),
+					Value(results[kind]).
+					Height(fieldHeight),
 			)
 			groups = append(groups, group)
 		}
@@ -193,17 +218,8 @@ func runGet(args []string) {
 	}
 
 	lockPath := "warp.lock"
-	lockEntry := fmt.Sprintf("%s %s %s\n%s %s/%s %s\n", source, version, dirHash, source, version, filepath.Base(pluginPath), manifestHash)
-
-	f, err := os.OpenFile(lockPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
+	if err := updateLockFile(lockPath, source, version, dirHash, manifestHash, filepath.Base(pluginPath)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error updating warp.lock: %v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(lockEntry); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing to warp.lock: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -241,7 +257,7 @@ func runGet(args []string) {
 	if lastSlash := strings.LastIndex(source, "/"); lastSlash != -1 {
 		inferredNamespace = source[lastSlash+1:]
 	}
-	
+
 	newPlugin := warp.WorkspacePlugin{
 		Source:    source,
 		Version:   version,
@@ -285,7 +301,7 @@ func runGet(args []string) {
 	var pluginNode yaml.Node
 	pBytes, _ := yaml.Marshal(newPlugin)
 	yaml.Unmarshal(pBytes, &pluginNode)
-	
+
 	pluginsNode.Content = append(pluginsNode.Content, pluginNode.Content[0])
 
 	updatedFrontMatter, _ := yaml.Marshal(&node)
@@ -299,4 +315,51 @@ func runGet(args []string) {
 	fmt.Println("\n✅ Plugin installed successfully!")
 	fmt.Printf("   - Updated %s\n", wsPath)
 	fmt.Printf("   - Updated %s\n", lockPath)
+}
+
+func updateLockFile(lockPath, source, version, dirHash, manifestHash, manifestName string) error {
+	existing, err := os.ReadFile(lockPath)
+	locks := make(map[string]string)
+	var keysOrder []string
+
+	if err == nil {
+		lines := strings.Split(string(existing), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				key := parts[0] + " " + parts[1]
+				val := parts[2]
+				if _, exists := locks[key]; !exists {
+					keysOrder = append(keysOrder, key)
+				}
+				locks[key] = val
+			}
+		}
+	}
+
+	key1 := fmt.Sprintf("%s %s", source, version)
+	val1 := dirHash
+	if _, exists := locks[key1]; !exists {
+		keysOrder = append(keysOrder, key1)
+	}
+	locks[key1] = val1
+
+	key2 := fmt.Sprintf("%s %s/%s", source, version, manifestName)
+	val2 := manifestHash
+	if _, exists := locks[key2]; !exists {
+		keysOrder = append(keysOrder, key2)
+	}
+	locks[key2] = val2
+
+	var sb strings.Builder
+	sb.WriteString("# This file is automatically generated by warp. DO NOT EDIT.\n")
+	for _, key := range keysOrder {
+		sb.WriteString(fmt.Sprintf("%s %s\n", key, locks[key]))
+	}
+
+	return os.WriteFile(lockPath, []byte(sb.String()), 0644)
 }

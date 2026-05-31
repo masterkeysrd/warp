@@ -32,7 +32,7 @@ func DirHash(dirPath string) (string, error) {
 		if info.Name() != ".agents" && info.Name()[0] == '.' {
 			return nil
 		}
-		
+
 		relPath, err := filepath.Rel(dirPath, path)
 		if err != nil {
 			return err

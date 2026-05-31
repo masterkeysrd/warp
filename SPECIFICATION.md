@@ -513,6 +513,37 @@ spec:
           msg: { type: string }
 ```
 
+### 3.10 Plugin
+
+A `Plugin` resource (typically named `PLUGIN.md` or `PLUGIN.yaml`) is placed at the root of a repository to declare it as a distributable WARP package. It acts as the manifest for the repository, telling the loader where to find the resources and which ones are meant for public consumption.
+
+#### `spec` fields
+
+| Field         | Type     | Required | Default    | Description                                                                                             |
+|---------------|----------|:--------:|------------|---------------------------------------------------------------------------------------------------------|
+| `resourceDir` | string   |          | `.agents/` | The relative path within the repository where the loader should look for resources.                     |
+| `exports`     | string[] |          | `["*"]`    | Glob patterns defining which resources are exposed to consumers. Resources not matching are private.    |
+
+#### Full example (`PLUGIN.md`)
+
+```markdown
+---
+apiVersion: warp/v1alpha1
+kind: Plugin
+metadata:
+  name: acme-finance
+  description: Official financial analysis skills and tools for Acme Corp.
+spec:
+  resourceDir: "src/agents"
+  exports:
+    - skills/analysis
+    - commands/*
+---
+
+# Acme Finance Plugin
+This repository provides standard financial analysis skills.
+```
+
 ---
 
 ## 4. Cross-References
@@ -760,36 +791,17 @@ function parse(filePath, fileContent):
 
 ---
 
-## 9. Plugins & Adapters
+## 9. Modules and Package Management
 
 ### 9.1 Overview
 
-A **Plugin** extends the workspace with resources from an external source. Plugins declare
-themselves as a `kind: Plugin` resource and are listed in `spec.plugins` of the `Workspace`
-definition. When the loader processes a workspace it instantiates each listed plugin and merges
-its resources into the registry under a plugin-specific namespace.
+WARP supports a robust module system for sharing resources across repositories. Instead of relying purely on dynamic runtime fetching, WARP uses semantic module paths, global caching, and cryptographic lock files to ensure fast, deterministic, and secure resource loading.
 
-### 9.2 `kind: Plugin`
+A repository becomes a WARP package simply by including a `kind: Plugin` manifest at its root (e.g., `PLUGIN.md`).
 
-```yaml
-apiVersion: warp/v1alpha1
-kind: Plugin
-metadata:
-  name: my-plugin
-  description: Provides shared tools from a shared library.
-spec:
-  namespace: shared-tools  # namespace all resources from this plugin are registered under
-  source: /path/to/plugin/dir  # or a URI handled by a registered adapter
-```
+### 9.2 Declaring Plugins in a Workspace
 
-#### `spec` fields
-
-| Field       | Type   | Required | Description                                                             |
-|-------------|--------|:--------:|-------------------------------------------------------------------------|
-| `namespace` | string | ✅       | Namespace all resources from this plugin are registered under.          |
-| `source`    | string | ✅       | Filesystem path or URI the loader/adapter resolves to load resources.   |
-
-### 9.3 Declaring Plugins in a Workspace
+Consumers import external plugins by declaring them in the `spec.plugins` list of their `Workspace` resource.
 
 ```yaml
 apiVersion: warp/v1alpha1
@@ -799,21 +811,66 @@ metadata:
 spec:
   projects: ["services/api"]
   plugins:
-    - plugins/shared-tools.yaml
-    - plugins/docs.yaml
+    - source: github.com/acme/finance-skills
+      version: v1.2.0
+      namespace: ext-finance  # Explicitly override the namespace
+    - source: github.com/shared/dev-tools
+      version: latest
+      # If namespace is omitted, WARP infers it from the last segment of the URI.
+      # Here, the namespace will automatically be 'dev-tools'.
 ```
 
-### 9.4 Adapters
+#### `WorkspacePlugin` fields
 
-An **Adapter** is a runtime component that maps a `source` URI scheme to a `NamespacedProvider`.
-The default adapter handles `file://` and bare filesystem paths. Custom adapters can be registered
-to support remote sources (HTTP, S3, Git, etc.).
+| Field       | Type   | Required | Description                                                                                 |
+|-------------|--------|:--------:|---------------------------------------------------------------------------------------------|
+| `source`    | string | ✅       | Semantic URI of the repository (e.g., `github.com/org/repo`).                               |
+| `version`   | string | ✅       | The git tag, branch, or commit hash to pin (e.g., `v1.2.0`, `main`).                        |
+| `namespace` | string |          | Namespace under which these resources are registered. Defaults to the last URI segment.     |
 
-Adapters are responsible for:
-1. Fetching or reading the source.
-2. Parsing each file as a WARP resource.
-3. Presenting the resources through the `NamespacedProvider` interface so the assembler can
-   populate the registry.
+### 9.3 Resolution and the Default Namespace Rule
+
+When a workspace declares a plugin, all exported resources from that plugin are registered in the loader's registry under a specific namespace.
+
+**The Default Namespace Rule:**
+If the consumer does not explicitly provide a `namespace` in the `WORKSPACE.md` definition, the loader **must** infer the namespace using the last segment of the `source` URI.
+
+*Example:*
+- `source: github.com/acme/finance-skills` → inferred namespace: `finance-skills`
+- Resources inside the plugin will be accessible via `finance-skills/Skill/analysis`.
+
+This ensures that plugin creators do not dictate namespaces (preventing collisions), while providing a zero-configuration fallback for consumers.
+
+### 9.4 Caching and the Lock File
+
+To guarantee reproducibility, security, and performance, WARP implements a global caching and lock file mechanism.
+
+1. **Global Cache**: When the loader encounters a plugin, it checks a global host cache (e.g., `~/.warp/pkg/mod/`). If the specific version is missing, it is downloaded and cached. Subsequent loads are instantaneous from disk.
+2. **`warp.lock`**: Tooling generates a machine-readable `warp.lock` file adjacent to the `WORKSPACE.md`. This file must be committed to version control. It records the exact version and a cryptographic hash (e.g., SHA-256) of the downloaded package's directory tree.
+3. **Validation**: During the load phase, the loader verifies the cached package against the hash in `warp.lock`. If the hash does not match (indicating tampering or a network failure), the loader aborts, preventing supply-chain attacks.
+
+#### Example `warp.lock`
+```text
+# This file is automatically generated by warp. DO NOT EDIT.
+github.com/acme/finance-skills v1.2.0 h1:9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b
+github.com/acme/finance-skills v1.2.0/PLUGIN.md h1:1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b
+```
+
+### 9.5 CLI Workflow (`warp get`)
+
+The WARP CLI provides an ergonomic developer experience for managing plugins, actively assisting the user in curating their workspace.
+
+When a user runs `warp get <source>@<version>`, the CLI performs the following steps:
+
+1. **Fetch**: Downloads the repository to the global cache and parses the `PLUGIN.md` to identify available `exports`.
+2. **Interactive Filtering**: If the plugin exports multiple resources, the CLI presents an interactive prompt allowing the user to select exactly which skills, commands, or tools they wish to import.
+3. **Mutation**: The CLI automatically rewrites the `WORKSPACE.md` file, appending the plugin definition and scaffolding the `imports` filter block based on the user's selections.
+4. **Locking**: The CLI computes the cryptographic hashes and updates the `warp.lock` file.
+
+To perform operations non-interactively (e.g., in CI/CD environments), the CLI supports flag-based filtering:
+```bash
+warp get github.com/acme/finance-skills@v1.2.0 --include="Skill/analysis,Command/*"
+```
 
 ---
 

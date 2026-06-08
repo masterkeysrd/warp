@@ -139,6 +139,11 @@ func (r *Registry) Validate() error {
 		}
 	}
 
+	var toolPolicy *WorkspaceToolPolicies
+	if r.workspace != nil && r.workspace.Def != nil && r.workspace.Def.Spec.Policies != nil {
+		toolPolicy = r.workspace.Def.Spec.Policies.Tools
+	}
+
 	type validator interface{ ValidateBase() error }
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -166,6 +171,51 @@ func (r *Registry) Validate() error {
 					return fmt.Errorf("command %s references missing tool: %s", name, toolRef)
 				}
 			}
+		}
+		if tool, ok := res.(*Tool); ok && toolPolicy != nil {
+			if err := checkToolPolicyLocked(name, tool, toolPolicy); err != nil {
+				return fmt.Errorf("tool %s violates workspace policy: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolPolicyLocked evaluates a tool against the workspace tool policy.
+func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *WorkspaceToolPolicies) error {
+	if policy.AllowDangerous != nil && !*policy.AllowDangerous {
+		if tool.Spec.Annotations != nil && tool.Spec.Annotations.IsDangerous {
+			return fmt.Errorf("dangerous tools are not allowed")
+		}
+	}
+	if policy.AllowOpenWorld != nil && !*policy.AllowOpenWorld {
+		if tool.Spec.Annotations != nil && tool.Spec.Annotations.IsOpenWorld {
+			return fmt.Errorf("open world tools are not allowed")
+		}
+	}
+	shortName := tool.Metadata.Name
+	if len(policy.Include) > 0 {
+		matched := false
+		for _, pat := range policy.Include {
+			if m, _ := filepath.Match(pat, shortName); m {
+				matched = true
+				break
+			}
+			if m, _ := filepath.Match(pat, qualifiedName); m {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("not in include list")
+		}
+	}
+	for _, pat := range policy.Exclude {
+		if m, _ := filepath.Match(pat, shortName); m {
+			return fmt.Errorf("matches exclude pattern %q", pat)
+		}
+		if m, _ := filepath.Match(pat, qualifiedName); m {
+			return fmt.Errorf("matches exclude pattern %q", pat)
 		}
 	}
 	return nil

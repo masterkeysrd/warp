@@ -140,6 +140,26 @@
               "defaultProvider": {
                 "type": "string",
                 "description": "Provider to use when an agent omits spec.models."
+              },
+              "policies": {
+                "type": "object",
+                "properties": {
+                  "tools": {
+                    "type": "object",
+                    "properties": {
+                      "allowDangerous": { "type": "boolean", "default": true },
+                      "allowOpenWorld": { "type": "boolean", "default": true },
+                      "include": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "exclude": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  }
+                }
               }
             }
           }

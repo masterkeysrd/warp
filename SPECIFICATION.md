@@ -107,6 +107,22 @@ created automatically with its root set to `$CWD`.
 |-------------------|----------|:--------:|----------|-------------------------------------------------------------------------------------------------------------------------------|
 | `projects`        | string[] |          | `[]`     | Directories to load as active projects. `["*"]` discovers all non-hidden immediate subdirectories. An empty value or omission defaults to `["."]`. |
 | `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.model`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
+| `policies`        | object   |          | —        | Workspace-level security policies (e.g., tool execution restrictions).                                                        |
+
+#### `WorkspacePolicies` fields
+
+| Field   | Type   | Description                                           |
+|---------|--------|-------------------------------------------------------|
+| `tools` | object | Restrictions on which tools agents are allowed to use. |
+
+#### `WorkspaceToolPolicies` fields
+
+| Field            | Type     | Default | Description                                                                                 |
+|------------------|----------|---------|---------------------------------------------------------------------------------------------|
+| `allowDangerous` | bool     | `true`  | If false, rejects any tool with `annotations.isDangerous: true`.                            |
+| `allowOpenWorld` | bool     | `true`  | If false, rejects any tool with `annotations.isOpenWorld: true`.                            |
+| `include`        | string[] | `[]`    | List of glob patterns for tools explicitly allowed. If set, tools not matching are forbidden. |
+| `exclude`        | string[] | `[]`    | List of tool short names or glob patterns that are explicitly forbidden in this workspace.  |
 
 #### Full example
 

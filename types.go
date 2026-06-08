@@ -29,6 +29,8 @@ const (
 	KindMCP Kind = "MCP"
 	// KindToolkit represents a Toolkit resource.
 	KindToolkit Kind = "Toolkit"
+	// KindPlugin represents a Plugin resource.
+	KindPlugin Kind = "Plugin"
 )
 
 // Metadata holds the identifying and descriptive fields shared by every
@@ -52,6 +54,29 @@ func (in *Metadata) DeepCopy() *Metadata {
 	}
 	out := new(Metadata)
 	*out = *in
+	return out
+}
+
+// ResourceFilter defines inclusion and exclusion rules based on glob patterns.
+type ResourceFilter struct {
+	Include []string `yaml:"include"` // Glob patterns for resources to expose
+	Exclude []string `yaml:"exclude"` // Glob patterns for resources to block (applied after include)
+}
+
+// DeepCopy returns a deep copy of the ResourceFilter.
+func (in *ResourceFilter) DeepCopy() *ResourceFilter {
+	if in == nil {
+		return nil
+	}
+	out := new(ResourceFilter)
+	if in.Include != nil {
+		out.Include = make([]string, len(in.Include))
+		copy(out.Include, in.Include)
+	}
+	if in.Exclude != nil {
+		out.Exclude = make([]string, len(in.Exclude))
+		copy(out.Exclude, in.Exclude)
+	}
 	return out
 }
 
@@ -117,10 +142,10 @@ func (b *BaseResource) ValidateBase() error {
 	}
 	switch b.Kind {
 	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand,
-		KindModelProvider, KindTool, KindMCP, KindToolkit:
+		KindModelProvider, KindTool, KindMCP, KindToolkit, KindPlugin:
 		// valid
 	default:
-		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command", b.Kind)
+		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Plugin", b.Kind)
 	}
 	if b.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")

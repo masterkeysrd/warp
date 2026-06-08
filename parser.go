@@ -162,6 +162,12 @@ func Parse(filePath, content string) (*ParseResult, error) {
 			return nil, fmt.Errorf("failed to parse Toolkit spec: %w", err)
 		}
 		resource = &res
+	case KindPlugin:
+		var p Plugin
+		if err := yaml.Unmarshal([]byte(yamlPart), &p); err != nil {
+			return nil, fmt.Errorf("failed to parse Plugin spec: %w", err)
+		}
+		resource = &p
 	default:
 		return nil, fmt.Errorf("unsupported resource kind: %s", base.Kind)
 	}

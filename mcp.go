@@ -23,31 +23,8 @@ type MCPSpec struct {
 	Command     []string                  `yaml:"command"`     // Command to start the MCP server via stdio
 	Env         map[string]string         `yaml:"env"`         // Environment variables for the MCP server
 	Annotations *ToolAnnotation           `yaml:"annotations"` // Default safety profile for all exposed tools
-	Tools       *MCPFilter                `yaml:"tools"`       // Controls which tools are exposed by this server
+	Tools       *ResourceFilter           `yaml:"tools"`       // Controls which tools are exposed by this server
 	Overrides   map[string]ToolAnnotation `yaml:"overrides"`   // Tool-specific annotation overrides (key is tool name)
-}
-
-// MCPFilter defines the inclusion/exclusion rules for MCP tools.
-type MCPFilter struct {
-	Include []string `yaml:"include"` // Glob patterns for tools to expose
-	Exclude []string `yaml:"exclude"` // Glob patterns for tools to block (applied after include)
-}
-
-// DeepCopy returns a deep copy of the MCPFilter.
-func (in *MCPFilter) DeepCopy() *MCPFilter {
-	if in == nil {
-		return nil
-	}
-	out := new(MCPFilter)
-	if in.Include != nil {
-		out.Include = make([]string, len(in.Include))
-		copy(out.Include, in.Include)
-	}
-	if in.Exclude != nil {
-		out.Exclude = make([]string, len(in.Exclude))
-		copy(out.Exclude, in.Exclude)
-	}
-	return out
 }
 
 // DeepCopy returns a deep copy of the MCPSpec.

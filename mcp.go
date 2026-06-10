@@ -1,5 +1,7 @@
 package warp
 
+import "maps"
+
 // MCP is a warp resource that describes an MCP server.
 type MCP struct {
 	BaseResource `yaml:",inline"`
@@ -40,17 +42,13 @@ func (in *MCPSpec) DeepCopy() *MCPSpec {
 	}
 	if in.Env != nil {
 		out.Env = make(map[string]string, len(in.Env))
-		for k, v := range in.Env {
-			out.Env[k] = v
-		}
+		maps.Copy(out.Env, in.Env)
 	}
 	out.Annotations = in.Annotations.DeepCopy()
 	out.Tools = in.Tools.DeepCopy()
 	if in.Overrides != nil {
 		out.Overrides = make(map[string]ToolAnnotation, len(in.Overrides))
-		for k, v := range in.Overrides {
-			out.Overrides[k] = v
-		}
+		maps.Copy(out.Overrides, in.Overrides)
 	}
 	return out
 }

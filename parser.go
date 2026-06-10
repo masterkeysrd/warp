@@ -197,3 +197,102 @@ func slugifyPath(filePath string) string {
 	name = strings.ReplaceAll(name, "\\", "-")
 	return strings.ToLower(name)
 }
+
+// Format serializes a Resource into its canonical Markdown/YAML representation.
+// It uses a triple-dash delimiter to separate the YAML front-matter from the
+// Markdown instructions for resources that support them (Agents, Skills, etc.).
+func Format(res Resource) ([]byte, error) {
+	var yamlPart []byte
+	var markdownPart string
+	useDelimiters := false
+
+	// Extract instructions and clear them from the struct before marshaling
+	// to avoid duplication in the YAML block.
+	switch r := res.(type) {
+	case *WorkspaceDef:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := yaml.Marshal(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
+	case *Context:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := yaml.Marshal(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
+	case *Agent:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := yaml.Marshal(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
+	case *Skill:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := yaml.Marshal(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
+	case *Command:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := yaml.Marshal(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
+	default:
+		// For resources without Instructions, just marshal directly.
+		b, err := yaml.Marshal(res)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
+	}
+
+	if !useDelimiters {
+		return yamlPart, nil
+	}
+
+	var buf strings.Builder
+	buf.WriteString("---\n")
+	buf.Write(yamlPart)
+	buf.WriteString("---\n")
+	if markdownPart != "" {
+		buf.WriteString(markdownPart)
+		if !strings.HasSuffix(markdownPart, "\n") {
+			buf.WriteByte('\n')
+		}
+	}
+
+	return []byte(buf.String()), nil
+}
+
+// RecommendedExtension returns the standard file extension (.md or .yaml)
+// for the given resource kind.
+func RecommendedExtension(kind Kind) string {
+	switch kind {
+	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand:
+		return ".md"
+	default:
+		return ".yaml"
+	}
+}

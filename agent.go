@@ -29,15 +29,15 @@ type AgentSpec struct {
 	Extends string `yaml:"extends,omitempty"`
 	// Instructions is the persona prompt populated from the Markdown body of
 	// the file (below the closing front-matter delimiter).
-	Instructions string `yaml:"instructions"`
+	Instructions string `yaml:"instructions,omitempty"`
 	// Triggers defines the architectural constraints on what can invoke this agent
 	// (e.g., "human", "agent"). An empty list means the agent can be triggered
 	// by anything.
-	Triggers []string `yaml:"triggers,omitempty"`
+	Triggers []string `yaml:"triggers,omitempty,flow"`
 	// Models is a prioritized list of LLM model identifiers to use (e.g.,
 	// ["gpt-4o", "claude-3-5-sonnet"]). The runtime should attempt to use the
 	// first available model.
-	Models []string `yaml:"models,omitempty"`
+	Models []string `yaml:"models,omitempty,flow"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature float64 `yaml:"temperature"`
 	// Tools is a list of resource refs (names or paths) restricting which

@@ -50,12 +50,12 @@ func (w *WorkspaceDef) DeepCopy() *WorkspaceDef {
 
 // WorkspaceDefSpec contains configuration for a Workspace resource.
 type WorkspaceDefSpec struct {
-	Projects        []string           `yaml:"projects"`
+	Projects        []string           `yaml:"projects,flow"`
 	DefaultProvider string             `yaml:"defaultProvider"`
 	DefaultAgent    string             `yaml:"defaultAgent"`
 	Plugins         []WorkspacePlugin  `yaml:"plugins"`
 	Policies        *WorkspacePolicies `yaml:"policies,omitempty"`
-	Instructions    string             `yaml:"instructions"`
+	Instructions    string             `yaml:"instructions,omitempty"`
 }
 
 // WorkspacePolicies defines workspace-level security and access policies.

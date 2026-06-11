@@ -22,12 +22,13 @@ func (in *Command) DeepCopy() *Command {
 
 // CommandSpec contains the configuration details for a Command resource.
 type CommandSpec struct {
-	// Instructions is the directive prompt populated from the Markdown body
+	// Instructions is the expertise prompt populated from the Markdown body
 	// of the file (below the closing front-matter delimiter).
-	Instructions string `yaml:"instructions"`
+	Instructions string `yaml:"instructions,omitempty"`
+
 	// Models is a prioritized list of LLM model identifiers to use for this
 	// command (e.g., ["gpt-4o-mini", "claude-3-haiku"]). Overrides agent defaults.
-	Models []string `yaml:"models,omitempty"`
+	Models []string `yaml:"models,omitempty,flow"`
 	// Tools is a list of resource refs (names or paths) restricting which
 	// Tool resources can be used while executing this command.
 	Tools []string `yaml:"tools,omitempty"`

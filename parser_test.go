@@ -35,8 +35,6 @@ spec:
   command:
     - ls
     - -la
-  env: {}
-  parameters: {}
 `,
 		},
 		{
@@ -95,8 +93,6 @@ metadata:
   name: test-mcp
 spec:
   command: ["npx", "@modelcontextprotocol/server-everything"]
-  env: {}
-  overrides: {}
   policies:
     tools:
       include: ["echo", "add"]

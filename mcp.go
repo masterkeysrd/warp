@@ -22,18 +22,18 @@ func (in *MCP) DeepCopy() *MCP {
 
 // MCPSpec contains the configuration details for an MCP resource.
 type MCPSpec struct {
-	Command     []string                  `yaml:"command"`     // Command to start the MCP server via stdio
-	Env         map[string]string         `yaml:"env"`         // Environment variables for the MCP server
-	Annotations *ToolAnnotation           `yaml:"annotations"` // Default safety profile for all exposed tools
-	Policies    *MCPPolicies              `yaml:"policies"`    // Controls which external MCP resources are exposed
-	Overrides   map[string]ToolAnnotation `yaml:"overrides"`   // Tool-specific annotation overrides (key is tool name)
+	Command     []string                  `yaml:"command"`               // Command to start the MCP server via stdio
+	Env         map[string]string         `yaml:"env,omitempty"`         // Environment variables for the MCP server
+	Annotations *ToolAnnotation           `yaml:"annotations,omitempty"` // Default safety profile for all exposed tools
+	Policies    *MCPPolicies              `yaml:"policies,omitempty"`    // Controls which external MCP resources are exposed
+	Overrides   map[string]ToolAnnotation `yaml:"overrides,omitempty"`   // Tool-specific annotation overrides (key is tool name)
 }
 
 // MCPPolicies defines inclusion and exclusion rules for resources exposed by an MCP server.
 type MCPPolicies struct {
-	Tools     *ResourceFilter `yaml:"tools"`
-	Prompts   *ResourceFilter `yaml:"prompts"`
-	Resources *ResourceFilter `yaml:"resources"`
+	Tools     *ResourceFilter `yaml:"tools,omitempty"`
+	Prompts   *ResourceFilter `yaml:"prompts,omitempty"`
+	Resources *ResourceFilter `yaml:"resources,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the MCPPolicies.

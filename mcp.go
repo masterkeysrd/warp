@@ -25,8 +25,27 @@ type MCPSpec struct {
 	Command     []string                  `yaml:"command"`     // Command to start the MCP server via stdio
 	Env         map[string]string         `yaml:"env"`         // Environment variables for the MCP server
 	Annotations *ToolAnnotation           `yaml:"annotations"` // Default safety profile for all exposed tools
-	Tools       *ResourceFilter           `yaml:"tools"`       // Controls which tools are exposed by this server
+	Policies    *MCPPolicies              `yaml:"policies"`    // Controls which external MCP resources are exposed
 	Overrides   map[string]ToolAnnotation `yaml:"overrides"`   // Tool-specific annotation overrides (key is tool name)
+}
+
+// MCPPolicies defines inclusion and exclusion rules for resources exposed by an MCP server.
+type MCPPolicies struct {
+	Tools     *ResourceFilter `yaml:"tools"`
+	Prompts   *ResourceFilter `yaml:"prompts"`
+	Resources *ResourceFilter `yaml:"resources"`
+}
+
+// DeepCopy returns a deep copy of the MCPPolicies.
+func (in *MCPPolicies) DeepCopy() *MCPPolicies {
+	if in == nil {
+		return nil
+	}
+	out := new(MCPPolicies)
+	out.Tools = in.Tools.DeepCopy()
+	out.Prompts = in.Prompts.DeepCopy()
+	out.Resources = in.Resources.DeepCopy()
+	return out
 }
 
 // DeepCopy returns a deep copy of the MCPSpec.
@@ -45,7 +64,7 @@ func (in *MCPSpec) DeepCopy() *MCPSpec {
 		maps.Copy(out.Env, in.Env)
 	}
 	out.Annotations = in.Annotations.DeepCopy()
-	out.Tools = in.Tools.DeepCopy()
+	out.Policies = in.Policies.DeepCopy()
 	if in.Overrides != nil {
 		out.Overrides = make(map[string]ToolAnnotation, len(in.Overrides))
 		maps.Copy(out.Overrides, in.Overrides)

@@ -336,7 +336,16 @@ func (s *ScopedRegistry) priorityFor(ns string) int {
 func (s *ScopedRegistry) ResolveResource(ref string) (Resource, bool) {
 	// Rewrite the local/ virtual alias to the concrete project slug.
 	if strings.HasPrefix(ref, NamespaceLocal+"/") {
-		ref = s.projectSlug + ref[len(NamespaceLocal):]
+		suffix := ref[len(NamespaceLocal):]
+		// Try project slug first.
+		if r, ok := s.base.get(s.projectSlug + suffix); ok {
+			return r, true
+		}
+		// Fallback to workspace-global namespace.
+		if r, ok := s.base.get(NamespaceWorkspace + suffix); ok {
+			return r, true
+		}
+		return nil, false
 	}
 	if strings.Contains(ref, "/") {
 		return s.base.get(ref)

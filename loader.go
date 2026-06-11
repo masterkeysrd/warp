@@ -6,7 +6,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 )
 
@@ -165,19 +164,11 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		return nil, err
 	}
 
-	// Determine whether the Authority Rule applies:
-	// if any project path is "." the workspace root is itself a project, so
-	// WORKSPACE_PATH/.agents/ belongs to the project — skip global loading.
-	flatRoot := slices.Contains(projectPaths, ".")
-
 	// Phase 3a: load workspace-global resources from WORKSPACE_ROOT/.agents/
-	// Only when at least one project is a sub-directory (Authority Rule).
-	if !flatRoot {
-		globalAgentsDir := filepath.Join(workspaceRoot, DefaultAgentsDir)
-		if info, err := os.Stat(globalAgentsDir); err == nil && info.IsDir() {
-			if err := loadAgentsDirIntoRegistry(reg, os.DirFS(globalAgentsDir), NamespaceWorkspace); err != nil {
-				return nil, fmt.Errorf("workspace global agents dir: %w", err)
-			}
+	globalAgentsDir := filepath.Join(workspaceRoot, DefaultAgentsDir)
+	if info, err := os.Stat(globalAgentsDir); err == nil && info.IsDir() {
+		if err := loadAgentsDirIntoRegistry(reg, os.DirFS(globalAgentsDir), NamespaceWorkspace); err != nil {
+			return nil, fmt.Errorf("workspace global agents dir: %w", err)
 		}
 	}
 
@@ -203,6 +194,11 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		reg.AddProject(proj)
 
 		// Load project-local resources from PROJECT_DIR/.agents/
+		// Skip if it's the root directory, as Phase 3a already loaded it into
+		// the workspace-global namespace.
+		if relPath == "." {
+			continue
+		}
 		projAgentsDir := filepath.Join(projAbsPath, DefaultAgentsDir)
 		if info, err := os.Stat(projAgentsDir); err == nil && info.IsDir() {
 			if err := loadAgentsDirIntoRegistry(reg, os.DirFS(projAgentsDir), slug); err != nil {

@@ -24,7 +24,7 @@ func (s *Skill) DeepCopy() *Skill {
 type SkillSpec struct {
 	// Instructions is the expertise prompt populated from the Markdown body
 	// of the file (below the closing front-matter delimiter).
-	Instructions string `yaml:"instructions"`
+	Instructions string `yaml:"instructions,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the SkillSpec.

@@ -198,6 +198,16 @@ func slugifyPath(filePath string) string {
 	return strings.ToLower(name)
 }
 
+func marshalYAML(v any) ([]byte, error) {
+	var buf strings.Builder
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
+}
+
 // Format serializes a Resource into its canonical Markdown/YAML representation.
 // It uses a triple-dash delimiter to separate the YAML front-matter from the
 // Markdown instructions for resources that support them (Agents, Skills, etc.).
@@ -214,7 +224,7 @@ func Format(res Resource) ([]byte, error) {
 		cp := r.DeepCopy()
 		markdownPart = cp.Spec.Instructions
 		cp.Spec.Instructions = ""
-		b, err := yaml.Marshal(cp)
+		b, err := marshalYAML(cp)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +234,7 @@ func Format(res Resource) ([]byte, error) {
 		cp := r.DeepCopy()
 		markdownPart = cp.Spec.Instructions
 		cp.Spec.Instructions = ""
-		b, err := yaml.Marshal(cp)
+		b, err := marshalYAML(cp)
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +244,7 @@ func Format(res Resource) ([]byte, error) {
 		cp := r.DeepCopy()
 		markdownPart = cp.Spec.Instructions
 		cp.Spec.Instructions = ""
-		b, err := yaml.Marshal(cp)
+		b, err := marshalYAML(cp)
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +254,7 @@ func Format(res Resource) ([]byte, error) {
 		cp := r.DeepCopy()
 		markdownPart = cp.Spec.Instructions
 		cp.Spec.Instructions = ""
-		b, err := yaml.Marshal(cp)
+		b, err := marshalYAML(cp)
 		if err != nil {
 			return nil, err
 		}
@@ -254,14 +264,14 @@ func Format(res Resource) ([]byte, error) {
 		cp := r.DeepCopy()
 		markdownPart = cp.Spec.Instructions
 		cp.Spec.Instructions = ""
-		b, err := yaml.Marshal(cp)
+		b, err := marshalYAML(cp)
 		if err != nil {
 			return nil, err
 		}
 		yamlPart = b
 	default:
 		// For resources without Instructions, just marshal directly.
-		b, err := yaml.Marshal(res)
+		b, err := marshalYAML(res)
 		if err != nil {
 			return nil, err
 		}

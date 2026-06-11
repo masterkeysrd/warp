@@ -28,7 +28,7 @@ func (in *Context) DeepCopy() *Context {
 type ContextSpec struct {
 	// Instructions is the directive text populated from the Markdown body of
 	// the file (below the closing front-matter delimiter).
-	Instructions string `yaml:"instructions"`
+	Instructions string `yaml:"instructions,omitempty"`
 	// Resources is a list of paths to other Warp files to be explicitly
 	// loaded into the context.
 	Resources []string `yaml:"resources"`

@@ -40,9 +40,9 @@ type Metadata struct {
 	// Name is the unique identifier for the resource within its kind.
 	Name string `yaml:"name"`
 	// Description is a short human-readable summary of the resource.
-	Description string `yaml:"description"`
+	Description string `yaml:"description,omitempty"`
 	// DisplayName is an optional pretty-printed label for UIs.
-	DisplayName string `yaml:"displayName"`
+	DisplayName string `yaml:"displayName,omitempty"`
 	// Labels are arbitrary key-value pairs for categorisation and filtering.
 	Labels map[string]string `yaml:"labels,omitempty"`
 }

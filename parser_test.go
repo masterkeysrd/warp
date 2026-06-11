@@ -87,3 +87,52 @@ spec:
 		})
 	}
 }
+
+func TestMCPPoliciesRoundTrip(t *testing.T) {
+	content := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: test-mcp
+spec:
+  command: ["npx", "@modelcontextprotocol/server-everything"]
+  env: {}
+  overrides: {}
+  policies:
+    tools:
+      include: ["echo", "add"]
+    prompts:
+      exclude: ["secret-*"]
+    resources:
+      include: ["file://*"]
+`
+	res, err := Parse("test-mcp.yaml", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	mcp, ok := res.Resource.(*MCP)
+	if !ok {
+		t.Fatalf("Expected *MCP, got %T", res.Resource)
+	}
+
+	if mcp.Spec.Policies == nil {
+		t.Fatal("Policies should not be nil")
+	}
+	if len(mcp.Spec.Policies.Tools.Include) != 2 {
+		t.Errorf("Expected 2 included tools, got %d", len(mcp.Spec.Policies.Tools.Include))
+	}
+
+	formatted, err := Format(mcp)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	res2, err := Parse("test-mcp.yaml", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(res.Resource, res2.Resource) {
+		t.Errorf("Round-trip failed: MCP resources are not equal")
+	}
+}

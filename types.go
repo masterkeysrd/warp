@@ -59,8 +59,8 @@ func (in *Metadata) DeepCopy() *Metadata {
 
 // ResourceFilter defines inclusion and exclusion rules based on glob patterns.
 type ResourceFilter struct {
-	Include []string `yaml:"include"` // Glob patterns for resources to expose
-	Exclude []string `yaml:"exclude"` // Glob patterns for resources to block (applied after include)
+	Include []string `yaml:"include,omitempty"` // Glob patterns for resources to expose
+	Exclude []string `yaml:"exclude,omitempty"` // Glob patterns for resources to block (applied after include)
 }
 
 // DeepCopy returns a deep copy of the ResourceFilter.

@@ -123,7 +123,7 @@ func TestListResources_Effective(t *testing.T) {
 	scoped := buildRegistry().Project("services-api")
 
 	results := scoped.ListResources(QueryOptions{
-		Kinds:     []string{string(KindSkill)},
+		Kinds:     []Kind{KindSkill},
 		Effective: true,
 	})
 

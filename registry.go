@@ -17,7 +17,7 @@ type Resolver interface {
 // QueryOptions controls how ListResources filters and deduplicates results.
 type QueryOptions struct {
 	// Kinds filters by resource kind. An empty slice matches all kinds.
-	Kinds []string
+	Kinds []Kind
 	// Namespaces filters by namespace. An empty slice matches all namespaces.
 	Namespaces []string
 	// Effective applies shadowing: when true, only the highest-priority
@@ -290,7 +290,7 @@ func (r *Registry) ListResources(opts QueryOptions) []Resource {
 		if !isStandardNamespace(ns) {
 			continue
 		}
-		if len(kindSet) > 0 && !kindSet[string(res.GetKind())] {
+		if len(kindSet) > 0 && !kindSet[res.GetKind()] {
 			continue
 		}
 		if len(nsSet) > 0 && !nsSet[ns] {
@@ -376,7 +376,7 @@ func (s *ScopedRegistry) ListResources(opts QueryOptions) []Resource {
 	defer s.base.mu.RUnlock()
 	var filtered []Resource
 	for _, res := range s.base.resources {
-		if len(kindSet) > 0 && !kindSet[string(res.GetKind())] {
+		if len(kindSet) > 0 && !kindSet[res.GetKind()] {
 			continue
 		}
 		if len(nsSet) > 0 && !nsSet[res.GetNamespace()] {
@@ -403,7 +403,7 @@ func (s *ScopedRegistry) SkillsForAgent(agentName string) ([]Skill, error) {
 	}
 
 	if len(ag.Spec.Skills) == 0 {
-		all := s.ListResources(QueryOptions{Kinds: []string{string(KindSkill)}, Effective: true})
+		all := s.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: true})
 		skills := make([]Skill, 0, len(all))
 		for _, r := range all {
 			if sk, ok := r.(*Skill); ok {
@@ -439,7 +439,7 @@ func (s *ScopedRegistry) ToolsForAgent(agentName string) ([]*Tool, error) {
 	}
 
 	if len(ag.Spec.Tools) == 0 {
-		all := s.ListResources(QueryOptions{Kinds: []string{string(KindTool)}, Effective: true})
+		all := s.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
 		tools := make([]*Tool, 0, len(all))
 		for _, r := range all {
 			if t, ok := r.(*Tool); ok {
@@ -539,11 +539,11 @@ func deduplicateByName(resources []Resource, prioFn func(string) int) []Resource
 	return out
 }
 
-func stringSet(in []string) map[string]bool {
+func stringSet[T ~string](in []T) map[T]bool {
 	if len(in) == 0 {
 		return nil
 	}
-	s := make(map[string]bool, len(in))
+	s := make(map[T]bool, len(in))
 	for _, v := range in {
 		s[v] = true
 	}

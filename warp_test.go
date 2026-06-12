@@ -104,7 +104,7 @@ spec:
 	}
 
 	// Verify kinds via ListResources.
-	tools := scoped.ListResources(QueryOptions{Kinds: []string{string(KindTool)}})
+	tools := scoped.ListResources(QueryOptions{Kinds: []Kind{KindTool}})
 	if len(tools) == 0 {
 		t.Error("expected at least one tool")
 	}
@@ -112,7 +112,7 @@ spec:
 		t.Errorf("expected KindTool, got %v", tools[0].GetKind())
 	}
 
-	mcps := scoped.ListResources(QueryOptions{Kinds: []string{string(KindMCP)}})
+	mcps := scoped.ListResources(QueryOptions{Kinds: []Kind{KindMCP}})
 	if len(mcps) == 0 {
 		t.Error("expected at least one MCP")
 	}
@@ -193,7 +193,7 @@ spec:
 
 	// With effective=true, local (proj1) tool shadows workspace tool.
 	tools := scoped.ListResources(QueryOptions{
-		Kinds:     []string{string(KindTool)},
+		Kinds:     []Kind{KindTool},
 		Effective: true,
 	})
 	if len(tools) == 0 {
@@ -406,14 +406,14 @@ spec:
 	}
 
 	// 1. Verify global isolation: base Registry should NOT list the context
-	globalCtx := reg.ListResources(QueryOptions{Kinds: []string{string(KindContext)}})
+	globalCtx := reg.ListResources(QueryOptions{Kinds: []Kind{KindContext}})
 	if len(globalCtx) > 0 {
 		t.Errorf("Expected 0 Context resources in global registry, got %d", len(globalCtx))
 	}
 
 	// 2. Verify project visibility: ScopedRegistry SHOULD list the context
 	scoped := reg.Project("my-proj")
-	localCtx := scoped.ListResources(QueryOptions{Kinds: []string{string(KindContext)}})
+	localCtx := scoped.ListResources(QueryOptions{Kinds: []Kind{KindContext}})
 	if len(localCtx) == 0 {
 		t.Error("Expected Context resource in ScopedRegistry, got 0")
 	}

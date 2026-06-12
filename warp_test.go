@@ -367,3 +367,63 @@ metadata:
 		t.Fatalf("expected workspace resource to keep precedence, got %q", got.Metadata.Description)
 	}
 }
+
+func TestContextDiscovery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "warp-ctx-discovery-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a workspace with a specific project
+	wsMd := `---
+apiVersion: warp/v1alpha1
+kind: Workspace
+metadata:
+  name: test-ws
+spec:
+  projects: ["my-proj"]
+---
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projDir := filepath.Join(tmpDir, "my-proj")
+	if err := os.Mkdir(projDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create AGENT.md in the project
+	agentContent := "# Project Instructions"
+	if err := os.WriteFile(filepath.Join(projDir, "AGENT.md"), []byte(agentContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	// 1. Verify global isolation: base Registry should NOT list the context
+	globalCtx := reg.ListResources(QueryOptions{Kinds: []string{string(KindContext)}})
+	if len(globalCtx) > 0 {
+		t.Errorf("Expected 0 Context resources in global registry, got %d", len(globalCtx))
+	}
+
+	// 2. Verify project visibility: ScopedRegistry SHOULD list the context
+	scoped := reg.Project("my-proj")
+	localCtx := scoped.ListResources(QueryOptions{Kinds: []string{string(KindContext)}})
+	if len(localCtx) == 0 {
+		t.Error("Expected Context resource in ScopedRegistry, got 0")
+	}
+
+	// 3. Verify resolution via short name
+	res, ok := scoped.ResolveResource("agent")
+	if !ok {
+		t.Fatal("Failed to resolve 'agent' in scoped registry")
+	}
+	if res.GetKind() != KindContext {
+		t.Errorf("Expected KindContext, got %v", res.GetKind())
+	}
+}

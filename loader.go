@@ -193,6 +193,12 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		}
 		reg.AddProject(proj)
 
+		// Also register the Context as a first-class resource.
+		if ctx != nil {
+			ctx.SetNamespace(slug)
+			reg.set(ctx.QualifiedName(), ctx)
+		}
+
 		// Load project-local resources from PROJECT_DIR/.agents/
 		// Skip if it's the root directory, as Phase 3a already loaded it into
 		// the workspace-global namespace.

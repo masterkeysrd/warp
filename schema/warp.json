@@ -217,12 +217,12 @@
         "properties": {
           "spec": {
             "type": "object",
-            "required": ["command", "description"],
+            "required": ["command"],
             "properties": {
               "command": { "type": "array", "items": { "type": "string" } },
-              "description": { "type": "string" },
               "env": { "type": "object", "additionalProperties": { "type": "string" } },
               "parameters": { "type": "object", "description": "JSON Schema for tool arguments" },
+              "outputSchema": { "type": "object", "description": "JSON Schema for tool output" },
               "annotations": {
                 "type": "object",
                 "properties": {

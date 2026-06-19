@@ -437,10 +437,14 @@ A `Tool` resource describes a custom tool that an agent can invoke.
 | Field         | Type     | Required | Description                                                                 |
 |---------------|----------|:--------:|-----------------------------------------------------------------------------|
 | `command`     | string[] | ✅       | Executable and static args (e.g., `["python", "script.py"]`).               |
-| `description` | string   | ✅       | What the tool does (sent to the LLM).                                       |
 | `env`         | map      |          | Environment variables injected into the process.                            |
 | `parameters`  | map      |          | JSON Schema object defining arguments the LLM must pass.                    |
+| `outputSchema`| map      |          | JSON Schema object defining the tool's output.                              |
 | `annotations` | object   |          | Safety profile for Tool Execution Security.                                 |
+
+> `instructions` is **not** written in the YAML front-matter. It is populated
+> automatically from the Markdown body below the closing `---`. This Markdown body
+> serves as the detailed description of what the tool does (sent to the LLM).
 
 #### `ToolAnnotation` fields
 

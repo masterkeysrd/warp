@@ -377,8 +377,17 @@ endpoints and default models.
 | `type`         | string | ✅       | e.g., `ollama`, `openai`, `anthropic`.          |
 | `endpoint`     | string | ✅       | API base URL.                                   |
 | `defaultModel` | string |          | Model to use if none specified.                 |
-| `auth`         | map    |          | Authentication config (e.g., `type: env`, `key: OPENAI_API_KEY`). |
+| `auth`         | object |          | Authentication config (e.g., `type: bearer`, `env: OPENAI_API_KEY`). |
 | `models`       | object[]|          | Available models from this provider.            |
+
+#### `ProviderAuth` fields
+
+| Field    | Type   | Description                                                                 |
+|----------|--------|-----------------------------------------------------------------------------|
+| `type`   | string | The auth scheme (e.g., `bearer`, `api-key`, `basic`).                       |
+| `header` | string | Custom HTTP header name to use if `type` is `api-key` (e.g., `x-api-key`).  |
+| `env`    | string | Read the secret credential from this environment variable.                  |
+| `file`   | string | Read the secret credential from this file path.                             |
 
 #### `ProviderModel` fields
 

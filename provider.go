@@ -1,7 +1,5 @@
 package warp
 
-import "maps"
-
 // ModelProvider is a warp resource that describes an LLM provider configuration.
 type ModelProvider struct {
 	BaseResource `yaml:",inline"`
@@ -22,11 +20,11 @@ func (in *ModelProvider) DeepCopy() *ModelProvider {
 
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
-	Type         string            `yaml:"type"`         // e.g., "ollama", "openai", "anthropic"
-	Endpoint     string            `yaml:"endpoint"`     // API base URL
-	DefaultModel string            `yaml:"defaultModel"` // Model to use if none specified
-	Auth         map[string]string `yaml:"auth"`         // e.g., type="env", key="OPENAI_API_KEY"
-	Models       []ProviderModel   `yaml:"models"`       // Available models from this provider
+	Type         string          `yaml:"type"`                   // e.g., "ollama", "openai", "anthropic"
+	Endpoint     string          `yaml:"endpoint"`               // API base URL
+	DefaultModel string          `yaml:"defaultModel"`           // Model to use if none specified
+	Auth         *ProviderAuth   `yaml:"auth,omitempty"`         // Authentication configuration
+	Models       []ProviderModel `yaml:"models"`                 // Available models from this provider
 }
 
 // DeepCopy returns a deep copy of the ModelProviderSpec.
@@ -37,13 +35,30 @@ func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	out := new(ModelProviderSpec)
 	*out = *in
 	if in.Auth != nil {
-		out.Auth = make(map[string]string, len(in.Auth))
-		maps.Copy(out.Auth, in.Auth)
+		out.Auth = in.Auth.DeepCopy()
 	}
 	if in.Models != nil {
 		out.Models = make([]ProviderModel, len(in.Models))
 		copy(out.Models, in.Models)
 	}
+	return out
+}
+
+// ProviderAuth defines how to authenticate with the model provider.
+type ProviderAuth struct {
+	Type   string `yaml:"type,omitempty" json:"type,omitempty"`     // The auth scheme (e.g., "bearer", "api-key", "basic")
+	Header string `yaml:"header,omitempty" json:"header,omitempty"` // Custom header name if type is "api-key"
+	Env    string `yaml:"env,omitempty" json:"env,omitempty"`       // Read credential from environment variable
+	File   string `yaml:"file,omitempty" json:"file,omitempty"`     // Read credential from file path
+}
+
+// DeepCopy returns a deep copy of the ProviderAuth.
+func (in *ProviderAuth) DeepCopy() *ProviderAuth {
+	if in == nil {
+		return nil
+	}
+	out := new(ProviderAuth)
+	*out = *in
 	return out
 }
 

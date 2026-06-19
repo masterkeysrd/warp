@@ -177,7 +177,15 @@
               "type": { "type": "string", "description": "e.g., ollama, openai, anthropic" },
               "endpoint": { "type": "string", "description": "API base URL" },
               "defaultModel": { "type": "string" },
-              "auth": { "type": "object" },
+              "auth": {
+                "type": "object",
+                "properties": {
+                  "type": { "type": "string", "description": "The auth scheme (e.g., bearer, api-key, basic)" },
+                  "header": { "type": "string", "description": "Custom header name if type is api-key" },
+                  "env": { "type": "string", "description": "Read credential from environment variable" },
+                  "file": { "type": "string", "description": "Read credential from file path" }
+                }
+              },
               "models": {
                 "type": "array",
                 "items": {

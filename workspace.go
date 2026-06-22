@@ -1,27 +1,13 @@
 package warp
 
-import (
-	"bytes"
-	"fmt"
-	"path/filepath"
-	"text/template"
-)
-
 // WorkspaceRenderOptions holds options for rendering workspace instructions.
 type WorkspaceRenderOptions struct {
 	// Globals are custom runtime variables to inject into the template.
 	Globals map[string]any
 }
 
-// TemplateWorkspace represents the workspace view model for templates.
-type TemplateWorkspace struct {
-	Dir  string
-	Path string
-}
-
 // Render processes the workspace's instructions as a template.
-// It supports both standard Go text/template syntax ({{.Workspace.Dir}}) and a
-// convenient shorthand syntax ($WorkspaceDir, $WorkspacePath).
+// It delegates to the generic Render engine which natively handles WorkspaceDef fields.
 func (w *Workspace) Render(opts *WorkspaceRenderOptions) (string, error) {
 	if w == nil || w.Def == nil {
 		return "", nil
@@ -30,48 +16,7 @@ func (w *Workspace) Render(opts *WorkspaceRenderOptions) (string, error) {
 		opts = &WorkspaceRenderOptions{}
 	}
 
-	rawInstructions := w.Def.Spec.Instructions
-	if rawInstructions == "" {
-		return "", nil
-	}
-
-	// 1. Build the template data context
-	data := make(map[string]any)
-
-	// Merge globals
-	for k, v := range opts.Globals {
-		data[k] = v
-	}
-
-	// Determine absolute paths
-	wsDir := w.RootPath
-	wsPath := filepath.Join(w.RootPath, WorkspaceFileName)
-
-	tw := TemplateWorkspace{
-		Dir:  wsDir,
-		Path: wsPath,
-	}
-	data["Workspace"] = tw
-
-	// Add shorthands matching standard convention
-	data["WorkspaceDir"] = tw.Dir
-	data["WorkspacePath"] = tw.Path
-
-	// 2. Preprocess shorthand $Var to {{.Var}}
-	tmplStr := preprocessShorthand(rawInstructions)
-
-	// 3. Parse and execute the template
-	t, err := template.New("Workspace").Option("missingkey=zero").Parse(tmplStr)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to execute template: %w", err)
-	}
-
-	return buf.String(), nil
+	return Render(w.Def, &RenderOptions{Globals: opts.Globals})
 }
 
 // Workspace holds the immutable specification of a WARP workspace.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"text/template"
@@ -18,6 +19,58 @@ type RenderOptions struct {
 	Globals map[string]any
 }
 
+// TemplateWorkspace represents the workspace view model for templates.
+type TemplateWorkspace struct {
+	Dir  string
+	Path string
+}
+
+// TemplateProject represents the project view model for templates.
+type TemplateProject struct {
+	Name        string
+	DisplayName string
+	Dir         string
+}
+
+// TemplateContext represents the context view model for templates.
+type TemplateContext struct {
+	Path string
+}
+
+// TemplateAgent represents the agent view model for templates.
+type TemplateAgent struct {
+	Name        string
+	Description string
+	Dir         string
+	Path        string
+	Skills      []TemplateSkill
+	Tools       []TemplateTool
+	Commands    []TemplateCommand
+}
+
+// TemplateSkill represents the skill view model for templates.
+type TemplateSkill struct {
+	Name        string
+	Description string
+	Dir         string
+	Path        string
+}
+
+// TemplateCommand represents the command view model for templates.
+type TemplateCommand struct {
+	Name        string
+	Description string
+	Dir         string
+	Path        string
+	Tools       []TemplateTool
+}
+
+// TemplateTool represents the tool view model for templates.
+type TemplateTool struct {
+	Name        string
+	Description string
+}
+
 // Render processes the resource's instructions as a template.
 // It supports both standard Go text/template syntax ({{.Name}}) and a
 // convenient shorthand syntax ($Name, $1).
@@ -26,19 +79,21 @@ func Render(res Resource, opts *RenderOptions) (string, error) {
 		opts = &RenderOptions{}
 	}
 
-	rawInstructions := getInstructions(res)
-	if rawInstructions == "" {
+	data := buildTemplateData(res, opts)
+	return renderTemplate(res.GetName(), getInstructions(res), data)
+}
+
+// renderTemplate is a shared helper that handles preprocessing, parsing, and execution.
+func renderTemplate(name string, instructions string, data map[string]any) (string, error) {
+	if instructions == "" {
 		return "", nil
 	}
 
-	// 1. Build the flattened data context
-	data := buildTemplateData(res, opts)
+	// Preprocess shorthand $Var to {{.Var}}
+	tmplStr := preprocessShorthand(instructions)
 
-	// 2. Preprocess shorthand $Var to {{.Var}}
-	tmplStr := preprocessShorthand(rawInstructions)
-
-	// 3. Parse and execute the template
-	t, err := template.New(res.GetName()).Option("missingkey=zero").Parse(tmplStr)
+	// Parse and execute the template
+	t, err := template.New(name).Option("missingkey=zero").Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -81,6 +136,12 @@ func preprocessShorthand(input string) string {
 func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 	data := make(map[string]any)
 
+	// Initialize built-in shorthands to empty string to avoid <no value> outputs
+	data["WorkspaceDir"] = ""
+	data["WorkspacePath"] = ""
+	data["ProjectDir"] = ""
+	data["ContextPath"] = ""
+
 	// Add globals first
 	maps.Copy(data, opts.Globals)
 
@@ -97,13 +158,60 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 
 	// Type-specific fields
 	switch v := res.(type) {
+	case *Context:
+		if _, ok := data["Context"]; !ok {
+			ctxPath := filepath.Join(v.Directory, ContextFileName)
+			tc := TemplateContext{
+				Path: ctxPath,
+			}
+			data["Context"] = tc
+			data["ContextPath"] = tc.Path
+		}
+	case *WorkspaceDef:
+		if _, ok := data["Workspace"]; !ok {
+			tw := TemplateWorkspace{
+				Dir:  v.Directory,
+				Path: filepath.Join(v.Directory, WorkspaceFileName),
+			}
+			data["Workspace"] = tw
+			data["WorkspaceDir"] = tw.Dir
+			data["WorkspacePath"] = tw.Path
+		}
 	case *Agent:
+		if _, ok := data["Agent"]; !ok {
+			ta := TemplateAgent{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Dir:         v.Directory,
+				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+			}
+			data["Agent"] = ta
+		}
 		data["Models"] = v.Spec.Models
 		data["Skills"] = v.Spec.Skills
 		data["Commands"] = v.Spec.Commands
 		data["Triggers"] = v.Spec.Triggers
 		data["Temperature"] = v.Spec.Temperature
+	case *Skill:
+		if _, ok := data["Skill"]; !ok {
+			ts := TemplateSkill{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Dir:         v.Directory,
+				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+			}
+			data["Skill"] = ts
+		}
 	case *Command:
+		if _, ok := data["Command"]; !ok {
+			tc := TemplateCommand{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Dir:         v.Directory,
+				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+			}
+			data["Command"] = tc
+		}
 		data["Models"] = v.Spec.Models
 		data["Tools"] = v.Spec.Tools
 		data["Hints"] = v.Spec.Hints
@@ -120,12 +228,6 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 
 			// Hint mappings
 			for i, hint := range v.Spec.Hints {
-				// Offset by 1 to get the argument *after* the positional command name,
-				// if we treat args[0] as $1.
-				// Wait, the test passes `[]string{"Pos1", "HintVal1", "HintVal2"}`.
-				// If hints are `["hint1", "hint2"]`, hint1 should map to args[1]?
-				// Ah, no. If hints are ["ticker", "year"], then $ticker = $1, $year = $2.
-				// So hint `i` corresponds to `opts.Args[i]`.
 				if i < len(opts.Args) {
 					data[hint] = opts.Args[i]
 				}
@@ -139,6 +241,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 func getInstructions(res Resource) string {
 	switch v := res.(type) {
 	case *Context:
+		return v.Spec.Instructions
+	case *WorkspaceDef:
 		return v.Spec.Instructions
 	case *Agent:
 		return v.Spec.Instructions

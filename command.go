@@ -1,5 +1,74 @@
 package warp
 
+import "path/filepath"
+
+// CommandRenderOptions holds options for rendering command instructions.
+type CommandRenderOptions struct {
+	Workspace *Workspace
+	Project   *Project
+	Args      []string
+	Globals   map[string]any
+}
+
+// Render processes the command's instructions as a template.
+// It acts as a rich extension that injects Workspace, Project scope, and Args into the generic Render.
+func (c *Command) Render(opts *CommandRenderOptions) (string, error) {
+	if c == nil {
+		return "", nil
+	}
+	if opts == nil {
+		opts = &CommandRenderOptions{}
+	}
+
+	mergedGlobals := make(map[string]any)
+	for k, v := range opts.Globals {
+		mergedGlobals[k] = v
+	}
+
+	// Inject Workspace derived from arguments
+	if opts.Workspace != nil {
+		tw := TemplateWorkspace{
+			Dir:  opts.Workspace.RootPath,
+			Path: filepath.Join(opts.Workspace.RootPath, WorkspaceFileName),
+		}
+		mergedGlobals["Workspace"] = tw
+		mergedGlobals["WorkspaceDir"] = tw.Dir
+		mergedGlobals["WorkspacePath"] = tw.Path
+	} else {
+		mergedGlobals["Workspace"] = TemplateWorkspace{}
+		mergedGlobals["WorkspaceDir"] = ""
+		mergedGlobals["WorkspacePath"] = ""
+	}
+
+	// Inject Project derived from arguments
+	if opts.Project != nil {
+		var displayName string
+		if opts.Project.Context != nil && opts.Project.Context.Metadata.DisplayName != "" {
+			displayName = opts.Project.Context.Metadata.DisplayName
+		} else {
+			displayName = opts.Project.Name
+		}
+
+		tp := TemplateProject{
+			Name:        opts.Project.Name,
+			DisplayName: displayName,
+			Dir:         opts.Project.AbsPath(),
+		}
+		mergedGlobals["Project"] = tp
+		mergedGlobals["ProjectDir"] = tp.Dir
+	} else {
+		mergedGlobals["Project"] = TemplateProject{}
+		mergedGlobals["ProjectDir"] = ""
+	}
+
+	renderOpts := &RenderOptions{
+		Args:    opts.Args,
+		Globals: mergedGlobals,
+	}
+
+	return Render(c, renderOpts)
+}
+
 // Command is a warp resource that encapsulates a discrete, reusable
 // operation an agent can perform. Its instructions are authored as the
 // Markdown body of the defining file.

@@ -22,12 +22,12 @@ func (in *Tool) DeepCopy() *Tool {
 
 // ToolSpec contains the configuration details for a Tool resource.
 type ToolSpec struct {
-	Name        string            `yaml:"name,omitempty"`         // Used only when defined inline in a Toolkit
-	Command     []string          `yaml:"command"`                // Executable and static args (e.g., ["python", "script.py"])
-	Env         map[string]string `yaml:"env,omitempty"`          // Environment variables injected into the process
-	Parameters  map[string]any    `yaml:"parameters,omitempty"`   // JSON Schema object defining arguments the LLM must pass
+	Name         string            `yaml:"name,omitempty"`         // Used only when defined inline in a Toolkit
+	Command      []string          `yaml:"command"`                // Executable and static args (e.g., ["python", "script.py"])
+	Env          map[string]string `yaml:"env,omitempty"`          // Environment variables injected into the process
+	Parameters   map[string]any    `yaml:"parameters,omitempty"`   // JSON Schema object defining arguments the LLM must pass
 	OutputSchema map[string]any    `yaml:"outputSchema,omitempty"` // JSON Schema object defining the tool's output
-	Annotations *ToolAnnotation   `yaml:"annotations,omitempty"`  // Safety profile for Tool Execution Security
+	Annotations  *ToolAnnotation   `yaml:"annotations,omitempty"`  // Safety profile for Tool Execution Security
 }
 
 // ToolAnnotation defines the safety profile for a tool.

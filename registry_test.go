@@ -168,24 +168,24 @@ func agentWithSpec(ns, name string, spec AgentSpec) *Agent {
 func TestAgent_Inheritance_Merge(t *testing.T) {
 	reg := NewRegistry(nil)
 
-	// system/Agent/main — parent: 1 tool, base instructions.
+	// system/Agent/main — parent: 1 skill, base instructions.
 	parent := agentWithSpec(NamespaceSystem, "main", AgentSpec{
 		Instructions: "parent instructions",
-		Tools:        []string{"system/Tool/tool-a"},
+		Skills:       []string{"system/Skill/skill-a"},
 	})
 	reg.Set(parent.QualifiedName(), parent)
-	reg.Set(MakeQualifiedName(NamespaceSystem, KindTool, "tool-a"),
-		makeToolResource(NamespaceSystem, "tool-a"))
+	reg.Set(MakeQualifiedName(NamespaceSystem, KindSkill, "skill-a"),
+		makeSkillResource(NamespaceSystem, "skill-a"))
 
-	// user/Agent/main — child: extends parent, adds 1 tool.
+	// user/Agent/main — child: extends parent, adds 1 skill.
 	child := agentWithSpec(NamespaceUser, "main", AgentSpec{
 		Extends:      "system/Agent/main",
 		Instructions: "child instructions",
-		Tools:        []string{"user/Tool/tool-b"},
+		Skills:       []string{"user/Skill/skill-b"},
 	})
 	reg.Set(child.QualifiedName(), child)
-	reg.Set(MakeQualifiedName(NamespaceUser, KindTool, "tool-b"),
-		makeToolResource(NamespaceUser, "tool-b"))
+	reg.Set(MakeQualifiedName(NamespaceUser, KindSkill, "skill-b"),
+		makeSkillResource(NamespaceUser, "skill-b"))
 
 	// ResolveAgent("main") must pick user/Agent/main (user > system) and merge.
 	scoped := reg.Project("myproject")
@@ -194,8 +194,8 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
 
-	if len(merged.Agent.Spec.Tools) != 2 {
-		t.Errorf("expected 2 tools, got %d: %v", len(merged.Agent.Spec.Tools), merged.Agent.Spec.Tools)
+	if len(merged.Agent.Spec.Skills) != 2 {
+		t.Errorf("expected 2 skills, got %d: %v", len(merged.Agent.Spec.Skills), merged.Agent.Spec.Skills)
 	}
 	if !strings.Contains(merged.Agent.Spec.Instructions, "parent instructions") {
 		t.Error("merged instructions should contain parent instructions")
@@ -212,23 +212,23 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 }
 
 // TestAgent_Inheritance_Chain verifies three-level inheritance produces the
-// union of all tools/skills from grandparent → parent → child.
+// union of all skills from grandparent → parent → child.
 func TestAgent_Inheritance_Chain(t *testing.T) {
 	reg := NewRegistry(nil)
 
 	grandparent := agentWithSpec(NamespaceSystem, "base", AgentSpec{
 		Instructions: "grandparent",
-		Tools:        []string{"tool-a"},
+		Skills:       []string{"skill-a"},
 	})
 	parent := agentWithSpec(NamespaceUser, "middle", AgentSpec{
 		Extends:      "system/Agent/base",
 		Instructions: "parent",
-		Tools:        []string{"tool-b"},
+		Skills:       []string{"skill-b"},
 	})
 	child := agentWithSpec(NamespaceWorkspace, "child", AgentSpec{
 		Extends:      "user/Agent/middle",
 		Instructions: "child",
-		Tools:        []string{"tool-c"},
+		Skills:       []string{"skill-c"},
 	})
 	for _, r := range []Resource{grandparent, parent, child} {
 		reg.Set(r.QualifiedName(), r)
@@ -238,8 +238,8 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
-	if len(merged.Agent.Spec.Tools) != 3 {
-		t.Errorf("expected 3 tools, got %d: %v", len(merged.Agent.Spec.Tools), merged.Agent.Spec.Tools)
+	if len(merged.Agent.Spec.Skills) != 3 {
+		t.Errorf("expected 3 skills, got %d: %v", len(merged.Agent.Spec.Skills), merged.Agent.Spec.Skills)
 	}
 	// Instruction order: grandparent → parent → child.
 	gpIdx := strings.Index(merged.Agent.Spec.Instructions, "grandparent")
@@ -431,3 +431,39 @@ func TestAgent_ResolvedAgent_ToolFiltering(t *testing.T) {
 	}
 }
 
+func TestAgent_NamespaceMatching(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	// Add tools to registry
+	toolA := makeToolResource("workspace", "git-clone")
+	toolB := makeToolResource("workspace", "http-get")
+	toolC := makeToolResource("system", "sys-tool")
+
+	reg.Set(toolA.QualifiedName(), toolA)
+	reg.Set(toolB.QualifiedName(), toolB)
+	reg.Set(toolC.QualifiedName(), toolC)
+
+	// Namespace/name matching (e.g. "workspace/*" should match workspace/Tool/git-clone and workspace/Tool/http-get, but not system/Tool/sys-tool)
+	agent1 := agentWithSpec(NamespaceWorkspace, "agent-ns-matching", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Include: []string{"workspace/*"},
+			},
+		},
+	})
+	reg.Set(agent1.QualifiedName(), agent1)
+
+	resolved1, err := reg.ResolveAgent("workspace/Agent/agent-ns-matching")
+	if err != nil {
+		t.Fatalf("ResolveAgent: %v", err)
+	}
+
+	if len(resolved1.Tools) != 2 {
+		t.Errorf("expected 2 tools (git-clone and http-get), got %d: %v", len(resolved1.Tools), resolved1.Tools)
+	}
+	for _, tool := range resolved1.Tools {
+		if tool.GetNamespace() != "workspace" {
+			t.Errorf("expected only workspace tools, but got: %s", tool.QualifiedName())
+		}
+	}
+}

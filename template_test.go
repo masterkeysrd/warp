@@ -76,3 +76,40 @@ func TestTemplateRender_Globals(t *testing.T) {
 		t.Errorf("Expected %q, got %q", expected, res)
 	}
 }
+
+func TestWorkspaceRender(t *testing.T) {
+	ws := &Workspace{
+		RootPath: "/Users/user/code/warp",
+		Def: &WorkspaceDef{
+			Spec: WorkspaceDefSpec{
+				Instructions: "Root: {{.Workspace.Dir}} | File: {{.Workspace.Path}} | Shorthand Root: $WorkspaceDir | Shorthand File: $WorkspacePath | CI: {{.CI_ENV}} | Shorthand CI: $CI_ENV",
+			},
+		},
+	}
+
+	opts := &WorkspaceRenderOptions{
+		Globals: map[string]any{
+			"CI_ENV": "true",
+		},
+	}
+
+	res, err := ws.Render(opts)
+	if err != nil {
+		t.Fatalf("Workspace.Render failed: %v", err)
+	}
+
+	expected := "Root: /Users/user/code/warp | File: /Users/user/code/warp/WORKSPACE.md | Shorthand Root: /Users/user/code/warp | Shorthand File: /Users/user/code/warp/WORKSPACE.md | CI: true | Shorthand CI: true"
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+
+	// Test nil safety
+	var nilWs *Workspace
+	resNil, err := nilWs.Render(nil)
+	if err != nil {
+		t.Errorf("nil Workspace should not error, got %v", err)
+	}
+	if resNil != "" {
+		t.Errorf("nil Workspace should render empty string, got %q", resNil)
+	}
+}

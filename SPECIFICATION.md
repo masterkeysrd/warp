@@ -107,22 +107,27 @@ created automatically with its root set to `$CWD`.
 |-------------------|----------|:--------:|----------|-------------------------------------------------------------------------------------------------------------------------------|
 | `projects`        | string[] |          | `[]`     | Directories to load as active projects. `["*"]` discovers all non-hidden immediate subdirectories. An empty value or omission defaults to `["."]`. |
 | `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.model`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
-| `policies`        | object   |          | —        | Workspace-level security policies (e.g., tool execution restrictions).                                                        |
+| `policies`        | object   |          | —        | Security and access policies (e.g., tool execution restrictions).                                                             |
 
-#### `WorkspacePolicies` fields
+#### `Policies` fields
 
 | Field   | Type   | Description                                           |
 |---------|--------|-------------------------------------------------------|
 | `tools` | object | Restrictions on which tools agents are allowed to use. |
 
-#### `WorkspaceToolPolicies` fields
+#### `ToolPolicies` fields
 
 | Field            | Type     | Default | Description                                                                                 |
 |------------------|----------|---------|---------------------------------------------------------------------------------------------|
 | `allowDangerous` | bool     | `true`  | If false, rejects any tool with `annotations.isDangerous: true`.                            |
 | `allowOpenWorld` | bool     | `true`  | If false, rejects any tool with `annotations.isOpenWorld: true`.                            |
-| `include`        | string[] | `[]`    | List of glob patterns for tools explicitly allowed. If set, tools not matching are forbidden. |
-| `exclude`        | string[] | `[]`    | List of tool short names or glob patterns that are explicitly forbidden in this workspace.  |
+| `include`        | string[] | `[]`    | List of patterns for tools explicitly allowed. If set, tools not matching are forbidden.    |
+| `exclude`        | string[] | `[]`    | List of patterns for tools explicitly forbidden.                                            |
+
+Patterns in `include` and `exclude` are glob-matched against three target strings:
+1. The tool's short name (e.g. `git-clone`).
+2. The tool's namespace and name (e.g. `workspace/git-*`), allowing easy scope/namespace limits without specifying the Kind.
+3. The tool's fully qualified name (e.g. `workspace/Tool/git-clone`).
 
 #### Full example
 
@@ -195,13 +200,13 @@ runtime.
 
 | Field         | Type     | Required | Default | Description                                                                                        |
 |---------------|----------|:--------:|---------|----------------------------------------------------------------------------------------------------|
-| `extends`     | string   |          | —       | Qualified Name (`namespace/Agent/name`) or Short Name of another Agent to extend. When set, the engine merges the parent's `skills` and `tools` arrays with the child's (parent entries first) and concatenates their Markdown instructions (parent first, then child). |
+| `extends`     | string   |          | —       | Qualified Name (`namespace/Agent/name`) or Short Name of another Agent to extend. When set, the engine merges the parent's `skills` and `policies` blocks. |
 | `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent (e.g. `["human"]`, `["agent"]`, `["system"]`). An empty list means it can be triggered by anything. |
 | `models`      | string[] |          | `[]`    | A prioritized list of LLM model identifiers (e.g. `["gpt-4o", "claude-3-5-sonnet"]`). The runtime should use the first available model. |
 | `temperature` | float    |          | `0.0`   | Sampling temperature in the range `0.0`–`2.0`. Higher values produce more varied output.          |
-| `tools`       | string[] |          | `[]`    | Names or qualified refs of `Tool` resources this agent may use. An empty list means no restriction. |
 | `skills`      | string[] |          | `[]`    | Names or qualified refs of `Skill` resources this agent is allowed to use.                        |
 | `commands`    | string[] |          | `[]`    | Names or qualified refs of `Command` resources this agent can invoke.                             |
+| `policies`    | object   |          | —       | Security and access policies (specifically `tools` execution restrictions) for this agent.         |
 
 > `instructions` is **not** written in the YAML front-matter. It is populated
 > automatically from the Markdown body below the closing `---`.
@@ -212,9 +217,17 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 
 1. The parent agent is resolved (which may itself extend another agent, forming a chain).
 2. A deep copy of the resolved parent is made as the merge base.
-3. The child's `skills` and `tools` lists are **appended** to the parent's lists.
-4. The child's Markdown instructions are **concatenated** after the parent's, separated by a blank line.
-5. Circular inheritance chains (including self-extension) are detected and return an error.
+3. The child's `skills` lists are **appended** to the parent's lists.
+4. The child's `policies` block is merged with the parent's:
+   - Boolean options (`allowDangerous`, `allowOpenWorld`) in the child override those of the parent if specified.
+   - Slice arrays (`include`, `exclude`) are combined using a set union.
+5. The child's Markdown instructions are **concatenated** after the parent's, separated by a blank line.
+6. Circular inheritance chains (including self-extension) are detected and return an error.
+
+#### Tool Access Resolution and Policy Filtering
+
+To support secure tool execution, the engine performs the following step during agent resolution:
+1. **Policy Filter Check**: The complete list of effective tools is filtered against the agent's merged `spec.policies.tools` policy block. Only tools satisfying the policy are exposed to the agent.
 
 #### Global Override Example
 

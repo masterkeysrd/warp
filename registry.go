@@ -194,10 +194,15 @@ func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicie
 		}
 	}
 	shortName := tool.Metadata.Name
+	nsName := tool.GetNamespace() + "/" + shortName
 	if len(policy.Include) > 0 {
 		matched := false
 		for _, pat := range policy.Include {
 			if m, _ := filepath.Match(pat, shortName); m {
+				matched = true
+				break
+			}
+			if m, _ := filepath.Match(pat, nsName); m {
 				matched = true
 				break
 			}
@@ -212,6 +217,9 @@ func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicie
 	}
 	for _, pat := range policy.Exclude {
 		if m, _ := filepath.Match(pat, shortName); m {
+			return fmt.Errorf("matches exclude pattern %q", pat)
+		}
+		if m, _ := filepath.Match(pat, nsName); m {
 			return fmt.Errorf("matches exclude pattern %q", pat)
 		}
 		if m, _ := filepath.Match(pat, qualifiedName); m {
@@ -451,7 +459,6 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 
 	// Merge: parent is the base; append child lists and instructions after.
 	parent.Spec.Skills = append(parent.Spec.Skills, ag.Spec.Skills...)
-	parent.Spec.Tools = append(parent.Spec.Tools, ag.Spec.Tools...)
 	parent.Spec.Commands = append(parent.Spec.Commands, ag.Spec.Commands...)
 	switch {
 	case parent.Spec.Instructions != "" && ag.Spec.Instructions != "":
@@ -537,24 +544,11 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 2. Resolve Tools
 	var tools []*Tool
-	if len(ag.Spec.Tools) == 0 {
-		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
-		for _, r := range all {
-			if t, ok := r.(*Tool); ok {
-				tools = append(tools, t)
-			}
+	allTools := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
+	for _, r := range allTools {
+		if t, ok := r.(*Tool); ok {
+			tools = append(tools, t)
 		}
-	} else {
-		for _, tRef := range ag.Spec.Tools {
-			r, ok := resolver.ResolveResource(tRef)
-			if !ok {
-				continue
-			}
-			if t, ok := r.(*Tool); ok {
-				tools = append(tools, t)
-			}
-		}
-		tools = deduplicateTools(tools)
 	}
 
 	// Apply tool policy filter
@@ -621,7 +615,7 @@ func mergePolicies(parent, child *Policies) *Policies {
 		aow := *child.Tools.AllowOpenWorld
 		merged.Tools.AllowOpenWorld = &aow
 	}
-	
+
 	// Union parent and child includes/excludes
 	merged.Tools.Include = unionSlices(merged.Tools.Include, child.Tools.Include)
 	merged.Tools.Exclude = unionSlices(merged.Tools.Exclude, child.Tools.Exclude)

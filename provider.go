@@ -20,11 +20,11 @@ func (in *ModelProvider) DeepCopy() *ModelProvider {
 
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
-	Type         string          `yaml:"type"`                   // e.g., "ollama", "openai", "anthropic"
-	Endpoint     string          `yaml:"endpoint"`               // API base URL
-	DefaultModel string          `yaml:"defaultModel"`           // Model to use if none specified
-	Auth         *ProviderAuth   `yaml:"auth,omitempty"`         // Authentication configuration
-	Models       []ProviderModel `yaml:"models"`                 // Available models from this provider
+	Type         string          `yaml:"type"`           // e.g., "ollama", "openai", "anthropic"
+	Endpoint     string          `yaml:"endpoint"`       // API base URL
+	DefaultModel string          `yaml:"defaultModel"`   // Model to use if none specified
+	Auth         *ProviderAuth   `yaml:"auth,omitempty"` // Authentication configuration
+	Models       []ProviderModel `yaml:"models"`         // Available models from this provider
 }
 
 // DeepCopy returns a deep copy of the ModelProviderSpec.

@@ -40,9 +40,6 @@ type AgentSpec struct {
 	Models []string `yaml:"models,omitempty,flow"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature float64 `yaml:"temperature"`
-	// Tools is a list of resource refs (names or paths) restricting which
-	// Tool resources this agent may use. An empty list means no restriction.
-	Tools []string `yaml:"tools,omitempty"`
 	// Skills is a list of file paths (relative to the FS root) that reference
 	// Skill resources this agent is allowed to use.
 	Skills []string `yaml:"skills,omitempty"`
@@ -67,10 +64,6 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	if in.Models != nil {
 		out.Models = make([]string, len(in.Models))
 		copy(out.Models, in.Models)
-	}
-	if in.Tools != nil {
-		out.Tools = make([]string, len(in.Tools))
-		copy(out.Tools, in.Tools)
 	}
 	if in.Skills != nil {
 		out.Skills = make([]string, len(in.Skills))

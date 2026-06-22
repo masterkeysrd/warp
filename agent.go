@@ -49,6 +49,8 @@ type AgentSpec struct {
 	// Commands is a list of file paths (relative to the FS root) that
 	// reference Command resources this agent can invoke.
 	Commands []string `yaml:"commands,omitempty"`
+	// Policies defines security and access policies.
+	Policies *Policies `yaml:"policies,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the AgentSpec.
@@ -77,6 +79,9 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	if in.Commands != nil {
 		out.Commands = make([]string, len(in.Commands))
 		copy(out.Commands, in.Commands)
+	}
+	if in.Policies != nil {
+		out.Policies = in.Policies.DeepCopy()
 	}
 	return out
 }

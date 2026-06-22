@@ -152,3 +152,60 @@ func (b *BaseResource) ValidateBase() error {
 	}
 	return nil
 }
+
+// Policies defines security and access policies.
+type Policies struct {
+	Tools *ToolPolicies `yaml:"tools,omitempty"`
+}
+
+// DeepCopy returns a deep copy of the Policies.
+func (in *Policies) DeepCopy() *Policies {
+	if in == nil {
+		return nil
+	}
+	out := new(Policies)
+	out.Tools = in.Tools.DeepCopy()
+	return out
+}
+
+// ToolPolicies defines restrictions for tool usage.
+type ToolPolicies struct {
+	AllowDangerous *bool    `yaml:"allowDangerous,omitempty"`
+	AllowOpenWorld *bool    `yaml:"allowOpenWorld,omitempty"`
+	Include        []string `yaml:"include,omitempty"`
+	Exclude        []string `yaml:"exclude,omitempty"`
+}
+
+// DeepCopy returns a deep copy of the ToolPolicies.
+func (in *ToolPolicies) DeepCopy() *ToolPolicies {
+	if in == nil {
+		return nil
+	}
+	out := new(ToolPolicies)
+	if in.AllowDangerous != nil {
+		ad := *in.AllowDangerous
+		out.AllowDangerous = &ad
+	}
+	if in.AllowOpenWorld != nil {
+		aow := *in.AllowOpenWorld
+		out.AllowOpenWorld = &aow
+	}
+	if in.Include != nil {
+		out.Include = make([]string, len(in.Include))
+		copy(out.Include, in.Include)
+	}
+	if in.Exclude != nil {
+		out.Exclude = make([]string, len(in.Exclude))
+		copy(out.Exclude, in.Exclude)
+	}
+	return out
+}
+
+// ResolvedAgent represents a fully hydrated agent, with all inheritance merged
+// and capabilities resolved and filtered by policies.
+type ResolvedAgent struct {
+	Agent    *Agent
+	Tools    []*Tool
+	Skills   []Skill
+	Commands []*Command
+}

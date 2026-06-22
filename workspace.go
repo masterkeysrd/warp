@@ -50,60 +50,12 @@ func (w *WorkspaceDef) DeepCopy() *WorkspaceDef {
 
 // WorkspaceDefSpec contains configuration for a Workspace resource.
 type WorkspaceDefSpec struct {
-	Projects        []string           `yaml:"projects,flow"`
-	DefaultProvider string             `yaml:"defaultProvider"`
-	DefaultAgent    string             `yaml:"defaultAgent"`
-	Plugins         []WorkspacePlugin  `yaml:"plugins"`
-	Policies        *WorkspacePolicies `yaml:"policies,omitempty"`
-	Instructions    string             `yaml:"instructions,omitempty"`
-}
-
-// WorkspacePolicies defines workspace-level security and access policies.
-type WorkspacePolicies struct {
-	Tools *WorkspaceToolPolicies `yaml:"tools,omitempty"`
-}
-
-// DeepCopy returns a deep copy of the WorkspacePolicies.
-func (in *WorkspacePolicies) DeepCopy() *WorkspacePolicies {
-	if in == nil {
-		return nil
-	}
-	out := new(WorkspacePolicies)
-	out.Tools = in.Tools.DeepCopy()
-	return out
-}
-
-// WorkspaceToolPolicies defines workspace-level restrictions for tool usage.
-type WorkspaceToolPolicies struct {
-	AllowDangerous *bool    `yaml:"allowDangerous,omitempty"`
-	AllowOpenWorld *bool    `yaml:"allowOpenWorld,omitempty"`
-	Include        []string `yaml:"include,omitempty"`
-	Exclude        []string `yaml:"exclude,omitempty"`
-}
-
-// DeepCopy returns a deep copy of the WorkspaceToolPolicies.
-func (in *WorkspaceToolPolicies) DeepCopy() *WorkspaceToolPolicies {
-	if in == nil {
-		return nil
-	}
-	out := new(WorkspaceToolPolicies)
-	if in.AllowDangerous != nil {
-		ad := *in.AllowDangerous
-		out.AllowDangerous = &ad
-	}
-	if in.AllowOpenWorld != nil {
-		aow := *in.AllowOpenWorld
-		out.AllowOpenWorld = &aow
-	}
-	if in.Include != nil {
-		out.Include = make([]string, len(in.Include))
-		copy(out.Include, in.Include)
-	}
-	if in.Exclude != nil {
-		out.Exclude = make([]string, len(in.Exclude))
-		copy(out.Exclude, in.Exclude)
-	}
-	return out
+	Projects        []string          `yaml:"projects,flow"`
+	DefaultProvider string            `yaml:"defaultProvider"`
+	DefaultAgent    string            `yaml:"defaultAgent"`
+	Plugins         []WorkspacePlugin `yaml:"plugins"`
+	Policies        *Policies         `yaml:"policies,omitempty"`
+	Instructions    string            `yaml:"instructions,omitempty"`
 }
 
 // WorkspacePlugin defines an external repository to load as a plugin.

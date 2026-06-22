@@ -139,7 +139,7 @@ func (r *Registry) Validate() error {
 		}
 	}
 
-	var toolPolicy *WorkspaceToolPolicies
+	var toolPolicy *ToolPolicies
 	if r.workspace != nil && r.workspace.Def != nil && r.workspace.Def.Spec.Policies != nil {
 		toolPolicy = r.workspace.Def.Spec.Policies.Tools
 	}
@@ -182,7 +182,7 @@ func (r *Registry) Validate() error {
 }
 
 // checkToolPolicyLocked evaluates a tool against the workspace tool policy.
-func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *WorkspaceToolPolicies) error {
+func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicies) error {
 	if policy.AllowDangerous != nil && !*policy.AllowDangerous {
 		if tool.Spec.Annotations != nil && tool.Spec.Annotations.IsDangerous {
 			return fmt.Errorf("dangerous tools are not allowed")
@@ -397,33 +397,11 @@ func (s *ScopedRegistry) ListResources(opts QueryOptions) []Resource {
 // skills are returned. When the list is empty every skill visible in this
 // project scope is returned.
 func (s *ScopedRegistry) SkillsForAgent(agentName string) ([]Skill, error) {
-	ag, err := s.ResolveAgent(agentName)
+	rag, err := s.ResolveAgent(agentName)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(ag.Spec.Skills) == 0 {
-		all := s.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: true})
-		skills := make([]Skill, 0, len(all))
-		for _, r := range all {
-			if sk, ok := r.(*Skill); ok {
-				skills = append(skills, *sk)
-			}
-		}
-		return skills, nil
-	}
-
-	skills := make([]Skill, 0, len(ag.Spec.Skills))
-	for _, ref := range ag.Spec.Skills {
-		r, ok := s.ResolveResource(ref)
-		if !ok {
-			continue
-		}
-		if sk, ok := r.(*Skill); ok {
-			skills = append(skills, *sk)
-		}
-	}
-	return skills, nil
+	return rag.Skills, nil
 }
 
 // ToolsForAgent returns the Tool resources available to the named agent within
@@ -433,33 +411,11 @@ func (s *ScopedRegistry) SkillsForAgent(agentName string) ([]Skill, error) {
 // tools are returned. When the list is empty every tool visible in this
 // project scope is returned.
 func (s *ScopedRegistry) ToolsForAgent(agentName string) ([]*Tool, error) {
-	ag, err := s.ResolveAgent(agentName)
+	rag, err := s.ResolveAgent(agentName)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(ag.Spec.Tools) == 0 {
-		all := s.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
-		tools := make([]*Tool, 0, len(all))
-		for _, r := range all {
-			if t, ok := r.(*Tool); ok {
-				tools = append(tools, t)
-			}
-		}
-		return tools, nil
-	}
-
-	tools := make([]*Tool, 0, len(ag.Spec.Tools))
-	for _, ref := range ag.Spec.Tools {
-		r, ok := s.ResolveResource(ref)
-		if !ok {
-			continue
-		}
-		if t, ok := r.(*Tool); ok {
-			tools = append(tools, t)
-		}
-	}
-	return tools, nil
+	return rag.Tools, nil
 }
 
 // ─── Agent Inheritance ─────────────────────────────────────────────────────────
@@ -503,21 +459,22 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	case ag.Spec.Instructions != "":
 		parent.Spec.Instructions = ag.Spec.Instructions
 	}
+	parent.Spec.Policies = mergePolicies(parent.Spec.Policies, ag.Spec.Policies)
 	return parent, nil
 }
 
 // ResolveAgent resolves an agent by ref, applying recursive inheritance merging.
-// Returns the fully merged *Agent or an error if the ref is not found, is not
+// Returns the fully merged *ResolvedAgent or an error if the ref is not found, is not
 // an Agent, or if a circular inheritance chain is detected.
-func (r *Registry) ResolveAgent(ref string) (*Agent, error) {
-	return resolveAgentChain(r, ref, make(map[string]struct{}))
+func (r *Registry) ResolveAgent(ref string) (*ResolvedAgent, error) {
+	return resolveExecutableAgent(r, ref)
 }
 
 // ResolveAgent resolves an agent by ref within this project scope, applying
 // recursive inheritance merging. The project slug is the highest-priority
 // namespace during resolution of every step in the chain.
-func (s *ScopedRegistry) ResolveAgent(ref string) (*Agent, error) {
-	return resolveAgentChain(s, ref, make(map[string]struct{}))
+func (s *ScopedRegistry) ResolveAgent(ref string) (*ResolvedAgent, error) {
+	return resolveExecutableAgent(s, ref)
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -548,4 +505,200 @@ func stringSet[T ~string](in []T) map[T]bool {
 		s[v] = true
 	}
 	return s
+}
+
+func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, error) {
+	ag, err := resolveAgentChain(resolver, ref, make(map[string]struct{}))
+	if err != nil {
+		return nil, err
+	}
+
+	// 1. Resolve Skills
+	var skills []Skill
+	if len(ag.Spec.Skills) == 0 {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: true})
+		for _, r := range all {
+			if sk, ok := r.(*Skill); ok {
+				skills = append(skills, *sk)
+			}
+		}
+	} else {
+		for _, sRef := range ag.Spec.Skills {
+			r, ok := resolver.ResolveResource(sRef)
+			if !ok {
+				continue
+			}
+			if sk, ok := r.(*Skill); ok {
+				skills = append(skills, *sk)
+			}
+		}
+		skills = deduplicateSkills(skills)
+	}
+
+	// 2. Resolve Tools
+	var tools []*Tool
+	if len(ag.Spec.Tools) == 0 {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
+		for _, r := range all {
+			if t, ok := r.(*Tool); ok {
+				tools = append(tools, t)
+			}
+		}
+	} else {
+		for _, tRef := range ag.Spec.Tools {
+			r, ok := resolver.ResolveResource(tRef)
+			if !ok {
+				continue
+			}
+			if t, ok := r.(*Tool); ok {
+				tools = append(tools, t)
+			}
+		}
+		tools = deduplicateTools(tools)
+	}
+
+	// Apply tool policy filter
+	if ag.Spec.Policies != nil && ag.Spec.Policies.Tools != nil {
+		tools = filterTools(tools, ag.Spec.Policies.Tools)
+	}
+
+	// 3. Resolve Commands
+	var commands []*Command
+	if len(ag.Spec.Commands) == 0 {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindCommand}, Effective: true})
+		for _, r := range all {
+			if c, ok := r.(*Command); ok {
+				commands = append(commands, c)
+			}
+		}
+	} else {
+		for _, cRef := range ag.Spec.Commands {
+			r, ok := resolver.ResolveResource(cRef)
+			if !ok {
+				continue
+			}
+			if c, ok := r.(*Command); ok {
+				commands = append(commands, c)
+			}
+		}
+		commands = deduplicateCommands(commands)
+	}
+
+	return &ResolvedAgent{
+		Agent:    ag,
+		Tools:    tools,
+		Skills:   skills,
+		Commands: commands,
+	}, nil
+}
+
+func mergePolicies(parent, child *Policies) *Policies {
+	if parent == nil && child == nil {
+		return nil
+	}
+	if parent == nil {
+		return child.DeepCopy()
+	}
+	if child == nil {
+		return parent.DeepCopy()
+	}
+
+	merged := parent.DeepCopy()
+	if child.Tools == nil {
+		return merged
+	}
+	if merged.Tools == nil {
+		merged.Tools = child.Tools.DeepCopy()
+		return merged
+	}
+
+	// Merge tool policies: child overrides parent booleans, unions arrays
+	if child.Tools.AllowDangerous != nil {
+		ad := *child.Tools.AllowDangerous
+		merged.Tools.AllowDangerous = &ad
+	}
+	if child.Tools.AllowOpenWorld != nil {
+		aow := *child.Tools.AllowOpenWorld
+		merged.Tools.AllowOpenWorld = &aow
+	}
+	
+	// Union parent and child includes/excludes
+	merged.Tools.Include = unionSlices(merged.Tools.Include, child.Tools.Include)
+	merged.Tools.Exclude = unionSlices(merged.Tools.Exclude, child.Tools.Exclude)
+
+	return merged
+}
+
+func unionSlices(a, b []string) []string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, val := range a {
+		if !seen[val] {
+			seen[val] = true
+			out = append(out, val)
+		}
+	}
+	for _, val := range b {
+		if !seen[val] {
+			seen[val] = true
+			out = append(out, val)
+		}
+	}
+	return out
+}
+
+func deduplicateTools(in []*Tool) []*Tool {
+	seen := make(map[string]bool)
+	var out []*Tool
+	for _, t := range in {
+		qn := t.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func deduplicateSkills(in []Skill) []Skill {
+	seen := make(map[string]bool)
+	var out []Skill
+	for _, s := range in {
+		qn := s.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func deduplicateCommands(in []*Command) []*Command {
+	seen := make(map[string]bool)
+	var out []*Command
+	for _, c := range in {
+		qn := c.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func filterTools(tools []*Tool, policy *ToolPolicies) []*Tool {
+	if policy == nil {
+		return tools
+	}
+	var filtered []*Tool
+	for _, tool := range tools {
+		qn := tool.QualifiedName()
+		if err := checkToolPolicyLocked(qn, tool, policy); err == nil {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
 }

@@ -194,18 +194,18 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
 
-	if len(merged.Spec.Tools) != 2 {
-		t.Errorf("expected 2 tools, got %d: %v", len(merged.Spec.Tools), merged.Spec.Tools)
+	if len(merged.Agent.Spec.Tools) != 2 {
+		t.Errorf("expected 2 tools, got %d: %v", len(merged.Agent.Spec.Tools), merged.Agent.Spec.Tools)
 	}
-	if !strings.Contains(merged.Spec.Instructions, "parent instructions") {
+	if !strings.Contains(merged.Agent.Spec.Instructions, "parent instructions") {
 		t.Error("merged instructions should contain parent instructions")
 	}
-	if !strings.Contains(merged.Spec.Instructions, "child instructions") {
+	if !strings.Contains(merged.Agent.Spec.Instructions, "child instructions") {
 		t.Error("merged instructions should contain child instructions")
 	}
 	// Parent instructions must come first.
-	parentIdx := strings.Index(merged.Spec.Instructions, "parent instructions")
-	childIdx := strings.Index(merged.Spec.Instructions, "child instructions")
+	parentIdx := strings.Index(merged.Agent.Spec.Instructions, "parent instructions")
+	childIdx := strings.Index(merged.Agent.Spec.Instructions, "child instructions")
 	if parentIdx > childIdx {
 		t.Error("parent instructions should appear before child instructions")
 	}
@@ -238,16 +238,16 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
-	if len(merged.Spec.Tools) != 3 {
-		t.Errorf("expected 3 tools, got %d: %v", len(merged.Spec.Tools), merged.Spec.Tools)
+	if len(merged.Agent.Spec.Tools) != 3 {
+		t.Errorf("expected 3 tools, got %d: %v", len(merged.Agent.Spec.Tools), merged.Agent.Spec.Tools)
 	}
 	// Instruction order: grandparent → parent → child.
-	gpIdx := strings.Index(merged.Spec.Instructions, "grandparent")
-	pIdx := strings.Index(merged.Spec.Instructions, "parent")
-	cIdx := strings.Index(merged.Spec.Instructions, "child")
+	gpIdx := strings.Index(merged.Agent.Spec.Instructions, "grandparent")
+	pIdx := strings.Index(merged.Agent.Spec.Instructions, "parent")
+	cIdx := strings.Index(merged.Agent.Spec.Instructions, "child")
 	if gpIdx >= pIdx || pIdx >= cIdx {
 		t.Errorf("unexpected instruction order: gp=%d p=%d c=%d in %q",
-			gpIdx, pIdx, cIdx, merged.Spec.Instructions)
+			gpIdx, pIdx, cIdx, merged.Agent.Spec.Instructions)
 	}
 }
 
@@ -285,3 +285,149 @@ func TestAgent_Inheritance_MutualCircular(t *testing.T) {
 		t.Errorf("expected 'circular' in error message, got: %v", err)
 	}
 }
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAgent_Policies_Merging(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	allowDangerousParent := false
+	allowOpenWorldParent := true
+	parent := agentWithSpec(NamespaceSystem, "parent", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				AllowDangerous: &allowDangerousParent,
+				AllowOpenWorld: &allowOpenWorldParent,
+				Include:        []string{"git_*"},
+				Exclude:        []string{"*dangerous*"},
+			},
+		},
+	})
+	reg.Set(parent.QualifiedName(), parent)
+
+	allowDangerousChild := true
+	child := agentWithSpec(NamespaceWorkspace, "child", AgentSpec{
+		Extends: "system/Agent/parent",
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				AllowDangerous: &allowDangerousChild,
+				Include:        []string{"ssh_*"},
+				Exclude:        []string{"*evil*"},
+			},
+		},
+	})
+	reg.Set(child.QualifiedName(), child)
+
+	resolved, err := reg.ResolveAgent("workspace/Agent/child")
+	if err != nil {
+		t.Fatalf("ResolveAgent: %v", err)
+	}
+
+	p := resolved.Agent.Spec.Policies
+	if p == nil || p.Tools == nil {
+		t.Fatal("expected resolved agent to have tool policies")
+	}
+
+	// Boolean overrides
+	if p.Tools.AllowDangerous == nil || !*p.Tools.AllowDangerous {
+		t.Errorf("expected AllowDangerous to be overridden to true, got %v", p.Tools.AllowDangerous)
+	}
+	if p.Tools.AllowOpenWorld == nil || !*p.Tools.AllowOpenWorld {
+		t.Errorf("expected AllowOpenWorld to be inherited as true, got %v", p.Tools.AllowOpenWorld)
+	}
+
+	// Slice unions (should deduplicate / union)
+	expectedIncludes := []string{"git_*", "ssh_*"}
+	if !slicesEqual(p.Tools.Include, expectedIncludes) {
+		t.Errorf("expected Include to be %v, got %v", expectedIncludes, p.Tools.Include)
+	}
+
+	expectedExcludes := []string{"*dangerous*", "*evil*"}
+	if !slicesEqual(p.Tools.Exclude, expectedExcludes) {
+		t.Errorf("expected Exclude to be %v, got %v", expectedExcludes, p.Tools.Exclude)
+	}
+}
+
+func TestAgent_ResolvedAgent_ToolFiltering(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	// Add tools to registry
+	toolA := makeToolResource(NamespaceWorkspace, "git-clone")
+	toolB := makeToolResource(NamespaceWorkspace, "rm-rf")
+	toolB.Spec.Annotations = &ToolAnnotation{IsDangerous: true}
+	toolC := makeToolResource(NamespaceWorkspace, "http-get")
+	toolC.Spec.Annotations = &ToolAnnotation{IsOpenWorld: true}
+
+	reg.Set(toolA.QualifiedName(), toolA)
+	reg.Set(toolB.QualifiedName(), toolB)
+	reg.Set(toolC.QualifiedName(), toolC)
+
+	// Agent policy
+	allowDangerous := false
+	allowOpenWorld := false
+	agent := agentWithSpec(NamespaceWorkspace, "my-agent", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				AllowDangerous: &allowDangerous,
+				AllowOpenWorld: &allowOpenWorld,
+				Include:        []string{"git-*", "http-*"},
+				Exclude:        []string{"*clone*"},
+			},
+		},
+	})
+	reg.Set(agent.QualifiedName(), agent)
+
+	resolved, err := reg.ResolveAgent("workspace/Agent/my-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent: %v", err)
+	}
+
+	// Filter logic:
+	// - git-clone: excluded by "*clone*" pattern.
+	// - rm-rf: annotation IsDangerous=true, which is forbidden (AllowDangerous=false).
+	// - http-get: annotation IsOpenWorld=true, which is forbidden (AllowOpenWorld=false).
+	// None of the tools should be returned!
+	if len(resolved.Tools) != 0 {
+		t.Errorf("expected 0 tools, got %d: %v", len(resolved.Tools), resolved.Tools)
+	}
+
+	// Now allow open world and git-clone (by removing exclude, allowing dangerous)
+	allowDangerous2 := true
+	allowOpenWorld2 := true
+	agent2 := agentWithSpec(NamespaceWorkspace, "my-agent-2", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				AllowDangerous: &allowDangerous2,
+				AllowOpenWorld: &allowOpenWorld2,
+				Include:        []string{"git-*", "http-*"},
+			},
+		},
+	})
+	reg.Set(agent2.QualifiedName(), agent2)
+
+	resolved2, err := reg.ResolveAgent("workspace/Agent/my-agent-2")
+	if err != nil {
+		t.Fatalf("ResolveAgent: %v", err)
+	}
+
+	// git-clone and http-get are included.
+	// rm-rf is not included (doesn't match "git-*" or "http-*").
+	if len(resolved2.Tools) != 2 {
+		t.Errorf("expected 2 tools, got %d", len(resolved2.Tools))
+	}
+	names := []string{resolved2.Tools[0].Metadata.Name, resolved2.Tools[1].Metadata.Name}
+	if !slicesEqual(names, []string{"git-clone", "http-get"}) && !slicesEqual(names, []string{"http-get", "git-clone"}) {
+		t.Errorf("unexpected resolved tools: %v", names)
+	}
+}
+

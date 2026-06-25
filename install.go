@@ -234,7 +234,7 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, erro
 	}
 	absResourceDir := filepath.Join(cacheDir, resourceDir)
 
-	provider := NewFSResourceProvider(os.DirFS(absResourceDir))
+	provider := NewFSResourceProvider(os.DirFS(absResourceDir), absResourceDir)
 	tempReg, err := provider.LoadResources()
 	if err != nil {
 		return nil, fmt.Errorf("loading resources from plugin: %w", err)

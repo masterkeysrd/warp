@@ -281,7 +281,7 @@ metadata:
 ---
 `),
 		},
-	})
+	}, "")
 
 	ws, err := LoadWorkspace(tmpDir, provider)
 	if err != nil {
@@ -348,7 +348,7 @@ metadata:
 ---
 `),
 		},
-	})
+	}, "")
 
 	ws, err := LoadWorkspace(tmpDir, provider)
 	if err != nil {

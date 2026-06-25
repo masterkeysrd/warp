@@ -23,14 +23,15 @@ type NamespacedProvider interface {
 // ModelProvider, Tool, MCP, and Toolkit files as a NamespacedProvider.
 type NamespacedFSProvider struct {
 	fsys      fs.FS
+	BasePath  string // Optional virtual root prefix (e.g., "source://system")
 	namespace string
 	priority  int
 }
 
 // NewNamespacedFSProvider returns a provider that loads resources from fsys
 // and tags them all with the given namespace and priority.
-func NewNamespacedFSProvider(fsys fs.FS, namespace string, priority int) *NamespacedFSProvider {
-	return &NamespacedFSProvider{fsys: fsys, namespace: namespace, priority: priority}
+func NewNamespacedFSProvider(fsys fs.FS, basePath string, namespace string, priority int) *NamespacedFSProvider {
+	return &NamespacedFSProvider{fsys: fsys, BasePath: basePath, namespace: namespace, priority: priority}
 }
 
 // Namespace implements NamespacedProvider.
@@ -55,6 +56,7 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 		rs.Tools,
 		rs.MCPs,
 		rs.Toolkits,
+		p.BasePath,
 	); err != nil {
 		return nil, fmt.Errorf("namespaced provider %q: %w", p.namespace, err)
 	}

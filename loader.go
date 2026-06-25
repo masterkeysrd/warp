@@ -52,12 +52,13 @@ type ResourceProvider interface {
 // FSResourceProvider loads resources from a filesystem rooted at a resource
 // library directory. Workspace and Context resources are ignored.
 type FSResourceProvider struct {
-	fsys fs.FS
+	fsys     fs.FS
+	BasePath string // Optional virtual root prefix for resolved resource directories (e.g. "source://plugin")
 }
 
 // NewFSResourceProvider returns a resource provider that loads from fsys.
-func NewFSResourceProvider(fsys fs.FS) *FSResourceProvider {
-	return &FSResourceProvider{fsys: fsys}
+func NewFSResourceProvider(fsys fs.FS, basePath string) *FSResourceProvider {
+	return &FSResourceProvider{fsys: fsys, BasePath: basePath}
 }
 
 // LoadResources loads Agent, Skill, Command, ModelProvider, Tool, MCP, and
@@ -80,6 +81,7 @@ func (p *FSResourceProvider) LoadResources() (*ResourceSet, error) {
 		resources.Tools,
 		resources.MCPs,
 		resources.Toolkits,
+		p.BasePath,
 	); err != nil {
 		return nil, err
 	}
@@ -168,7 +170,7 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 	// Phase 3a: load workspace-global resources from WORKSPACE_ROOT/.agents/
 	globalAgentsDir := filepath.Join(workspaceRoot, DefaultAgentsDir)
 	if info, err := os.Stat(globalAgentsDir); err == nil && info.IsDir() {
-		if err := loadAgentsDirIntoRegistry(reg, os.DirFS(globalAgentsDir), NamespaceWorkspace); err != nil {
+		if err := loadAgentsDirIntoRegistry(reg, os.DirFS(globalAgentsDir), NamespaceWorkspace, globalAgentsDir); err != nil {
 			return nil, fmt.Errorf("workspace global agents dir: %w", err)
 		}
 	}
@@ -208,7 +210,7 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		}
 		projAgentsDir := filepath.Join(projAbsPath, DefaultAgentsDir)
 		if info, err := os.Stat(projAgentsDir); err == nil && info.IsDir() {
-			if err := loadAgentsDirIntoRegistry(reg, os.DirFS(projAgentsDir), slug); err != nil {
+			if err := loadAgentsDirIntoRegistry(reg, os.DirFS(projAgentsDir), slug, projAgentsDir); err != nil {
 				return nil, fmt.Errorf("project %s agents dir: %w", slug, err)
 			}
 		}
@@ -322,7 +324,7 @@ func resourceBase(r Resource) *BaseResource {
 
 // loadAgentsDirIntoRegistry walks an agents directory and registers all
 // resources into reg under the given namespace, using QualifiedName as key.
-func loadAgentsDirIntoRegistry(reg *Registry, fsys fs.FS, ns string) error {
+func loadAgentsDirIntoRegistry(reg *Registry, fsys fs.FS, ns string, basePath string) error {
 	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -356,7 +358,12 @@ func loadAgentsDirIntoRegistry(reg *Registry, fsys fs.FS, ns string) error {
 			if br == nil {
 				return nil
 			}
-			br.Directory = path.Dir(p)
+			if basePath != "" {
+				// Convert the forward-slash path from fs.FS to OS specific
+				br.Directory = filepath.Join(basePath, filepath.FromSlash(path.Dir(p)))
+			} else {
+				br.Directory = path.Dir(p)
+			}
 			br.SetNamespace(ns)
 			reg.set(r.QualifiedName(), r)
 		}
@@ -498,6 +505,7 @@ func loadAgentsDir(fsys fs.FS,
 	tools map[string]*Tool,
 	mcps map[string]*MCP,
 	toolkits map[string]*Toolkit,
+	basePath string,
 ) error {
 	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -523,7 +531,12 @@ func loadAgentsDir(fsys fs.FS,
 			return nil
 		}
 
-		dir := path.Dir(p)
+		var dir string
+		if basePath != "" {
+			dir = filepath.Join(basePath, filepath.FromSlash(path.Dir(p)))
+		} else {
+			dir = path.Dir(p)
+		}
 
 		switch res.Kind {
 		case KindAgent:

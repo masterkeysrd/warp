@@ -1,12 +1,17 @@
 package warp
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ErrMissingFrontMatter is returned by Parse when a file does not contain
+// YAML front-matter delimiters and is not a special inferred file.
+var ErrMissingFrontMatter = errors.New("invalid file format: missing YAML front-matter delimiters")
 
 // ParseResult is the output of a successful Parse call. It carries the
 // detected resource Kind and the fully-decoded, typed resource value.
@@ -55,7 +60,7 @@ func Parse(filePath, content string) (*ParseResult, error) {
 		yamlPart = content
 	} else {
 		parts := strings.SplitN(content, "---", 3)
-		if len(parts) < 3 {
+		if len(parts) < 3 || strings.TrimSpace(parts[0]) != "" {
 			switch {
 			case isWorkspaceFile:
 				// WORKSPACE.md with no front-matter: infer the Workspace metadata.
@@ -88,7 +93,7 @@ func Parse(filePath, content string) (*ParseResult, error) {
 				}
 				return &ParseResult{Kind: KindContext, Resource: c, Inferred: true}, nil
 			default:
-				return nil, fmt.Errorf("invalid file format: missing YAML front-matter delimiters")
+				return nil, ErrMissingFrontMatter
 			}
 		}
 		yamlPart = parts[1]

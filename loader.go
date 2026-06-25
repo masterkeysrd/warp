@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -338,7 +339,11 @@ func loadAgentsDirIntoRegistry(reg *Registry, fsys fs.FS, ns string) error {
 
 		res, err := Parse(p, string(content))
 		if err != nil {
-			return fmt.Errorf("parse file %s: %w", p, err)
+			if errors.Is(err, ErrMissingFrontMatter) {
+				return nil
+			}
+			reg.warnings = append(reg.warnings, fmt.Sprintf("parse file %s: %v", p, err))
+			return nil
 		}
 
 		switch res.Kind {
@@ -510,7 +515,12 @@ func loadAgentsDir(fsys fs.FS,
 
 		res, err := Parse(p, string(content))
 		if err != nil {
-			return fmt.Errorf("parse file %s: %w", p, err)
+			if errors.Is(err, ErrMissingFrontMatter) {
+				return nil
+			}
+			// Silently ignore parse errors in resource providers to avoid crashing.
+			// The primary loader (loadAgentsDirIntoRegistry) will emit warnings.
+			return nil
 		}
 
 		dir := path.Dir(p)

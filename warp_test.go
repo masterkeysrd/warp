@@ -427,3 +427,95 @@ spec:
 		t.Errorf("Expected KindContext, got %v", res.GetKind())
 	}
 }
+
+func TestLoadWorkspace_IgnoresMissingFrontMatter(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "warp-test-missing-fm-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	wsMd := `---
+apiVersion: warp/v1alpha1
+kind: Workspace
+metadata:
+  name: test-ws
+spec:
+  projects: ["."]
+---
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(tmpDir, ".agents")
+	if err := os.Mkdir(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid agent
+	agentMd := `---
+apiVersion: warp/v1alpha1
+kind: Agent
+metadata:
+  name: valid-agent
+---
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "valid-agent.md"), []byte(agentMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Markdown file missing YAML front matter completely
+	noFmMd := `# Reference Doc
+This is just a reference doc.
+
+## Table
+| a | b |
+|---|---|
+| 1 | 2 |
+
+---
+Horizontal rule
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "README.md"), []byte(noFmMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Malformed file (invalid YAML)
+	malformedMd := `---
+kind: Agent
+apiVersion: warp/v1alpha1
+malformed: [
+---
+# Invalid yaml
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "malformed.md"), []byte(malformedMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// It should load successfully, ignoring README.md and emitting warning for malformed.md
+	ws, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	projName := strings.ToLower(filepath.Base(tmpDir))
+	scoped := ws.Project(projName)
+
+	if _, ok := scoped.ResolveResource(NamespaceLocal + "/" + string(KindAgent) + "/valid-agent"); !ok {
+		t.Errorf("valid-agent not found in project %q", projName)
+	}
+
+	// Verify that a warning was emitted for the malformed file
+	warnings := ws.Warnings()
+	foundWarning := false
+	for _, w := range warnings {
+		if strings.Contains(w, "malformed.md") {
+			foundWarning = true
+			break
+		}
+	}
+	if !foundWarning {
+		t.Errorf("Expected a warning for malformed.md, but got: %v", warnings)
+	}
+}

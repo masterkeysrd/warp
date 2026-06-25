@@ -22,6 +22,8 @@ func (in *Tool) DeepCopy() *Tool {
 
 // ToolSpec contains the configuration details for a Tool resource.
 type ToolSpec struct {
+	// Instructions is the detailed description of what the tool does, populated from the Markdown body.
+	Instructions string            `yaml:"instructions,omitempty"`
 	Name         string            `yaml:"name,omitempty"`         // Used only when defined inline in a Toolkit
 	Command      []string          `yaml:"command"`                // Executable and static args (e.g., ["python", "script.py"])
 	Env          map[string]string `yaml:"env,omitempty"`          // Environment variables injected into the process

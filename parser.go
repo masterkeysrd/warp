@@ -154,6 +154,7 @@ func Parse(filePath, content string) (*ParseResult, error) {
 		if err := yaml.Unmarshal([]byte(yamlPart), &res); err != nil {
 			return nil, fmt.Errorf("failed to parse Tool spec: %w", err)
 		}
+		res.Spec.Instructions = markdownPart
 		resource = &res
 	case KindMCP:
 		var res MCP
@@ -172,6 +173,7 @@ func Parse(filePath, content string) (*ParseResult, error) {
 		if err := yaml.Unmarshal([]byte(yamlPart), &p); err != nil {
 			return nil, fmt.Errorf("failed to parse Plugin spec: %w", err)
 		}
+		p.Spec.Instructions = markdownPart
 		resource = &p
 	default:
 		return nil, fmt.Errorf("unsupported resource kind: %s", base.Kind)
@@ -274,6 +276,35 @@ func Format(res Resource) ([]byte, error) {
 			return nil, err
 		}
 		yamlPart = b
+	case *Tool:
+		// If a Tool has instructions, use delimiters. Otherwise, just marshal as YAML.
+		if r.Spec.Instructions != "" {
+			useDelimiters = true
+			cp := r.DeepCopy()
+			markdownPart = cp.Spec.Instructions
+			cp.Spec.Instructions = ""
+			b, err := marshalYAML(cp)
+			if err != nil {
+				return nil, err
+			}
+			yamlPart = b
+		} else {
+			b, err := marshalYAML(res)
+			if err != nil {
+				return nil, err
+			}
+			yamlPart = b
+		}
+	case *Plugin:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := marshalYAML(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
 	default:
 		// For resources without Instructions, just marshal directly.
 		b, err := marshalYAML(res)
@@ -305,7 +336,7 @@ func Format(res Resource) ([]byte, error) {
 // for the given resource kind.
 func RecommendedExtension(kind Kind) string {
 	switch kind {
-	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand:
+	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindPlugin:
 		return ".md"
 	default:
 		return ".yaml"

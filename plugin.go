@@ -20,8 +20,10 @@ func (in *Plugin) DeepCopy() *Plugin {
 
 // PluginSpec contains the configuration details for a Plugin resource.
 type PluginSpec struct {
-	ResourceDir string   `yaml:"resourceDir"` // The relative path within the repository where the loader should look for resources
-	Exports     []string `yaml:"exports"`     // Glob patterns defining which resources are exposed to consumers
+	// Instructions is the Markdown body of the plugin file.
+	Instructions string   `yaml:"instructions,omitempty"`
+	ResourceDir  string   `yaml:"resourceDir"` // The relative path within the repository where the loader should look for resources
+	Exports      []string `yaml:"exports"`     // Glob patterns defining which resources are exposed to consumers
 }
 
 // DeepCopy returns a deep copy of the PluginSpec.

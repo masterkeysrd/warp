@@ -31,10 +31,23 @@ kind: Tool
 metadata:
   name: test-tool
 spec:
-  description: A test tool
   command:
     - ls
     - -la
+`,
+		},
+		{
+			name: "Tool with instructions",
+			content: `---
+apiVersion: warp/v1alpha1
+kind: Tool
+metadata:
+  name: script-tool
+spec:
+  command:
+    - python
+---
+Run this python script.
 `,
 		},
 		{
@@ -58,7 +71,7 @@ spec:
 		t.Run(tt.name, func(t *testing.T) {
 			filePath := "test" + RecommendedExtension(Kind(tt.name)) // Simple hack for test mapping
 			switch tt.name {
-			case "Agent with instructions", "Agent with empty instructions":
+			case "Agent with instructions", "Agent with empty instructions", "Tool with instructions":
 				filePath = "test.md"
 			case "Tool without instructions":
 				filePath = "test.yaml"

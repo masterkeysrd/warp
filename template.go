@@ -34,7 +34,8 @@ type TemplateProject struct {
 
 // TemplateContext represents the context view model for templates.
 type TemplateContext struct {
-	Path string
+	Instructions string
+	Path         string
 }
 
 // TemplateAgent represents the agent view model for templates.

@@ -644,19 +644,6 @@ func unionSlices(a, b []string) []string {
 	return out
 }
 
-func deduplicateTools(in []*Tool) []*Tool {
-	seen := make(map[string]bool)
-	var out []*Tool
-	for _, t := range in {
-		qn := t.QualifiedName()
-		if !seen[qn] {
-			seen[qn] = true
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 func deduplicateSkills(in []Skill) []Skill {
 	seen := make(map[string]bool)
 	var out []Skill

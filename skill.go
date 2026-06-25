@@ -57,6 +57,15 @@ func (s *Skill) Render(opts *SkillRenderOptions) (string, error) {
 		}
 		mergedGlobals["Project"] = tp
 		mergedGlobals["ProjectDir"] = tp.Dir
+
+		if opts.Project.Context != nil {
+			tc := TemplateContext{
+				Instructions: opts.Project.Context.Spec.Instructions,
+				Path:         filepath.Join(opts.Project.Context.Directory, ContextFileName),
+			}
+			mergedGlobals["Context"] = tc
+			mergedGlobals["ContextPath"] = tc.Path
+		}
 	} else {
 		mergedGlobals["Project"] = TemplateProject{}
 		mergedGlobals["ProjectDir"] = ""

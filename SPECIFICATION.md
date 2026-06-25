@@ -499,7 +499,9 @@ server.
 
 | Field         | Type     | Required | Description                                     |
 |---------------|----------|:--------:|-------------------------------------------------|
-| `command`     | string[] | ✅       | Command to start the MCP server via stdio.      |
+| `type`        | string   |          | Transport type: `stdio` (default) or `sse`.     |
+| `command`     | string[] | *        | Command to start the MCP server (required if `type: stdio`). |
+| `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type: sse`). |
 | `env`         | map      |          | Environment variables for the MCP server.       |
 | `annotations` | object   |          | Default safety profile for all exposed tools.   |
 | `tools`       | object   |          | Controls which tools are exposed by this server. |
@@ -520,7 +522,20 @@ kind: MCP
 metadata:
   name: sqlite-mcp
 spec:
+  type: stdio
   command: ["npx", "-y", "@modelcontextprotocol/server-sqlite", "--db", "data.db"]
+```
+
+#### Full example SSE (`mcps/remote.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: remote-mcp
+spec:
+  type: sse
+  endpoint: "http://localhost:8080/sse"
 ```
 
 ---

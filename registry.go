@@ -177,6 +177,24 @@ func (r *Registry) Validate() error {
 				return fmt.Errorf("tool %s violates workspace policy: %w", name, err)
 			}
 		}
+		if mcp, ok := res.(*MCP); ok {
+			transport := mcp.Spec.Type
+			if transport == "" {
+				transport = "stdio"
+			}
+			switch transport {
+			case "stdio":
+				if len(mcp.Spec.Command) == 0 {
+					return fmt.Errorf("mcp %s: command is required for stdio transport", name)
+				}
+			case "sse":
+				if mcp.Spec.Endpoint == "" {
+					return fmt.Errorf("mcp %s: endpoint is required for sse transport", name)
+				}
+			default:
+				return fmt.Errorf("mcp %s: unknown transport type %q", name, transport)
+			}
+		}
 	}
 	return nil
 }

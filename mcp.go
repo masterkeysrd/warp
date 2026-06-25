@@ -22,7 +22,9 @@ func (in *MCP) DeepCopy() *MCP {
 
 // MCPSpec contains the configuration details for an MCP resource.
 type MCPSpec struct {
-	Command     []string                  `yaml:"command"`               // Command to start the MCP server via stdio
+	Type        string                    `yaml:"type,omitempty"`        // Transport type: stdio or sse
+	Endpoint    string                    `yaml:"endpoint,omitempty"`    // HTTP URL for the MCP server if type: sse
+	Command     []string                  `yaml:"command,omitempty"`     // Command to start the MCP server via stdio
 	Env         map[string]string         `yaml:"env,omitempty"`         // Environment variables for the MCP server
 	Annotations *ToolAnnotation           `yaml:"annotations,omitempty"` // Default safety profile for all exposed tools
 	Policies    *MCPPolicies              `yaml:"policies,omitempty"`    // Controls which external MCP resources are exposed

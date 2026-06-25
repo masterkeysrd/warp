@@ -467,3 +467,92 @@ func TestAgent_NamespaceMatching(t *testing.T) {
 		}
 	}
 }
+
+func TestMCP_Validation(t *testing.T) {
+	// 1. Valid stdio MCP
+	reg1 := NewRegistry(nil)
+	mcpStd := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: "warp/v1alpha1",
+			Kind:       KindMCP,
+			Metadata:   Metadata{Name: "std-mcp"},
+		},
+		Spec: MCPSpec{
+			Type:    "stdio",
+			Command: []string{"node", "server.js"},
+		},
+	}
+	reg1.set(mcpStd.QualifiedName(), mcpStd)
+	if err := reg1.Validate(); err != nil {
+		t.Errorf("Expected valid stdio MCP to pass, got: %v", err)
+	}
+
+	// 2. Invalid stdio MCP (missing command)
+	reg2 := NewRegistry(nil)
+	mcpStdErr := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: "warp/v1alpha1",
+			Kind:       KindMCP,
+			Metadata:   Metadata{Name: "std-mcp-err"},
+		},
+		Spec: MCPSpec{
+			Type: "stdio",
+		},
+	}
+	reg2.set(mcpStdErr.QualifiedName(), mcpStdErr)
+	if err := reg2.Validate(); err == nil {
+		t.Error("Expected validation error for stdio MCP with empty command, got nil")
+	}
+
+	// 3. Valid sse MCP
+	reg3 := NewRegistry(nil)
+	mcpSse := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: "warp/v1alpha1",
+			Kind:       KindMCP,
+			Metadata:   Metadata{Name: "sse-mcp"},
+		},
+		Spec: MCPSpec{
+			Type:     "sse",
+			Endpoint: "https://example.com/sse",
+		},
+	}
+	reg3.set(mcpSse.QualifiedName(), mcpSse)
+	if err := reg3.Validate(); err != nil {
+		t.Errorf("Expected valid sse MCP to pass, got: %v", err)
+	}
+
+	// 4. Invalid sse MCP (missing endpoint)
+	reg4 := NewRegistry(nil)
+	mcpSseErr := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: "warp/v1alpha1",
+			Kind:       KindMCP,
+			Metadata:   Metadata{Name: "sse-mcp-err"},
+		},
+		Spec: MCPSpec{
+			Type: "sse",
+		},
+	}
+	reg4.set(mcpSseErr.QualifiedName(), mcpSseErr)
+	if err := reg4.Validate(); err == nil {
+		t.Error("Expected validation error for sse MCP with empty endpoint, got nil")
+	}
+
+	// 5. Invalid transport type
+	reg5 := NewRegistry(nil)
+	mcpBad := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: "warp/v1alpha1",
+			Kind:       KindMCP,
+			Metadata:   Metadata{Name: "bad-mcp"},
+		},
+		Spec: MCPSpec{
+			Type: "websocket",
+		},
+	}
+	reg5.set(mcpBad.QualifiedName(), mcpBad)
+	if err := reg5.Validate(); err == nil {
+		t.Error("Expected validation error for unknown transport type, got nil")
+	}
+}

@@ -132,3 +132,47 @@ spec:
 		t.Errorf("Round-trip failed: MCP resources are not equal")
 	}
 }
+
+func TestMCPSseRoundTrip(t *testing.T) {
+	content := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: sse-mcp
+spec:
+  type: sse
+  endpoint: "https://example.com/mcp/sse"
+  policies:
+    tools:
+      include: ["*"]
+`
+	res, err := Parse("sse-mcp.yaml", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	mcp, ok := res.Resource.(*MCP)
+	if !ok {
+		t.Fatalf("Expected *MCP, got %T", res.Resource)
+	}
+
+	if mcp.Spec.Type != "sse" {
+		t.Errorf("Expected Type to be 'sse', got %q", mcp.Spec.Type)
+	}
+	if mcp.Spec.Endpoint != "https://example.com/mcp/sse" {
+		t.Errorf("Expected Endpoint to be 'https://example.com/mcp/sse', got %q", mcp.Spec.Endpoint)
+	}
+
+	formatted, err := Format(mcp)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	res2, err := Parse("sse-mcp.yaml", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(res.Resource, res2.Resource) {
+		t.Errorf("Round-trip failed: MCP resources are not equal")
+	}
+}

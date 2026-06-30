@@ -365,13 +365,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "attachment",
-        "tools",
-        "structuredOutput",
-        "temperature"
-      ]
+      "type": "object"
     },
     "ProviderModelCost": {
       "properties": {
@@ -1286,13 +1280,7 @@
                   }
                 },
                 "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "attachment",
-                  "tools",
-                  "structuredOutput",
-                  "temperature"
-                ]
+                "type": "object"
               },
               "ProviderModelCost": {
                 "properties": {

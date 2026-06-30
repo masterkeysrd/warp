@@ -96,12 +96,12 @@ type ProviderModelLimits struct {
 }
 
 type ProviderModelCapabilities struct {
-	Attachment       bool                              `yaml:"attachment"`           // Whether the model supports file/document attachments
-	Tools            bool                              `yaml:"tools"`                // Whether the model supports function/tool calling (tool_call)
-	StructuredOutput bool                              `yaml:"structuredOutput"`     // Whether the model supports strict structured outputs
-	Temperature      bool                              `yaml:"temperature"`          // Whether the model allows configuring the sampling temperature
-	Thinking         []ProviderModelThinkingCapability `yaml:"thinking,omitempty"`   // List of supported reasoning configuration strategies
-	Modalities       *ProviderModelModalities          `yaml:"modalities,omitempty"` // Defines supported input and output data modalities
+	Attachment       *bool                             `yaml:"attachment,omitempty"`       // Whether the model supports file/document attachments
+	Tools            *bool                             `yaml:"tools,omitempty"`            // Whether the model supports function/tool calling (tool_call)
+	StructuredOutput *bool                             `yaml:"structuredOutput,omitempty"` // Whether the model supports strict structured outputs
+	Temperature      *bool                             `yaml:"temperature,omitempty"`      // Whether the model allows configuring the sampling temperature
+	Thinking         []ProviderModelThinkingCapability `yaml:"thinking,omitempty"`         // List of supported reasoning configuration strategies
+	Modalities       *ProviderModelModalities          `yaml:"modalities,omitempty"`       // Defines supported input and output data modalities
 }
 
 func (in *ProviderModelCapabilities) DeepCopy() *ProviderModelCapabilities {
@@ -110,6 +110,22 @@ func (in *ProviderModelCapabilities) DeepCopy() *ProviderModelCapabilities {
 	}
 	out := new(ProviderModelCapabilities)
 	*out = *in
+	if in.Attachment != nil {
+		b := *in.Attachment
+		out.Attachment = &b
+	}
+	if in.Tools != nil {
+		b := *in.Tools
+		out.Tools = &b
+	}
+	if in.StructuredOutput != nil {
+		b := *in.StructuredOutput
+		out.StructuredOutput = &b
+	}
+	if in.Temperature != nil {
+		b := *in.Temperature
+		out.Temperature = &b
+	}
 	if in.Thinking != nil {
 		out.Thinking = make([]ProviderModelThinkingCapability, len(in.Thinking))
 		for i, t := range in.Thinking {

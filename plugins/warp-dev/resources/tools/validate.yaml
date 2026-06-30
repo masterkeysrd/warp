@@ -1,0 +1,15 @@
+apiVersion: warp/v1alpha1
+kind: Tool
+metadata:
+  name: validate
+  description: Validates a WARP YAML or Markdown resource against the official schema.
+spec:
+  command: ["warp", "validate"]
+  description: Validates the specified file against the WARP v1alpha1 JSON Schema and ensures cross-references resolve.
+  inputSchema:
+    type: object
+    properties:
+      file:
+        type: string
+        description: The relative or absolute path to the .md or .yaml file to validate.
+    required: ["file"]

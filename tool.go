@@ -27,7 +27,7 @@ type ToolSpec struct {
 	Name         string            `yaml:"name,omitempty"`         // Used only when defined inline in a Toolkit
 	Command      []string          `yaml:"command"`                // Executable and static args (e.g., ["python", "script.py"])
 	Env          map[string]string `yaml:"env,omitempty"`          // Environment variables injected into the process
-	Parameters   map[string]any    `yaml:"parameters,omitempty"`   // JSON Schema object defining arguments the LLM must pass
+	InputSchema  map[string]any    `yaml:"inputSchema,omitempty"`  // JSON Schema object defining arguments the LLM must pass
 	OutputSchema map[string]any    `yaml:"outputSchema,omitempty"` // JSON Schema object defining the tool's output
 	Annotations  *ToolAnnotation   `yaml:"annotations,omitempty"`  // Safety profile for Tool Execution Security
 }
@@ -66,9 +66,9 @@ func (in *ToolSpec) DeepCopy() *ToolSpec {
 		out.Env = make(map[string]string, len(in.Env))
 		maps.Copy(out.Env, in.Env)
 	}
-	if in.Parameters != nil {
-		out.Parameters = make(map[string]any, len(in.Parameters))
-		maps.Copy(out.Parameters, in.Parameters)
+	if in.InputSchema != nil {
+		out.InputSchema = make(map[string]any, len(in.InputSchema))
+		maps.Copy(out.InputSchema, in.InputSchema)
 	}
 	if in.OutputSchema != nil {
 		out.OutputSchema = make(map[string]any, len(in.OutputSchema))

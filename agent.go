@@ -1,6 +1,9 @@
 package warp
 
-import "path/filepath"
+import (
+	"maps"
+	"path/filepath"
+)
 
 // AgentRenderOptions holds options for rendering agent instructions.
 type AgentRenderOptions struct {
@@ -22,9 +25,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 	}
 
 	mergedGlobals := make(map[string]any)
-	for k, v := range opts.Globals {
-		mergedGlobals[k] = v
-	}
+	maps.Copy(mergedGlobals, opts.Globals)
 
 	// Inject Workspace derived from arguments
 	if opts.Workspace != nil {
@@ -159,6 +160,8 @@ type AgentSpec struct {
 	Models []string `yaml:"models,omitempty,flow"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature float64 `yaml:"temperature"`
+	// Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default.
+	Thinking map[string]any `yaml:"thinking,omitempty"`
 	// Skills is a list of file paths (relative to the FS root) that reference
 	// Skill resources this agent is allowed to use.
 	Skills []string `yaml:"skills,omitempty"`
@@ -183,6 +186,12 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	if in.Models != nil {
 		out.Models = make([]string, len(in.Models))
 		copy(out.Models, in.Models)
+	}
+	if in.Thinking != nil {
+		out.Thinking = make(map[string]any, len(in.Thinking))
+		for k, v := range in.Thinking {
+			out.Thinking[k] = v
+		}
 	}
 	if in.Skills != nil {
 		out.Skills = make([]string, len(in.Skills))

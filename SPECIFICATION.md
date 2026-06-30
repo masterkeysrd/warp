@@ -106,8 +106,19 @@ created automatically with its root set to `$CWD`.
 | Field             | Type     | Required | Default  | Description                                                                                                                   |
 |-------------------|----------|:--------:|----------|-------------------------------------------------------------------------------------------------------------------------------|
 | `projects`        | string[] |          | `[]`     | Directories to load as active projects. `["*"]` discovers all non-hidden immediate subdirectories. An empty value or omission defaults to `["."]`. |
-| `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.model`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
+| `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.models`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
+| `defaultAgent`    | string   |          |          | Default agent to use for this workspace if none is specified. |
+| `plugins`         | object[] |          | `[]`     | External repositories to load as plugins into this workspace. |
 | `policies`        | object   |          | —        | Security and access policies (e.g., tool execution restrictions).                                                             |
+
+#### `WorkspacePlugin` fields
+
+| Field       | Type   | Required | Description                                                         |
+|-------------|--------|:--------:|---------------------------------------------------------------------|
+| `source`    | string | ✅       | Source URL or path for the plugin.                                  |
+| `version`   | string |          | Specific version of the plugin to load (e.g., git tag or branch).   |
+| `namespace` | string |          | Custom namespace to mount the plugin resources under.               |
+| `imports`   | object |          | Filter specifying which resources to import (`include`/`exclude`).  |
 
 #### `Policies` fields
 
@@ -204,6 +215,7 @@ runtime.
 | `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent (e.g. `["human"]`, `["agent"]`, `["system"]`). An empty list means it can be triggered by anything. |
 | `models`      | string[] |          | `[]`    | A prioritized list of LLM model identifiers (e.g. `["gpt-4o", "claude-3-5-sonnet"]`). The runtime should use the first available model. |
 | `temperature` | float    |          | `0.0`   | Sampling temperature in the range `0.0`–`2.0`. Higher values produce more varied output.          |
+| `thinking`    | object   |          | —       | Runtime configuration for extended reasoning (e.g., `type: effort`, `effort: high`). Overrides the provider's default. |
 | `skills`      | string[] |          | `[]`    | Names or qualified refs of `Skill` resources this agent is allowed to use.                        |
 | `commands`    | string[] |          | `[]`    | Names or qualified refs of `Command` resources this agent can invoke.                             |
 | `policies`    | object   |          | —       | Security and access policies (specifically `tools` execution restrictions) for this agent.         |
@@ -334,7 +346,11 @@ Markdown body.
 
 #### `spec` fields
 
-_None._ The only content is the Markdown body, which becomes `instructions`.
+| Field    | Type     | Required | Description                                                         |
+|----------|----------|:--------:|---------------------------------------------------------------------|
+| `models` | string[] |          | Preferred models for this command. Overrides agent defaults.        |
+| `tools`  | string[] |          | Tools allowed during this command execution.                        |
+| `hints`  | string[] |          | Ordered list of argument names for UI and templates.                |
 
 #### Full example
 
@@ -404,12 +420,63 @@ endpoints and default models.
 
 #### `ProviderModel` fields
 
-| Field    | Type   | Required | Description                                     |
-|----------|--------|:--------:|-------------------------------------------------|
-| `id`     | string | ✅       | Unique model ID (e.g., `gpt-4`).                |
-| `name`   | string | ✅       | Model name (e.g., `gpt-4`).                     |
-| `label`  | string | ✅       | Human-friendly label (e.g., `GPT-4`).           |
-| `limits` | object | ✅       | Context and output token limits.                |
+| Field          | Type     | Required | Description                                     |
+|----------------|----------|:--------:|-------------------------------------------------|
+| `id`           | string   | ✅       | Unique model ID (e.g., `gpt-4`).                |
+| `name`         | string   | ✅       | Model name (e.g., `gpt-4`).                     |
+| `label`        | string   | ✅       | Human-friendly label (e.g., `GPT-4`).           |
+| `limits`       | object   | ✅       | Context and output token limits.                |
+| `capabilities` | object   |          | Supported features and configuration boundaries.|
+| `cost`         | object   |          | Token pricing and conditional tiers.            |
+
+#### `ProviderModelCapabilities` fields
+
+| Field              | Type     | Description                                                    |
+|--------------------|----------|----------------------------------------------------------------|
+| `attachment`       | bool     | Whether the model supports file/document attachments.          |
+| `tools`            | bool     | Whether the model supports function/tool calling (`tool_call`).|
+| `structuredOutput` | bool     | Whether the model supports strict structured outputs.          |
+| `temperature`      | bool     | Whether the model allows configuring the sampling temperature. |
+| `thinking`         | object[] | List of supported reasoning configuration strategies.          |
+| `modalities`       | object   | Defines supported input and output data modalities.            |
+
+#### `ProviderModelModalities` fields
+
+| Field    | Type     | Description                                                        |
+|----------|----------|--------------------------------------------------------------------|
+| `input`  | string[] | Supported input modalities (e.g., `["text", "image", "video"]`).   |
+| `output` | string[] | Supported output modalities (e.g., `["text", "image"]`).           |
+
+#### `ProviderModelThinkingCapability` fields
+
+| Field             | Type     | Required | Description                                                              |
+|-------------------|----------|:--------:|--------------------------------------------------------------------------|
+| `type`            | string   | ✅       | The strategy this model supports: `toggle`, `effort`, `budget`, or `adaptive`. |
+| `isDefault`       | bool     |          | Marks this strategy as the primary default if the agent does not specify one. |
+| `allowedEfforts`  | string[] |          | Used if `type: effort`. e.g., `["low", "medium", "high"]`.               |
+| `maxBudgetTokens` | int      |          | Used if `type: budget`. The maximum allowed thinking tokens.             |
+| `default`         | any      |          | The default value (e.g., `true` for toggle, `"medium"` for effort, `1024` for budget). |
+
+#### `ProviderModelCost` fields
+
+| Field        | Type     | Description                                                          |
+|--------------|----------|----------------------------------------------------------------------|
+| `input`      | float    | Base cost for input tokens (typically per 1M tokens).                |
+| `output`     | float    | Base cost for output tokens.                                         |
+| `cacheRead`  | float    | Cost for reading from prompt cache.                                  |
+| `cacheWrite` | float    | Cost for writing to prompt cache.                                    |
+| `tiers`      | object[] | Array of conditional pricing tiers (e.g., for large contexts).       |
+
+#### `ProviderModelCostTier` fields
+
+| Field        | Type   | Description                                                                 |
+|--------------|--------|-----------------------------------------------------------------------------|
+| `label`      | string | A human-readable label for the tier (e.g., `"Context over 200k"`).          |
+| `tier`       | object | The condition that triggers this pricing (e.g., `{ type: "context", size: 200000 }`). |
+| `input`      | float  | Override cost for input tokens when this tier is active.                    |
+| `output`     | float  | Override cost for output tokens.                                            |
+| `cacheRead`  | float  | Override cost for cache read.                                               |
+| `cacheWrite` | float  | Override cost for cache write.                                              |
 
 #### `ProviderModelLimits` fields
 
@@ -418,25 +485,48 @@ endpoints and default models.
 | `context` | int  | ✅       | Max context length in tokens.        |
 | `output`  | int  | ✅       | Max output length in tokens.         |
 
-#### Full example (`providers/ollama.yaml`)
+#### Full example (`providers/anthropic.yaml`)
 
 ```yaml
 apiVersion: warp/v1alpha1
 kind: ModelProvider
 metadata:
-  name: local-ollama
-  description: Local Ollama instance.
+  name: anthropic
+  description: Anthropic API
 spec:
-  type: ollama
-  endpoint: http://localhost:11434
-  defaultModel: llama3
+  type: anthropic
+  endpoint: https://api.anthropic.com
+  defaultModel: claude-3-7-sonnet
   models:
-    - id: llama3
-      name: llama3
-      label: Llama 3
+    - id: claude-3-7-sonnet
+      name: claude-3-7-sonnet-20250219
+      label: Claude 3.7 Sonnet
+      capabilities:
+        tools: true
+        modalities:
+          input: ["text", "image"]
+          output: ["text"]
+        thinking:
+          - type: budget
+            isDefault: true
+            maxBudgetTokens: 128000
+            default: 4096
       limits:
-        context: 8192
-        output: 4096
+        context: 200000
+        output: 128000
+      cost:
+        input: 1.25
+        output: 10.0
+        cacheRead: 0.31
+        cacheWrite: 2.375
+        tiers:
+          - label: "Context over 200k"
+            tier:
+              type: context
+              size: 200000
+            input: 2.5
+            output: 15.0
+            cacheRead: 0.25
 ```
 
 ---
@@ -451,7 +541,7 @@ A `Tool` resource describes a custom tool that an agent can invoke.
 |---------------|----------|:--------:|-----------------------------------------------------------------------------|
 | `command`     | string[] | ✅       | Executable and static args (e.g., `["python", "script.py"]`).               |
 | `env`         | map      |          | Environment variables injected into the process.                            |
-| `parameters`  | map      |          | JSON Schema object defining arguments the LLM must pass.                    |
+| `inputSchema`  | map      |          | JSON Schema object defining arguments the LLM must pass.                    |
 | `outputSchema`| map      |          | JSON Schema object defining the tool's output.                              |
 | `annotations` | object   |          | Safety profile for Tool Execution Security.                                 |
 
@@ -480,7 +570,7 @@ metadata:
 spec:
   command: ["ls", "-F"]
   description: List files in the current directory with type indicators.
-  parameters:
+  inputSchema:
     type: object
     properties:
       path:
@@ -564,7 +654,7 @@ spec:
     - name: echo
       command: ["echo"]
       description: Print a message.
-      parameters:
+      inputSchema:
         type: object
         properties:
           msg: { type: string }

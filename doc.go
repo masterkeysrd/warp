@@ -1,3 +1,5 @@
+//go:generate go run ./cmd/schema-gen/main.go
+
 // Package warp implements the Workspace Agent Resource Protocol (WARP) — a
 // provider-agnostic, declarative format for defining AI agents and their
 // supporting resources.

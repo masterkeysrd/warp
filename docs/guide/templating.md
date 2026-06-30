@@ -50,7 +50,7 @@ The agent has access to its own metadata, which is useful for creating generic, 
 | `{{.Agent.Description}}` | The description of the agent. | `Explores project codebases.` |
 | `{{.Agent.Dir}}` | The absolute filesystem path to the directory containing the agent definition. | `/Users/user/code/warp/.agents` |
 | `{{.Agent.Path}}` | The absolute filesystem path to the agent definition file. | `/Users/user/code/warp/.agents/researcher.md` |
-| `{{.Agent.Skills}}` | A list of skill objects the agent has access to. Each object exposes `.Name`, `.Description`, and `.Path`. | `{{range .Agent.Skills}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Skills}}` | A list of skill objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Keywords`, `.UseWhen`, and `.Path`. | `{{range .Agent.Skills}}{{.Name}}: {{.Description}}{{end}}` |
 | `{{.Agent.Tools}}` | A list of tool objects the agent has access to. Each object exposes `.Name` and `.Description`. | `{{range .Agent.Tools}}{{.Name}}: {{.Description}}{{end}}` |
 | `{{.Agent.Commands}}` | A list of command objects the agent can invoke. Each object exposes `.Name`, `.Description`, and `.Path`. | `{{range .Agent.Commands}}{{.Name}}: {{.Description}}{{end}}` |
 
@@ -109,6 +109,8 @@ Represents the skill being rendered.
 | :--- | :--- | :--- |
 | `{{.Skill.Name}}` | The name of the skill. | `go-expert` |
 | `{{.Skill.Description}}` | The description of the skill. | `Guidelines for writing Go code.` |
+| `{{.Skill.UseWhen}}` | The explicit condition for using the skill. | `Use this when writing tests.` |
+| `{{.Skill.Keywords}}` | A list of semantic keywords. | `["go", "testing"]` |
 | `{{.Skill.Dir}}` | The absolute path to the directory containing the skill. | `/Users/user/code/warp/skills/go` |
 | `{{.Skill.Path}}` | The absolute path to the skill definition file. | `/Users/user/code/warp/skills/go/SKILL.md` |
 

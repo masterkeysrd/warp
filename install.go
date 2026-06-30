@@ -117,6 +117,10 @@ func InstallPlugin(workspaceDir, source, version string, imports []string) error
 	if specNode == nil {
 		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "spec"}, &yaml.Node{Kind: yaml.MappingNode})
 		specNode = root.Content[len(root.Content)-1]
+	} else if specNode.Kind != yaml.MappingNode {
+		specNode.Kind = yaml.MappingNode
+		specNode.Tag = "!!map"
+		specNode.Value = ""
 	}
 
 	var pluginsNode *yaml.Node
@@ -130,16 +134,45 @@ func InstallPlugin(workspaceDir, source, version string, imports []string) error
 	if pluginsNode == nil {
 		specNode.Content = append(specNode.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "plugins"}, &yaml.Node{Kind: yaml.SequenceNode})
 		pluginsNode = specNode.Content[len(specNode.Content)-1]
+	} else if pluginsNode.Kind != yaml.SequenceNode {
+		pluginsNode.Kind = yaml.SequenceNode
+		pluginsNode.Tag = "!!seq"
+		pluginsNode.Value = ""
 	}
 
 	var pluginNode yaml.Node
 	pBytes, _ := yaml.Marshal(newPlugin)
 	yaml.Unmarshal(pBytes, &pluginNode)
 
-	pluginsNode.Content = append(pluginsNode.Content, pluginNode.Content[0])
+	var existingPluginIndex = -1
+	for idx, item := range pluginsNode.Content {
+		if item.Kind == yaml.MappingNode {
+			for k := 0; k < len(item.Content); k += 2 {
+				if item.Content[k].Value == "source" && item.Content[k+1].Value == newPlugin.Source {
+					existingPluginIndex = idx
+					break
+				}
+			}
+		}
+	}
 
-	updatedFrontMatter, _ := yaml.Marshal(&node)
-	finalContent := fmt.Sprintf("---\n%s---\n%s", string(updatedFrontMatter), body)
+	if existingPluginIndex != -1 {
+		pluginsNode.Content[existingPluginIndex] = pluginNode.Content[0]
+	} else {
+		pluginsNode.Content = append(pluginsNode.Content, pluginNode.Content[0])
+	}
+
+	var buf strings.Builder
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&node); err != nil {
+		return fmt.Errorf("marshaling WORKSPACE.md front-matter: %w", err)
+	}
+	encoder.Close()
+
+	updatedFrontMatter := buf.String()
+	// Encode adds a trailing newline, so we don't need a \n before the second ---
+	finalContent := fmt.Sprintf("---\n%s---\n%s", updatedFrontMatter, body)
 
 	if err := os.WriteFile(wsPath, []byte(finalContent), 0644); err != nil {
 		return fmt.Errorf("writing WORKSPACE.md: %w", err)
@@ -204,10 +237,10 @@ type DiscoveredResource struct {
 
 // DiscoverPluginResources fetches the plugin at the given source and version,
 // and returns the list of all resources exposed by it.
-func DiscoverPluginResources(source, version string) ([]DiscoveredResource, error) {
+func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *PluginHooks, error) {
 	cacheDir, err := fetcher.Fetch(source, version)
 	if err != nil {
-		return nil, fmt.Errorf("fetching plugin: %w", err)
+		return nil, nil, fmt.Errorf("fetching plugin: %w", err)
 	}
 
 	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
@@ -218,13 +251,13 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, erro
 			content, err = os.ReadFile(pluginPath)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("repository does not contain a valid PLUGIN.md or PLUGIN.yaml manifest: %w", err)
+			return nil, nil, fmt.Errorf("repository does not contain a valid PLUGIN.md or PLUGIN.yaml manifest: %w", err)
 		}
 	}
 
 	result, err := Parse(pluginPath, string(content))
 	if err != nil || result.Kind != KindPlugin {
-		return nil, fmt.Errorf("failed to parse plugin manifest: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse plugin manifest: %w", err)
 	}
 	pluginRes := result.Resource.(*Plugin)
 
@@ -237,7 +270,7 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, erro
 	provider := NewFSResourceProvider(os.DirFS(absResourceDir), absResourceDir)
 	tempReg, err := provider.LoadResources()
 	if err != nil {
-		return nil, fmt.Errorf("loading resources from plugin: %w", err)
+		return nil, nil, fmt.Errorf("loading resources from plugin: %w", err)
 	}
 
 	var resources []DiscoveredResource
@@ -272,5 +305,5 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, erro
 		appendResource(tk.Kind, tk.GetName(), tk.GetMetadata().Description)
 	}
 
-	return resources, nil
+	return resources, pluginRes.Spec.Hooks, nil
 }

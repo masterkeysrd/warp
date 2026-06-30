@@ -22,13 +22,39 @@ func GlobalCacheDir() (string, error) {
 // Fetch retrieves a plugin repository and stores it in the global cache.
 // It returns the absolute path to the cached directory.
 func Fetch(source, version string) (string, error) {
+	// If it starts with file://, strip it
+	if strings.HasPrefix(source, "file://") {
+		source = strings.TrimPrefix(source, "file://")
+	}
+
+	// If it's a local absolute or relative path, resolve and return it directly without caching
+	if filepath.IsAbs(source) || strings.HasPrefix(source, ".") {
+		absPath, err := filepath.Abs(source)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve local path: %w", err)
+		}
+		if stat, err := os.Stat(absPath); err == nil && stat.IsDir() {
+			return absPath, nil
+		}
+	}
+
 	cacheDir, err := GlobalCacheDir()
 	if err != nil {
 		return "", err
 	}
 
+	// Strip http:// or https:// or git:// for the cache directory name
+	safeSource := source
+	if strings.HasPrefix(safeSource, "http://") {
+		safeSource = strings.TrimPrefix(safeSource, "http://")
+	} else if strings.HasPrefix(safeSource, "https://") {
+		safeSource = strings.TrimPrefix(safeSource, "https://")
+	} else if strings.HasPrefix(safeSource, "git://") {
+		safeSource = strings.TrimPrefix(safeSource, "git://")
+	}
+
 	// Format: ~/.warp/pkg/mod/github.com/org/repo@v1.2.0
-	targetDir := filepath.Join(cacheDir, fmt.Sprintf("%s@%s", source, version))
+	targetDir := filepath.Join(cacheDir, fmt.Sprintf("%s@%s", safeSource, version))
 
 	// If the directory already exists, assume it's cached.
 	// In a production system, we'd also verify the hash here against warp.lock.

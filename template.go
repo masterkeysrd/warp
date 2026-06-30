@@ -53,6 +53,8 @@ type TemplateAgent struct {
 type TemplateSkill struct {
 	Name        string
 	Description string
+	UseWhen     string
+	Keywords    []string
 	Dir         string
 	Path        string
 }

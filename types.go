@@ -54,6 +54,12 @@ func (in *Metadata) DeepCopy() *Metadata {
 	}
 	out := new(Metadata)
 	*out = *in
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for k, v := range in.Labels {
+			out.Labels[k] = v
+		}
+	}
 	return out
 }
 

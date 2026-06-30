@@ -113,6 +113,11 @@ func (s *Skill) DeepCopy() *Skill {
 
 // SkillSpec contains the configuration details for a Skill resource.
 type SkillSpec struct {
+	// UseWhen provides explicit routing instructions to the LLM on when to
+	// trigger this skill (e.g., "Use this when the user asks for X").
+	UseWhen string `yaml:"useWhen,omitempty"`
+	// Keywords is an array of semantic tags used for discovery and prompting.
+	Keywords []string `yaml:"keywords,omitempty,flow"`
 	// Instructions is the expertise prompt populated from the Markdown body
 	// of the file (below the closing front-matter delimiter).
 	Instructions string `yaml:"instructions,omitempty"`
@@ -125,5 +130,9 @@ func (s *SkillSpec) DeepCopy() *SkillSpec {
 	}
 	out := new(SkillSpec)
 	*out = *s
+	if s.Keywords != nil {
+		out.Keywords = make([]string, len(s.Keywords))
+		copy(out.Keywords, s.Keywords)
+	}
 	return out
 }

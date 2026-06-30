@@ -1,14 +1,1887 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/masterkeysrd/warp/blob/main/schema/warp.json",
-  "title": "Workspace Agent Resource Protocol (WARP)",
-  "description": "Schema for WARP resources (Agents, Skills, Commands, etc.)",
-  "type": "object",
-  "required": ["apiVersion", "kind", "metadata"],
+  "$defs": {
+    "AgentSpec": {
+      "properties": {
+        "extends": {
+          "type": "string",
+          "description": "Extends is the Qualified Name or Short Name of another Agent resource to\ninherit from. When set, the engine merges the parent's skills and tools\narrays (parent first) and prepends the parent's instructions to this\nagent's instructions."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the persona prompt populated from the Markdown body of\nthe file (below the closing front-matter delimiter)."
+        },
+        "triggers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Triggers defines the architectural constraints on what can invoke this agent\n(e.g., \"human\", \"agent\"). An empty list means the agent can be triggered\nby anything."
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Models is a prioritized list of LLM model identifiers to use (e.g.,\n[\"gpt-4o\", \"claude-3-5-sonnet\"]). The runtime should attempt to use the\nfirst available model."
+        },
+        "temperature": {
+          "type": "number",
+          "description": "Temperature controls the randomness of the model's output (0.0–2.0)."
+        },
+        "thinking": {
+          "type": "object",
+          "description": "Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default."
+        },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Skills is a list of file paths (relative to the FS root) that reference\nSkill resources this agent is allowed to use."
+        },
+        "commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands is a list of file paths (relative to the FS root) that\nreference Command resources this agent can invoke."
+        },
+        "policies": {
+          "$ref": "#/$defs/Policies",
+          "description": "Policies defines security and access policies."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "temperature"
+      ],
+      "description": "AgentSpec contains the configuration details for an Agent resource."
+    },
+    "CommandSpec": {
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Models is a prioritized list of LLM model identifiers to use for this\ncommand (e.g., [\"gpt-4o-mini\", \"claude-3-haiku\"]). Overrides agent defaults."
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Tools is a list of resource refs (names or paths) restricting which\nTool resources can be used while executing this command."
+        },
+        "hints": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Hints is an ordered list of argument hints (e.g., [\"ticker\", \"year\"])\nthat UIs can use for autocompletion and runtimes can use for positional\ntemplate substitution."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "CommandSpec contains the configuration details for a Command resource."
+    },
+    "MCPPolicies": {
+      "properties": {
+        "tools": {
+          "$ref": "#/$defs/ResourceFilter"
+        },
+        "prompts": {
+          "$ref": "#/$defs/ResourceFilter"
+        },
+        "resources": {
+          "$ref": "#/$defs/ResourceFilter"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "MCPPolicies defines inclusion and exclusion rules for resources exposed by an MCP server."
+    },
+    "MCPSpec": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Transport type: stdio or sse"
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "HTTP URL for the MCP server if type: sse"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Command to start the MCP server via stdio"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Environment variables for the MCP server"
+        },
+        "annotations": {
+          "$ref": "#/$defs/ToolAnnotation",
+          "description": "Default safety profile for all exposed tools"
+        },
+        "policies": {
+          "$ref": "#/$defs/MCPPolicies",
+          "description": "Controls which external MCP resources are exposed"
+        },
+        "overrides": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ToolAnnotation"
+          },
+          "type": "object",
+          "description": "Tool-specific annotation overrides (key is tool name)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "MCPSpec contains the configuration details for an MCP resource."
+    },
+    "Metadata": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the unique identifier for the resource within its kind."
+        },
+        "description": {
+          "type": "string",
+          "description": "Description is a short human-readable summary of the resource."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "DisplayName is an optional pretty-printed label for UIs."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Labels are arbitrary key-value pairs for categorisation and filtering."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Metadata holds the identifying and descriptive fields shared by every resource kind."
+    },
+    "ModelProviderSpec": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "e.g., \"ollama\", \"openai\", \"anthropic\""
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "API base URL"
+        },
+        "defaultModel": {
+          "type": "string",
+          "description": "Model to use if none specified"
+        },
+        "auth": {
+          "$ref": "#/$defs/ProviderAuth",
+          "description": "Authentication configuration"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ProviderModel"
+          },
+          "type": "array",
+          "description": "Available models from this provider"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "endpoint",
+        "defaultModel",
+        "models"
+      ],
+      "description": "ModelProviderSpec contains the configuration details for a ModelProvider resource."
+    },
+    "PluginHooks": {
+      "properties": {
+        "postInstall": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array",
+          "description": "Commands to run after the plugin is downloaded (e.g., [\"go\", \"install\", \"./...\"])"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "PluginHooks defines lifecycle commands to run when a plugin is installed."
+    },
+    "PluginSpec": {
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the Markdown body of the plugin file."
+        },
+        "resourceDir": {
+          "type": "string",
+          "description": "The relative path within the repository where the loader should look for resources"
+        },
+        "exports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Glob patterns defining which resources are exposed to consumers"
+        },
+        "hooks": {
+          "$ref": "#/$defs/PluginHooks",
+          "description": "Setup and installation hooks"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "resourceDir",
+        "exports"
+      ],
+      "description": "PluginSpec contains the configuration details for a Plugin resource."
+    },
+    "Policies": {
+      "properties": {
+        "tools": {
+          "$ref": "#/$defs/ToolPolicies"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Policies defines security and access policies."
+    },
+    "ProviderAuth": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\")"
+        },
+        "header": {
+          "type": "string",
+          "description": "Custom header name if type is \"api-key\""
+        },
+        "env": {
+          "type": "string",
+          "description": "Read credential from environment variable"
+        },
+        "file": {
+          "type": "string",
+          "description": "Read credential from file path"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ProviderAuth defines how to authenticate with the model provider."
+    },
+    "ProviderModel": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique model ID (e.g., \"gpt-4\")"
+        },
+        "name": {
+          "type": "string",
+          "description": "Model name (e.g., \"gpt-4\")"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-friendly label (e.g., \"GPT-4\")"
+        },
+        "limits": {
+          "$ref": "#/$defs/ProviderModelLimits",
+          "description": "Context and output token limits"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderModelCapabilities",
+          "description": "Supported features and configuration boundaries"
+        },
+        "cost": {
+          "$ref": "#/$defs/ProviderModelCost",
+          "description": "Token pricing and conditional tiers"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "label",
+        "limits"
+      ],
+      "description": "ProviderModel describes a specific model available from a provider."
+    },
+    "ProviderModelCapabilities": {
+      "properties": {
+        "attachment": {
+          "type": "boolean",
+          "description": "Whether the model supports file/document attachments"
+        },
+        "tools": {
+          "type": "boolean",
+          "description": "Whether the model supports function/tool calling (tool_call)"
+        },
+        "structuredOutput": {
+          "type": "boolean",
+          "description": "Whether the model supports strict structured outputs"
+        },
+        "temperature": {
+          "type": "boolean",
+          "description": "Whether the model allows configuring the sampling temperature"
+        },
+        "thinking": {
+          "items": {
+            "$ref": "#/$defs/ProviderModelThinkingCapability"
+          },
+          "type": "array",
+          "description": "List of supported reasoning configuration strategies"
+        },
+        "modalities": {
+          "$ref": "#/$defs/ProviderModelModalities",
+          "description": "Defines supported input and output data modalities"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "attachment",
+        "tools",
+        "structuredOutput",
+        "temperature"
+      ]
+    },
+    "ProviderModelCost": {
+      "properties": {
+        "input": {
+          "type": "number",
+          "description": "Base cost for input tokens (typically per 1M tokens)"
+        },
+        "output": {
+          "type": "number",
+          "description": "Base cost for output tokens"
+        },
+        "cacheRead": {
+          "type": "number",
+          "description": "Cost for reading from prompt cache"
+        },
+        "cacheWrite": {
+          "type": "number",
+          "description": "Cost for writing to prompt cache"
+        },
+        "tiers": {
+          "items": {
+            "$ref": "#/$defs/ProviderModelCostTier"
+          },
+          "type": "array",
+          "description": "Array of conditional pricing tiers"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "input",
+        "output"
+      ]
+    },
+    "ProviderModelCostTier": {
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "A human-readable label for the tier (e.g., \"Context over 200k\")"
+        },
+        "tier": {
+          "$ref": "#/$defs/ProviderModelCostTierCondition",
+          "description": "The condition that triggers this pricing"
+        },
+        "input": {
+          "type": "number",
+          "description": "Override cost for input tokens"
+        },
+        "output": {
+          "type": "number",
+          "description": "Override cost for output tokens"
+        },
+        "cacheRead": {
+          "type": "number",
+          "description": "Override cost for cache read"
+        },
+        "cacheWrite": {
+          "type": "number",
+          "description": "Override cost for cache write"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "label",
+        "tier",
+        "input",
+        "output"
+      ]
+    },
+    "ProviderModelCostTierCondition": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "e.g., \"context\""
+        },
+        "size": {
+          "type": "integer",
+          "description": "e.g., 200000"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "size"
+      ]
+    },
+    "ProviderModelLimits": {
+      "properties": {
+        "context": {
+          "type": "integer",
+          "description": "Max context length in tokens"
+        },
+        "output": {
+          "type": "integer",
+          "description": "Max output length in tokens"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "context",
+        "output"
+      ],
+      "description": "ProviderModelLimits defines the token limits for a specific model."
+    },
+    "ProviderModelModalities": {
+      "properties": {
+        "input": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Supported input modalities (e.g., [\"text\", \"image\", \"video\"])"
+        },
+        "output": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Supported output modalities (e.g., [\"text\", \"image\"])"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ProviderModelThinkingCapability": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "The strategy this model supports: toggle, effort, budget, or adaptive"
+        },
+        "isDefault": {
+          "type": "boolean",
+          "description": "Marks this strategy as the primary default"
+        },
+        "allowedEfforts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Used if type: effort. e.g., [\"low\", \"medium\", \"high\"]"
+        },
+        "maxBudgetTokens": {
+          "type": "integer",
+          "description": "Used if type: budget. The maximum allowed thinking tokens"
+        },
+        "default": {
+          "description": "The default value"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "ResourceFilter": {
+      "properties": {
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Glob patterns for resources to expose"
+        },
+        "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Glob patterns for resources to block (applied after include)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
+    },
+    "SkillSpec": {
+      "properties": {
+        "useWhen": {
+          "type": "string",
+          "description": "UseWhen provides explicit routing instructions to the LLM on when to\ntrigger this skill (e.g., \"Use this when the user asks for X\")."
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Keywords is an array of semantic tags used for discovery and prompting."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SkillSpec contains the configuration details for a Skill resource."
+    },
+    "ToolAnnotation": {
+      "properties": {
+        "isOpenWorld": {
+          "type": "boolean",
+          "description": "Interacts with external resources"
+        },
+        "isDangerous": {
+          "type": "boolean",
+          "description": "Can perform destructive actions"
+        },
+        "isReadOnly": {
+          "type": "boolean",
+          "description": "Does not modify state"
+        },
+        "isIdempotent": {
+          "type": "boolean",
+          "description": "Safe to retry"
+        },
+        "userHint": {
+          "type": "string",
+          "description": "Human-readable hint for approval prompts"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "isOpenWorld",
+        "isDangerous",
+        "isReadOnly",
+        "isIdempotent",
+        "userHint"
+      ],
+      "description": "ToolAnnotation defines the safety profile for a tool."
+    },
+    "ToolPolicies": {
+      "properties": {
+        "allowDangerous": {
+          "type": "boolean"
+        },
+        "allowOpenWorld": {
+          "type": "boolean"
+        },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ToolPolicies defines restrictions for tool usage."
+    },
+    "ToolSpec": {
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
+        },
+        "name": {
+          "type": "string",
+          "description": "Used only when defined inline in a Toolkit"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Environment variables injected into the process"
+        },
+        "inputSchema": {
+          "type": "object",
+          "description": "JSON Schema object defining arguments the LLM must pass"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "JSON Schema object defining the tool's output"
+        },
+        "annotations": {
+          "$ref": "#/$defs/ToolAnnotation",
+          "description": "Safety profile for Tool Execution Security"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "description": "ToolSpec contains the configuration details for a Tool resource."
+    },
+    "ToolkitSpec": {
+      "properties": {
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolkitTool"
+          },
+          "type": "array",
+          "description": "Array of tools (referenced or inline)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "tools"
+      ],
+      "description": "ToolkitSpec contains the configuration details for a Toolkit resource."
+    },
+    "ToolkitTool": {
+      "properties": {
+        "$ref": {
+          "type": "string",
+          "description": "Path to external tool (e.g., \"tools/formatter.yaml\")"
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
+        },
+        "name": {
+          "type": "string",
+          "description": "Used only when defined inline in a Toolkit"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Environment variables injected into the process"
+        },
+        "inputSchema": {
+          "type": "object",
+          "description": "JSON Schema object defining arguments the LLM must pass"
+        },
+        "outputSchema": {
+          "type": "object",
+          "description": "JSON Schema object defining the tool's output"
+        },
+        "annotations": {
+          "$ref": "#/$defs/ToolAnnotation",
+          "description": "Safety profile for Tool Execution Security"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "description": "ToolkitTool can be either a reference to an external file or a fully inline ToolSpec."
+    },
+    "WorkspaceDefSpec": {
+      "properties": {
+        "projects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "defaultProvider": {
+          "type": "string"
+        },
+        "defaultAgent": {
+          "type": "string"
+        },
+        "plugins": {
+          "items": {
+            "$ref": "#/$defs/WorkspacePlugin"
+          },
+          "type": "array"
+        },
+        "policies": {
+          "$ref": "#/$defs/Policies"
+        },
+        "instructions": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "projects",
+        "defaultProvider",
+        "defaultAgent",
+        "plugins"
+      ],
+      "description": "WorkspaceDefSpec contains configuration for a Workspace resource."
+    },
+    "WorkspacePlugin": {
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "imports": {
+          "$ref": "#/$defs/ResourceFilter"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source"
+      ],
+      "description": "WorkspacePlugin defines an external repository to load as a plugin."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Workspace"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/workspace-def-spec",
+            "$ref": "#/$defs/WorkspaceDefSpec",
+            "$defs": {
+              "Policies": {
+                "properties": {
+                  "tools": {
+                    "$ref": "#/$defs/ToolPolicies"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "Policies defines security and access policies."
+              },
+              "ResourceFilter": {
+                "properties": {
+                  "include": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns for resources to expose"
+                  },
+                  "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns for resources to block (applied after include)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
+              },
+              "ToolPolicies": {
+                "properties": {
+                  "allowDangerous": {
+                    "type": "boolean"
+                  },
+                  "allowOpenWorld": {
+                    "type": "boolean"
+                  },
+                  "include": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ToolPolicies defines restrictions for tool usage."
+              },
+              "WorkspaceDefSpec": {
+                "properties": {
+                  "projects": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "defaultProvider": {
+                    "type": "string"
+                  },
+                  "defaultAgent": {
+                    "type": "string"
+                  },
+                  "plugins": {
+                    "items": {
+                      "$ref": "#/$defs/WorkspacePlugin"
+                    },
+                    "type": "array"
+                  },
+                  "policies": {
+                    "$ref": "#/$defs/Policies"
+                  },
+                  "instructions": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "projects",
+                  "defaultProvider",
+                  "defaultAgent",
+                  "plugins"
+                ],
+                "description": "WorkspaceDefSpec contains configuration for a Workspace resource."
+              },
+              "WorkspacePlugin": {
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  },
+                  "namespace": {
+                    "type": "string"
+                  },
+                  "imports": {
+                    "$ref": "#/$defs/ResourceFilter"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "source"
+                ],
+                "description": "WorkspacePlugin defines an external repository to load as a plugin."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Agent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/agent-spec",
+            "$ref": "#/$defs/AgentSpec",
+            "$defs": {
+              "AgentSpec": {
+                "properties": {
+                  "extends": {
+                    "type": "string",
+                    "description": "Extends is the Qualified Name or Short Name of another Agent resource to\ninherit from. When set, the engine merges the parent's skills and tools\narrays (parent first) and prepends the parent's instructions to this\nagent's instructions."
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the persona prompt populated from the Markdown body of\nthe file (below the closing front-matter delimiter)."
+                  },
+                  "triggers": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Triggers defines the architectural constraints on what can invoke this agent\n(e.g., \"human\", \"agent\"). An empty list means the agent can be triggered\nby anything."
+                  },
+                  "models": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Models is a prioritized list of LLM model identifiers to use (e.g.,\n[\"gpt-4o\", \"claude-3-5-sonnet\"]). The runtime should attempt to use the\nfirst available model."
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "description": "Temperature controls the randomness of the model's output (0.0–2.0)."
+                  },
+                  "thinking": {
+                    "type": "object",
+                    "description": "Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default."
+                  },
+                  "skills": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Skills is a list of file paths (relative to the FS root) that reference\nSkill resources this agent is allowed to use."
+                  },
+                  "commands": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Commands is a list of file paths (relative to the FS root) that\nreference Command resources this agent can invoke."
+                  },
+                  "policies": {
+                    "$ref": "#/$defs/Policies",
+                    "description": "Policies defines security and access policies."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "temperature"
+                ],
+                "description": "AgentSpec contains the configuration details for an Agent resource."
+              },
+              "Policies": {
+                "properties": {
+                  "tools": {
+                    "$ref": "#/$defs/ToolPolicies"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "Policies defines security and access policies."
+              },
+              "ToolPolicies": {
+                "properties": {
+                  "allowDangerous": {
+                    "type": "boolean"
+                  },
+                  "allowOpenWorld": {
+                    "type": "boolean"
+                  },
+                  "include": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ToolPolicies defines restrictions for tool usage."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Command"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/command-spec",
+            "$ref": "#/$defs/CommandSpec",
+            "$defs": {
+              "CommandSpec": {
+                "properties": {
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+                  },
+                  "models": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Models is a prioritized list of LLM model identifiers to use for this\ncommand (e.g., [\"gpt-4o-mini\", \"claude-3-haiku\"]). Overrides agent defaults."
+                  },
+                  "tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Tools is a list of resource refs (names or paths) restricting which\nTool resources can be used while executing this command."
+                  },
+                  "hints": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Hints is an ordered list of argument hints (e.g., [\"ticker\", \"year\"])\nthat UIs can use for autocompletion and runtimes can use for positional\ntemplate substitution."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "CommandSpec contains the configuration details for a Command resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Skill"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/skill-spec",
+            "$ref": "#/$defs/SkillSpec",
+            "$defs": {
+              "SkillSpec": {
+                "properties": {
+                  "useWhen": {
+                    "type": "string",
+                    "description": "UseWhen provides explicit routing instructions to the LLM on when to\ntrigger this skill (e.g., \"Use this when the user asks for X\")."
+                  },
+                  "keywords": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Keywords is an array of semantic tags used for discovery and prompting."
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SkillSpec contains the configuration details for a Skill resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "ModelProvider"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/model-provider-spec",
+            "$ref": "#/$defs/ModelProviderSpec",
+            "$defs": {
+              "ModelProviderSpec": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "e.g., \"ollama\", \"openai\", \"anthropic\""
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "description": "API base URL"
+                  },
+                  "defaultModel": {
+                    "type": "string",
+                    "description": "Model to use if none specified"
+                  },
+                  "auth": {
+                    "$ref": "#/$defs/ProviderAuth",
+                    "description": "Authentication configuration"
+                  },
+                  "models": {
+                    "items": {
+                      "$ref": "#/$defs/ProviderModel"
+                    },
+                    "type": "array",
+                    "description": "Available models from this provider"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "type",
+                  "endpoint",
+                  "defaultModel",
+                  "models"
+                ],
+                "description": "ModelProviderSpec contains the configuration details for a ModelProvider resource."
+              },
+              "ProviderAuth": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\")"
+                  },
+                  "header": {
+                    "type": "string",
+                    "description": "Custom header name if type is \"api-key\""
+                  },
+                  "env": {
+                    "type": "string",
+                    "description": "Read credential from environment variable"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "Read credential from file path"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuth defines how to authenticate with the model provider."
+              },
+              "ProviderModel": {
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Unique model ID (e.g., \"gpt-4\")"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Model name (e.g., \"gpt-4\")"
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "Human-friendly label (e.g., \"GPT-4\")"
+                  },
+                  "limits": {
+                    "$ref": "#/$defs/ProviderModelLimits",
+                    "description": "Context and output token limits"
+                  },
+                  "capabilities": {
+                    "$ref": "#/$defs/ProviderModelCapabilities",
+                    "description": "Supported features and configuration boundaries"
+                  },
+                  "cost": {
+                    "$ref": "#/$defs/ProviderModelCost",
+                    "description": "Token pricing and conditional tiers"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "name",
+                  "label",
+                  "limits"
+                ],
+                "description": "ProviderModel describes a specific model available from a provider."
+              },
+              "ProviderModelCapabilities": {
+                "properties": {
+                  "attachment": {
+                    "type": "boolean",
+                    "description": "Whether the model supports file/document attachments"
+                  },
+                  "tools": {
+                    "type": "boolean",
+                    "description": "Whether the model supports function/tool calling (tool_call)"
+                  },
+                  "structuredOutput": {
+                    "type": "boolean",
+                    "description": "Whether the model supports strict structured outputs"
+                  },
+                  "temperature": {
+                    "type": "boolean",
+                    "description": "Whether the model allows configuring the sampling temperature"
+                  },
+                  "thinking": {
+                    "items": {
+                      "$ref": "#/$defs/ProviderModelThinkingCapability"
+                    },
+                    "type": "array",
+                    "description": "List of supported reasoning configuration strategies"
+                  },
+                  "modalities": {
+                    "$ref": "#/$defs/ProviderModelModalities",
+                    "description": "Defines supported input and output data modalities"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "attachment",
+                  "tools",
+                  "structuredOutput",
+                  "temperature"
+                ]
+              },
+              "ProviderModelCost": {
+                "properties": {
+                  "input": {
+                    "type": "number",
+                    "description": "Base cost for input tokens (typically per 1M tokens)"
+                  },
+                  "output": {
+                    "type": "number",
+                    "description": "Base cost for output tokens"
+                  },
+                  "cacheRead": {
+                    "type": "number",
+                    "description": "Cost for reading from prompt cache"
+                  },
+                  "cacheWrite": {
+                    "type": "number",
+                    "description": "Cost for writing to prompt cache"
+                  },
+                  "tiers": {
+                    "items": {
+                      "$ref": "#/$defs/ProviderModelCostTier"
+                    },
+                    "type": "array",
+                    "description": "Array of conditional pricing tiers"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "input",
+                  "output"
+                ]
+              },
+              "ProviderModelCostTier": {
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "description": "A human-readable label for the tier (e.g., \"Context over 200k\")"
+                  },
+                  "tier": {
+                    "$ref": "#/$defs/ProviderModelCostTierCondition",
+                    "description": "The condition that triggers this pricing"
+                  },
+                  "input": {
+                    "type": "number",
+                    "description": "Override cost for input tokens"
+                  },
+                  "output": {
+                    "type": "number",
+                    "description": "Override cost for output tokens"
+                  },
+                  "cacheRead": {
+                    "type": "number",
+                    "description": "Override cost for cache read"
+                  },
+                  "cacheWrite": {
+                    "type": "number",
+                    "description": "Override cost for cache write"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "label",
+                  "tier",
+                  "input",
+                  "output"
+                ]
+              },
+              "ProviderModelCostTierCondition": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "e.g., \"context\""
+                  },
+                  "size": {
+                    "type": "integer",
+                    "description": "e.g., 200000"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "type",
+                  "size"
+                ]
+              },
+              "ProviderModelLimits": {
+                "properties": {
+                  "context": {
+                    "type": "integer",
+                    "description": "Max context length in tokens"
+                  },
+                  "output": {
+                    "type": "integer",
+                    "description": "Max output length in tokens"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "context",
+                  "output"
+                ],
+                "description": "ProviderModelLimits defines the token limits for a specific model."
+              },
+              "ProviderModelModalities": {
+                "properties": {
+                  "input": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Supported input modalities (e.g., [\"text\", \"image\", \"video\"])"
+                  },
+                  "output": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Supported output modalities (e.g., [\"text\", \"image\"])"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "ProviderModelThinkingCapability": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "The strategy this model supports: toggle, effort, budget, or adaptive"
+                  },
+                  "isDefault": {
+                    "type": "boolean",
+                    "description": "Marks this strategy as the primary default"
+                  },
+                  "allowedEfforts": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Used if type: effort. e.g., [\"low\", \"medium\", \"high\"]"
+                  },
+                  "maxBudgetTokens": {
+                    "type": "integer",
+                    "description": "Used if type: budget. The maximum allowed thinking tokens"
+                  },
+                  "default": {
+                    "description": "The default value"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Tool"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/tool-spec",
+            "$ref": "#/$defs/ToolSpec",
+            "$defs": {
+              "ToolAnnotation": {
+                "properties": {
+                  "isOpenWorld": {
+                    "type": "boolean",
+                    "description": "Interacts with external resources"
+                  },
+                  "isDangerous": {
+                    "type": "boolean",
+                    "description": "Can perform destructive actions"
+                  },
+                  "isReadOnly": {
+                    "type": "boolean",
+                    "description": "Does not modify state"
+                  },
+                  "isIdempotent": {
+                    "type": "boolean",
+                    "description": "Safe to retry"
+                  },
+                  "userHint": {
+                    "type": "string",
+                    "description": "Human-readable hint for approval prompts"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "isOpenWorld",
+                  "isDangerous",
+                  "isReadOnly",
+                  "isIdempotent",
+                  "userHint"
+                ],
+                "description": "ToolAnnotation defines the safety profile for a tool."
+              },
+              "ToolSpec": {
+                "properties": {
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Used only when defined inline in a Toolkit"
+                  },
+                  "command": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
+                  },
+                  "env": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Environment variables injected into the process"
+                  },
+                  "inputSchema": {
+                    "type": "object",
+                    "description": "JSON Schema object defining arguments the LLM must pass"
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "description": "JSON Schema object defining the tool's output"
+                  },
+                  "annotations": {
+                    "$ref": "#/$defs/ToolAnnotation",
+                    "description": "Safety profile for Tool Execution Security"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "command"
+                ],
+                "description": "ToolSpec contains the configuration details for a Tool resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "MCP"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/mcp-spec",
+            "$ref": "#/$defs/MCPSpec",
+            "$defs": {
+              "MCPPolicies": {
+                "properties": {
+                  "tools": {
+                    "$ref": "#/$defs/ResourceFilter"
+                  },
+                  "prompts": {
+                    "$ref": "#/$defs/ResourceFilter"
+                  },
+                  "resources": {
+                    "$ref": "#/$defs/ResourceFilter"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "MCPPolicies defines inclusion and exclusion rules for resources exposed by an MCP server."
+              },
+              "MCPSpec": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "Transport type: stdio or sse"
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "description": "HTTP URL for the MCP server if type: sse"
+                  },
+                  "command": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Command to start the MCP server via stdio"
+                  },
+                  "env": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Environment variables for the MCP server"
+                  },
+                  "annotations": {
+                    "$ref": "#/$defs/ToolAnnotation",
+                    "description": "Default safety profile for all exposed tools"
+                  },
+                  "policies": {
+                    "$ref": "#/$defs/MCPPolicies",
+                    "description": "Controls which external MCP resources are exposed"
+                  },
+                  "overrides": {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/ToolAnnotation"
+                    },
+                    "type": "object",
+                    "description": "Tool-specific annotation overrides (key is tool name)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "MCPSpec contains the configuration details for an MCP resource."
+              },
+              "ResourceFilter": {
+                "properties": {
+                  "include": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns for resources to expose"
+                  },
+                  "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns for resources to block (applied after include)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
+              },
+              "ToolAnnotation": {
+                "properties": {
+                  "isOpenWorld": {
+                    "type": "boolean",
+                    "description": "Interacts with external resources"
+                  },
+                  "isDangerous": {
+                    "type": "boolean",
+                    "description": "Can perform destructive actions"
+                  },
+                  "isReadOnly": {
+                    "type": "boolean",
+                    "description": "Does not modify state"
+                  },
+                  "isIdempotent": {
+                    "type": "boolean",
+                    "description": "Safe to retry"
+                  },
+                  "userHint": {
+                    "type": "string",
+                    "description": "Human-readable hint for approval prompts"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "isOpenWorld",
+                  "isDangerous",
+                  "isReadOnly",
+                  "isIdempotent",
+                  "userHint"
+                ],
+                "description": "ToolAnnotation defines the safety profile for a tool."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Toolkit"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/toolkit-spec",
+            "$ref": "#/$defs/ToolkitSpec",
+            "$defs": {
+              "ToolAnnotation": {
+                "properties": {
+                  "isOpenWorld": {
+                    "type": "boolean",
+                    "description": "Interacts with external resources"
+                  },
+                  "isDangerous": {
+                    "type": "boolean",
+                    "description": "Can perform destructive actions"
+                  },
+                  "isReadOnly": {
+                    "type": "boolean",
+                    "description": "Does not modify state"
+                  },
+                  "isIdempotent": {
+                    "type": "boolean",
+                    "description": "Safe to retry"
+                  },
+                  "userHint": {
+                    "type": "string",
+                    "description": "Human-readable hint for approval prompts"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "isOpenWorld",
+                  "isDangerous",
+                  "isReadOnly",
+                  "isIdempotent",
+                  "userHint"
+                ],
+                "description": "ToolAnnotation defines the safety profile for a tool."
+              },
+              "ToolkitSpec": {
+                "properties": {
+                  "tools": {
+                    "items": {
+                      "$ref": "#/$defs/ToolkitTool"
+                    },
+                    "type": "array",
+                    "description": "Array of tools (referenced or inline)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "tools"
+                ],
+                "description": "ToolkitSpec contains the configuration details for a Toolkit resource."
+              },
+              "ToolkitTool": {
+                "properties": {
+                  "$ref": {
+                    "type": "string",
+                    "description": "Path to external tool (e.g., \"tools/formatter.yaml\")"
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Used only when defined inline in a Toolkit"
+                  },
+                  "command": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
+                  },
+                  "env": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Environment variables injected into the process"
+                  },
+                  "inputSchema": {
+                    "type": "object",
+                    "description": "JSON Schema object defining arguments the LLM must pass"
+                  },
+                  "outputSchema": {
+                    "type": "object",
+                    "description": "JSON Schema object defining the tool's output"
+                  },
+                  "annotations": {
+                    "$ref": "#/$defs/ToolAnnotation",
+                    "description": "Safety profile for Tool Execution Security"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "command"
+                ],
+                "description": "ToolkitTool can be either a reference to an external file or a fully inline ToolSpec."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Plugin"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/plugin-spec",
+            "$ref": "#/$defs/PluginSpec",
+            "$defs": {
+              "PluginHooks": {
+                "properties": {
+                  "postInstall": {
+                    "items": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "type": "array",
+                    "description": "Commands to run after the plugin is downloaded (e.g., [\"go\", \"install\", \"./...\"])"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "PluginHooks defines lifecycle commands to run when a plugin is installed."
+              },
+              "PluginSpec": {
+                "properties": {
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the Markdown body of the plugin file."
+                  },
+                  "resourceDir": {
+                    "type": "string",
+                    "description": "The relative path within the repository where the loader should look for resources"
+                  },
+                  "exports": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns defining which resources are exposed to consumers"
+                  },
+                  "hooks": {
+                    "$ref": "#/$defs/PluginHooks",
+                    "description": "Setup and installation hooks"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "resourceDir",
+                  "exports"
+                ],
+                "description": "PluginSpec contains the configuration details for a Plugin resource."
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "apiVersion": {
       "type": "string",
-      "enum": ["warp/v1alpha1"],
+      "enum": [
+        "warp/v1alpha1"
+      ],
       "description": "The version of the WARP specification."
     },
     "kind": {
@@ -22,281 +1895,54 @@
         "ModelProvider",
         "Tool",
         "MCP",
-        "Toolkit"
+        "Toolkit",
+        "Plugin"
       ],
       "description": "The type of WARP resource."
     },
     "metadata": {
-      "type": "object",
-      "required": ["name"],
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "Unique identifier for the resource within its kind."
-        },
-        "description": {
-          "type": "string",
-          "description": "Short human-readable summary of the resource."
-        },
-        "displayName": {
-          "type": "string",
-          "description": "Optional pretty-printed label for UIs."
-        },
-        "labels": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://github.com/masterkeysrd/warp/metadata",
+      "$ref": "#/$defs/Metadata",
+      "$defs": {
+        "Metadata": {
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name is the unique identifier for the resource within its kind."
+            },
+            "description": {
+              "type": "string",
+              "description": "Description is a short human-readable summary of the resource."
+            },
+            "displayName": {
+              "type": "string",
+              "description": "DisplayName is an optional pretty-printed label for UIs."
+            },
+            "labels": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object",
+              "description": "Labels are arbitrary key-value pairs for categorisation and filtering."
+            }
+          },
+          "additionalProperties": false,
           "type": "object",
-          "additionalProperties": { "type": "string" },
-          "description": "Arbitrary key-value pairs for categorisation and filtering."
+          "required": [
+            "name"
+          ],
+          "description": "Metadata holds the identifying and descriptive fields shared by every resource kind."
         }
       }
     }
   },
-  "allOf": [
-    {
-      "if": { "properties": { "kind": { "const": "Agent" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "properties": {
-              "extends": {
-                "type": "string",
-                "description": "Qualified Name or Short Name of another Agent to extend."
-              },
-              "models": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Prioritized list of LLM models. The runtime uses the first available."
-              },
-              "temperature": {
-                "type": "number",
-                "minimum": 0,
-                "maximum": 2,
-                "description": "Sampling temperature (0.0-2.0)."
-              },
-              "tools": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Tool resources this agent may use."
-              },
-              "skills": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Skill resources this agent is allowed to use."
-              },
-              "commands": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Command resources this agent can invoke."
-              },
-              "triggers": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Entities that can invoke this agent (e.g., 'human', 'agent', 'system')."
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "kind": { "const": "Command" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "properties": {
-              "models": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Preferred models for this command. Overrides agent defaults."
-              },
-              "tools": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Tools allowed during this command execution."
-              },
-              "hints": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Ordered list of argument names for UI and templates."
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "kind": { "const": "Workspace" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "properties": {
-              "projects": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Directories to load as active projects."
-              },
-              "defaultProvider": {
-                "type": "string",
-                "description": "Provider to use when an agent omits spec.models."
-              },
-              "policies": {
-                "type": "object",
-                "properties": {
-                  "tools": {
-                    "type": "object",
-                    "properties": {
-                      "allowDangerous": { "type": "boolean", "default": true },
-                      "allowOpenWorld": { "type": "boolean", "default": true },
-                      "include": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      },
-                      "exclude": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "kind": { "const": "ModelProvider" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "required": ["type", "endpoint"],
-            "properties": {
-              "type": { "type": "string", "description": "e.g., ollama, openai, anthropic" },
-              "endpoint": { "type": "string", "description": "API base URL" },
-              "defaultModel": { "type": "string" },
-              "auth": {
-                "type": "object",
-                "properties": {
-                  "type": { "type": "string", "description": "The auth scheme (e.g., bearer, api-key, basic)" },
-                  "header": { "type": "string", "description": "Custom header name if type is api-key" },
-                  "env": { "type": "string", "description": "Read credential from environment variable" },
-                  "file": { "type": "string", "description": "Read credential from file path" }
-                }
-              },
-              "models": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "required": ["id", "name", "label", "limits"],
-                  "properties": {
-                    "id": { "type": "string" },
-                    "name": { "type": "string" },
-                    "label": { "type": "string" },
-                    "limits": {
-                      "type": "object",
-                      "required": ["context", "output"],
-                      "properties": {
-                        "context": { "type": "integer" },
-                        "output": { "type": "integer" }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "kind": { "const": "Tool" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "required": ["command"],
-            "properties": {
-              "command": { "type": "array", "items": { "type": "string" } },
-              "env": { "type": "object", "additionalProperties": { "type": "string" } },
-              "parameters": { "type": "object", "description": "JSON Schema for tool arguments" },
-              "outputSchema": { "type": "object", "description": "JSON Schema for tool output" },
-              "annotations": {
-                "type": "object",
-                "properties": {
-                  "isOpenWorld": { "type": "boolean" },
-                  "isDangerous": { "type": "boolean" },
-                  "isReadOnly": { "type": "boolean" },
-                  "isIdempotent": { "type": "boolean" },
-                  "userHint": { "type": "string" }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "kind": { "const": "MCP" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "required": ["command"],
-            "properties": {
-              "command": { "type": "array", "items": { "type": "string" } },
-              "env": { "type": "object", "additionalProperties": { "type": "string" } },
-              "annotations": { "type": "object" },
-              "tools": {
-                "type": "object",
-                "properties": {
-                  "include": { "type": "array", "items": { "type": "string" } },
-                  "exclude": { "type": "array", "items": { "type": "string" } }
-                }
-              },
-              "overrides": { "type": "object" }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": { "properties": { "kind": { "const": "Toolkit" } } },
-      "then": {
-        "properties": {
-          "spec": {
-            "type": "object",
-            "required": ["tools"],
-            "properties": {
-              "tools": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "required": ["$ref"],
-                      "properties": { "$ref": { "type": "string" } }
-                    },
-                    {
-                      "type": "object",
-                      "required": ["name", "command", "description"],
-                      "properties": {
-                        "name": { "type": "string" },
-                        "command": { "type": "array", "items": { "type": "string" } },
-                        "description": { "type": "string" },
-                        "parameters": { "type": "object" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata"
+  ],
+  "title": "Workspace Agent Resource Protocol (WARP)",
+  "description": "Schema for WARP resources (Agents, Skills, Commands, etc.)"
 }

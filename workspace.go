@@ -80,9 +80,9 @@ type WorkspaceDefSpec struct {
 // WorkspacePlugin defines an external repository to load as a plugin.
 type WorkspacePlugin struct {
 	Source    string          `yaml:"source"`
-	Version   string          `yaml:"version"`
-	Namespace string          `yaml:"namespace"`
-	Imports   *ResourceFilter `yaml:"imports"`
+	Version   string          `yaml:"version,omitempty"`
+	Namespace string          `yaml:"namespace,omitempty"`
+	Imports   *ResourceFilter `yaml:"imports,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the WorkspacePlugin.

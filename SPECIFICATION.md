@@ -310,7 +310,12 @@ shared metadata header.
 
 #### `spec` fields
 
-_None._ The only content is the Markdown body, which becomes `instructions`.
+| Field     | Type     | Description                                                                              |
+|-----------|----------|------------------------------------------------------------------------------------------|
+| `useWhen` | string   | Explicit routing instructions to the LLM on when to trigger this skill (e.g. "Use this when..."). |
+| `keywords`| string[] | Array of semantic tags used for discovery and prompting.                                 |
+
+_Note: The Markdown body below the closing YAML delimiter automatically becomes the `instructions` field._
 
 #### Full example
 
@@ -670,6 +675,13 @@ A `Plugin` resource (typically named `PLUGIN.md` or `PLUGIN.yaml`) is placed at 
 |---------------|----------|:--------:|------------|---------------------------------------------------------------------------------------------------------|
 | `resourceDir` | string   |          | `.agents/` | The relative path within the repository where the loader should look for resources.                     |
 | `exports`     | string[] |          | `["*"]`    | Glob patterns defining which resources are exposed to consumers. Resources not matching are private.    |
+| `hooks`       | object   |          | —          | Setup and installation hooks executed when the plugin is installed.                                     |
+
+#### `PluginHooks` fields
+
+| Field         | Type       | Description                                                                                             |
+|---------------|------------|---------------------------------------------------------------------------------------------------------|
+| `postInstall` | string[][] | Commands to run after the plugin is downloaded (e.g., `[["go", "install", "./..."]]`). |
 
 #### Full example (`PLUGIN.md`)
 
@@ -999,6 +1011,7 @@ This ensures that plugin creators do not dictate namespaces (preventing collisio
 To guarantee reproducibility, security, and performance, WARP implements a global caching and lock file mechanism.
 
 1. **Global Cache**: When the loader encounters a plugin, it checks a global host cache (e.g., `~/.warp/pkg/mod/`). If the specific version is missing, it is downloaded and cached. Subsequent loads are instantaneous from disk.
+   * **Local Path Bypass**: If the plugin source is a local relative (e.g. `./plugins/my-plugin`) or absolute filesystem path, WARP intentionally bypasses the global cache and links directly to the live local directory. This ensures that any modifications made to the local plugin are instantly reflected in the workspace without needing to re-fetch.
 2. **`warp.lock`**: Tooling generates a machine-readable `warp.lock` file adjacent to the `WORKSPACE.md`. This file must be committed to version control. It records the exact version and a cryptographic hash (e.g., SHA-256) of the downloaded package's directory tree.
 3. **Validation**: During the load phase, the loader verifies the cached package against the hash in `warp.lock`. If the hash does not match (indicating tampering or a network failure), the loader aborts, preventing supply-chain attacks.
 

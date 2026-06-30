@@ -85,6 +85,8 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			ta.Skills = append(ta.Skills, TemplateSkill{
 				Name:        s.Metadata.Name,
 				Description: s.Metadata.Description,
+				UseWhen:     s.Spec.UseWhen,
+				Keywords:    s.Spec.Keywords,
 				Dir:         s.Directory,
 				Path:        filepath.Join(s.Directory, s.Metadata.Name+".md"),
 			})

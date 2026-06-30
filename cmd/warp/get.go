@@ -1,8 +1,10 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -16,12 +18,16 @@ type exportMock struct {
 }
 
 func runGet(args []string) {
-	if len(args) == 0 {
+	fs := flag.NewFlagSet("get", flag.ExitOnError)
+	autoApprove := fs.Bool("y", false, "Auto-approve imports and installation hooks")
+	fs.Parse(args)
+
+	if fs.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "Error: package source required (e.g. github.com/acme/finance-skills@v1.2.0)")
 		os.Exit(1)
 	}
 
-	pkgArg := args[0]
+	pkgArg := fs.Arg(0)
 	parts := strings.Split(pkgArg, "@")
 	source := parts[0]
 	version := "latest"
@@ -31,7 +37,7 @@ func runGet(args []string) {
 
 	fmt.Printf("Fetching plugin %s@%s...\n", source, version)
 
-	resources, err := warp.DiscoverPluginResources(source, version)
+	resources, hooks, err := warp.DiscoverPluginResources(source, version)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error discovering resources: %v\n", err)
 		os.Exit(1)
@@ -49,28 +55,30 @@ func runGet(args []string) {
 
 	fmt.Printf("Plugin '%s' exposes %d resources.\n", source, len(discoveredExports))
 
-	var mode string
+	var mode string = "all"
 	var selectedResources []string
 
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[string]().
-				Title("How do you want to import these resources?").
-				Options(
-					huh.NewOption("Import All (Expose everything to the workspace)", "all"),
-					huh.NewOption("Select Specific Resources", "specific"),
-				).
-				Value(&mode),
-		),
-	)
+	if !*autoApprove {
+		form := huh.NewForm(
+			huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("How do you want to import these resources?").
+					Options(
+						huh.NewOption("Import All (Expose everything to the workspace)", "all"),
+						huh.NewOption("Select Specific Resources", "specific"),
+					).
+					Value(&mode),
+			),
+		)
 
-	err = form.Run()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Aborted.")
-		os.Exit(1)
+		err = form.Run()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			os.Exit(1)
+		}
 	}
 
-	if mode == "specific" {
+	if mode == "specific" && !*autoApprove {
 		// Group by kind
 		byKind := make(map[string][]exportMock)
 		kindsOrder := []string{"Agent", "Skill", "Command", "Tool", "MCP", "Toolkit", "ModelProvider"}
@@ -163,4 +171,40 @@ func runGet(args []string) {
 	fmt.Println("\n✅ Plugin installed successfully!")
 	fmt.Printf("   - Updated WORKSPACE.md\n")
 	fmt.Printf("   - Updated warp.lock\n")
+
+	if hooks != nil && len(hooks.PostInstall) > 0 {
+		fmt.Println("\n📦 This plugin has post-install hooks.")
+		for _, cmd := range hooks.PostInstall {
+			fmt.Printf("  - %s\n", strings.Join(cmd, " "))
+		}
+
+		approveHooks := *autoApprove
+		if !approveHooks {
+			err = huh.NewConfirm().
+				Title("Do you want to run these setup commands?").
+				Value(&approveHooks).
+				Run()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Aborted.")
+				os.Exit(1)
+			}
+		}
+
+		if approveHooks {
+			for _, cmdArgs := range hooks.PostInstall {
+				if len(cmdArgs) == 0 {
+					continue
+				}
+				fmt.Printf("Running: %s...\n", strings.Join(cmdArgs, " "))
+				cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error running hook: %v\n", err)
+					os.Exit(1)
+				}
+			}
+			fmt.Println("✅ Setup hooks complete!")
+		}
+	}
 }

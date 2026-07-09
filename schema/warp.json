@@ -48,6 +48,13 @@
           "type": "array",
           "description": "Commands is a list of file paths (relative to the FS root) that\nreference Command resources this agent can invoke."
         },
+        "subagents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Subagents is a list of Agent references (Qualified or Short Names) this agent\nis allowed to delegate to."
+        },
         "policies": {
           "$ref": "#/$defs/Policies",
           "description": "Policies defines security and access policies."
@@ -991,6 +998,13 @@
                     },
                     "type": "array",
                     "description": "Commands is a list of file paths (relative to the FS root) that\nreference Command resources this agent can invoke."
+                  },
+                  "subagents": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Subagents is a list of Agent references (Qualified or Short Names) this agent\nis allowed to delegate to."
                   },
                   "policies": {
                     "$ref": "#/$defs/Policies",

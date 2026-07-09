@@ -556,3 +556,53 @@ func TestMCP_Validation(t *testing.T) {
 		t.Error("Expected validation error for unknown transport type, got nil")
 	}
 }
+
+func TestAgent_Subagents(t *testing.T) {
+	// Setup Registry
+	reg := NewRegistry(nil)
+
+	// Define some agents
+	agentA := agentWithSpec(NamespaceSystem, "agent-a", AgentSpec{
+		Subagents: []string{"system/Agent/agent-b"},
+	})
+	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{})
+	agentC := agentWithSpec(NamespaceSystem, "agent-c", AgentSpec{})
+
+	reg.Set(agentA.QualifiedName(), agentA)
+	reg.Set(agentB.QualifiedName(), agentB)
+	reg.Set(agentC.QualifiedName(), agentC)
+
+	// 1. Validate passes when subagent exists
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("Expected validation to pass, got: %v", err)
+	}
+
+	// 2. Resolve Agent with specific subagent
+	scoped := reg.Project("myproject")
+	resolvedA, err := scoped.ResolveAgent("agent-a")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-a): %v", err)
+	}
+	if len(resolvedA.Subagents) != 1 || resolvedA.Subagents[0].Metadata.Name != "agent-b" {
+		t.Errorf("expected only agent-b as subagent, got: %v", resolvedA.Subagents)
+	}
+
+	// 3. Resolve Agent with empty subagents (should return all agents)
+	resolvedB, err := scoped.ResolveAgent("agent-b")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-b): %v", err)
+	}
+	// It should list all effective agents in the registry (agent-a, agent-b, agent-c)
+	if len(resolvedB.Subagents) != 3 {
+		t.Errorf("expected 3 subagents, got %d", len(resolvedB.Subagents))
+	}
+
+	// 4. Validation fails on missing subagent
+	agentBad := agentWithSpec(NamespaceSystem, "agent-bad", AgentSpec{
+		Subagents: []string{"system/Agent/missing"},
+	})
+	reg.Set(agentBad.QualifiedName(), agentBad)
+	if err := reg.Validate(); err == nil {
+		t.Error("Expected validation to fail for missing subagent reference, got nil")
+	}
+}

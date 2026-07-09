@@ -164,6 +164,11 @@ func (r *Registry) Validate() error {
 					return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
 				}
 			}
+			for _, saRef := range agent.Spec.Subagents {
+				if !r.hasLocked(saRef) {
+					return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
+				}
+			}
 		}
 		if cmd, ok := res.(*Command); ok {
 			for _, toolRef := range cmd.Spec.Tools {
@@ -478,6 +483,7 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	// Merge: parent is the base; append child lists and instructions after.
 	parent.Spec.Skills = append(parent.Spec.Skills, ag.Spec.Skills...)
 	parent.Spec.Commands = append(parent.Spec.Commands, ag.Spec.Commands...)
+	parent.Spec.Subagents = append(parent.Spec.Subagents, ag.Spec.Subagents...)
 	switch {
 	case parent.Spec.Instructions != "" && ag.Spec.Instructions != "":
 		parent.Spec.Instructions = parent.Spec.Instructions + "\n\n" + ag.Spec.Instructions
@@ -596,11 +602,34 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		commands = deduplicateCommands(commands)
 	}
 
+	// 4. Resolve Subagents
+	var subagents []*Agent
+	if len(ag.Spec.Subagents) == 0 {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: true})
+		for _, r := range all {
+			if a, ok := r.(*Agent); ok {
+				subagents = append(subagents, a)
+			}
+		}
+	} else {
+		for _, saRef := range ag.Spec.Subagents {
+			r, ok := resolver.ResolveResource(saRef)
+			if !ok {
+				continue
+			}
+			if a, ok := r.(*Agent); ok {
+				subagents = append(subagents, a)
+			}
+		}
+		subagents = deduplicateAgents(subagents)
+	}
+
 	return &ResolvedAgent{
-		Agent:    ag,
-		Tools:    tools,
-		Skills:   skills,
-		Commands: commands,
+		Agent:     ag,
+		Tools:     tools,
+		Skills:    skills,
+		Commands:  commands,
+		Subagents: subagents,
 	}, nil
 }
 
@@ -700,4 +729,17 @@ func filterTools(tools []*Tool, policy *ToolPolicies) []*Tool {
 		}
 	}
 	return filtered
+}
+
+func deduplicateAgents(in []*Agent) []*Agent {
+	seen := make(map[string]bool)
+	var out []*Agent
+	for _, a := range in {
+		qn := a.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			out = append(out, a)
+		}
+	}
+	return out
 }

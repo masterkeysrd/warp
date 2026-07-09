@@ -47,6 +47,7 @@ type TemplateAgent struct {
 	Skills      []TemplateSkill
 	Tools       []TemplateTool
 	Commands    []TemplateCommand
+	Subagents   []TemplateAgent
 }
 
 // TemplateSkill represents the skill view model for templates.
@@ -193,6 +194,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 		data["Models"] = v.Spec.Models
 		data["Skills"] = v.Spec.Skills
 		data["Commands"] = v.Spec.Commands
+		data["Subagents"] = v.Spec.Subagents
 		data["Triggers"] = v.Spec.Triggers
 		data["Temperature"] = v.Spec.Temperature
 	case *Skill:

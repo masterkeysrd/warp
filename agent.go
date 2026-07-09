@@ -105,6 +105,14 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				Path:        filepath.Join(cmd.Directory, cmd.Metadata.Name+".md"),
 			})
 		}
+		for _, sa := range opts.Resolved.Subagents {
+			ta.Subagents = append(ta.Subagents, TemplateAgent{
+				Name:        sa.Metadata.Name,
+				Description: sa.Metadata.Description,
+				Dir:         sa.Directory,
+				Path:        filepath.Join(sa.Directory, sa.Metadata.Name+".md"),
+			})
+		}
 	} else {
 		ta = TemplateAgent{
 			Name:        a.Metadata.Name,
@@ -170,6 +178,9 @@ type AgentSpec struct {
 	// Commands is a list of file paths (relative to the FS root) that
 	// reference Command resources this agent can invoke.
 	Commands []string `yaml:"commands,omitempty"`
+	// Subagents is a list of Agent references (Qualified or Short Names) this agent
+	// is allowed to delegate to.
+	Subagents []string `yaml:"subagents,omitempty"`
 	// Policies defines security and access policies.
 	Policies *Policies `yaml:"policies,omitempty"`
 }
@@ -191,9 +202,7 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	}
 	if in.Thinking != nil {
 		out.Thinking = make(map[string]any, len(in.Thinking))
-		for k, v := range in.Thinking {
-			out.Thinking[k] = v
-		}
+		maps.Copy(out.Thinking, in.Thinking)
 	}
 	if in.Skills != nil {
 		out.Skills = make([]string, len(in.Skills))
@@ -202,6 +211,10 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	if in.Commands != nil {
 		out.Commands = make([]string, len(in.Commands))
 		copy(out.Commands, in.Commands)
+	}
+	if in.Subagents != nil {
+		out.Subagents = make([]string, len(in.Subagents))
+		copy(out.Subagents, in.Subagents)
 	}
 	if in.Policies != nil {
 		out.Policies = in.Policies.DeepCopy()

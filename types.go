@@ -210,8 +210,9 @@ func (in *ToolPolicies) DeepCopy() *ToolPolicies {
 // ResolvedAgent represents a fully hydrated agent, with all inheritance merged
 // and capabilities resolved and filtered by policies.
 type ResolvedAgent struct {
-	Agent    *Agent
-	Tools    []*Tool
-	Skills   []Skill
-	Commands []*Command
+	Agent     *Agent
+	Tools     []*Tool
+	Skills    []Skill
+	Commands  []*Command
+	Subagents []*Agent
 }

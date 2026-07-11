@@ -218,6 +218,7 @@ runtime.
 | `thinking`    | object   |          | —       | Runtime configuration for extended reasoning (e.g., `type: effort`, `effort: high`). Overrides the provider's default. |
 | `skills`      | string[] |          | `[]`    | Names or qualified refs of `Skill` resources this agent is allowed to use.                        |
 | `commands`    | string[] |          | `[]`    | Names or qualified refs of `Command` resources this agent can invoke.                             |
+| `subagents`   | string[] |          | `[]`    | Names or qualified refs of `Agent` resources this agent is allowed to delegate to.                |
 | `policies`    | object   |          | —       | Security and access policies (specifically `tools` execution restrictions) for this agent.         |
 
 > `instructions` is **not** written in the YAML front-matter. It is populated
@@ -229,7 +230,7 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 
 1. The parent agent is resolved (which may itself extend another agent, forming a chain).
 2. A deep copy of the resolved parent is made as the merge base.
-3. The child's `skills` lists are **appended** to the parent's lists.
+3. The child's `skills`, `commands`, and `subagents` lists are **appended** to the parent's lists.
 4. The child's `policies` block is merged with the parent's:
    - Boolean options (`allowDangerous`, `allowOpenWorld`) in the child override those of the parent if specified.
    - Slice arrays (`include`, `exclude`) are combined using a set union.
@@ -287,6 +288,8 @@ spec:
     - skills/sql.md
   commands:
     - commands/generate-report.md
+  subagents:
+    - system/Agent/writer
 ---
 
 # Analyst
@@ -412,7 +415,11 @@ endpoints and default models.
 | `endpoint`     | string | ✅       | API base URL.                                   |
 | `defaultModel` | string |          | Model to use if none specified.                 |
 | `auth`         | object |          | Authentication config (e.g., `type: bearer`, `env: OPENAI_API_KEY`). |
+| `headers`      | map    |          | Custom HTTP headers included in all requests to the provider. |
+| `config`       | map    |          | Provider-specific settings and custom configuration parameters. |
 | `models`       | object[]|          | Available models from this provider.            |
+
+> **Note on configuration:** The `config` parameters and custom `headers` are entirely provider-specific. Different runtimes or provider backends may define and read different options from the `config` map (e.g., connection timeouts, system-level tweaks, or custom API options).
 
 #### `ProviderAuth` fields
 
@@ -502,6 +509,11 @@ spec:
   type: anthropic
   endpoint: https://api.anthropic.com
   defaultModel: claude-3-7-sonnet
+  headers:
+    X-Custom-Client-Name: "warp-platform"
+  config:
+    retryAttempts: 3
+    timeoutMs: 15000
   models:
     - id: claude-3-7-sonnet
       name: claude-3-7-sonnet-20250219
@@ -707,8 +719,8 @@ This repository provides standard financial analysis skills.
 
 ## 4. Cross-References
 
-An `Agent` resource may declare lists of skill and command references under `spec.skills` and
-`spec.commands`. A reference can be either a **Qualified Name** or a **Short Name**.
+An `Agent` resource may declare lists of skill, command, and subagent references under `spec.skills`,
+`spec.commands`, and `spec.subagents`. A reference can be either a **Qualified Name** or a **Short Name**.
 
 - **Qualified Name**: `namespace/kind/name` (e.g. `system/Skill/python`). Directs the loader to exactly one resource in the registry.
 - **Short Name**: `name` (e.g. `python`). The loader will iterate through the standard namespaces in priority order to find the first matching kind and name.
@@ -719,6 +731,8 @@ spec:
     - system/Skill/finance   # Qualified Name: Explicitly targets the system-level finance skill
   commands:
     - report                 # Short Name: Resolves using Search Path Priority
+  subagents:
+    - analyst                # Short Name: Resolves to an Agent using Search Path Priority
 ```
 
 A conforming loader **must** verify that every referenced path resolves to a loaded resource of the
@@ -883,6 +897,7 @@ loaded Workspace.
 |-----------------------------------|------------------------------------------------------------------------------|
 | All `spec.skills` paths resolve   | A listed path does not match any loaded `Skill` in the resolution hierarchy. |
 | All `spec.commands` paths resolve | A listed path does not match any loaded `Command` in the resolution hierarchy. |
+| All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
 
 ### 7.3 Workspace-specific
 

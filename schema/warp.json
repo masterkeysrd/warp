@@ -206,6 +206,17 @@
           "$ref": "#/$defs/ProviderAuth",
           "description": "Authentication configuration"
         },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Custom HTTP headers for all provider requests"
+        },
+        "config": {
+          "type": "object",
+          "description": "Provider-specific settings and custom configuration parameters"
+        },
         "models": {
           "items": {
             "$ref": "#/$defs/ProviderModel"
@@ -1184,6 +1195,17 @@
                   "auth": {
                     "$ref": "#/$defs/ProviderAuth",
                     "description": "Authentication configuration"
+                  },
+                  "headers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Custom HTTP headers for all provider requests"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Provider-specific settings and custom configuration parameters"
                   },
                   "models": {
                     "items": {

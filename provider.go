@@ -20,11 +20,13 @@ func (in *ModelProvider) DeepCopy() *ModelProvider {
 
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
-	Type         string          `yaml:"type"`           // e.g., "ollama", "openai", "anthropic"
-	Endpoint     string          `yaml:"endpoint"`       // API base URL
-	DefaultModel string          `yaml:"defaultModel"`   // Model to use if none specified
-	Auth         *ProviderAuth   `yaml:"auth,omitempty"` // Authentication configuration
-	Models       []ProviderModel `yaml:"models"`         // Available models from this provider
+	Type         string            `yaml:"type"`              // e.g., "ollama", "openai", "anthropic"
+	Endpoint     string            `yaml:"endpoint"`          // API base URL
+	DefaultModel string            `yaml:"defaultModel"`      // Model to use if none specified
+	Auth         *ProviderAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`    // Authentication configuration
+	Headers      map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom HTTP headers for all provider requests
+	Config       map[string]any    `yaml:"config,omitempty" json:"config,omitempty"`   // Provider-specific settings and custom configuration parameters
+	Models       []ProviderModel   `yaml:"models"`            // Available models from this provider
 }
 
 // DeepCopy returns a deep copy of the ModelProviderSpec.
@@ -36,6 +38,18 @@ func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	*out = *in
 	if in.Auth != nil {
 		out.Auth = in.Auth.DeepCopy()
+	}
+	if in.Headers != nil {
+		out.Headers = make(map[string]string, len(in.Headers))
+		for k, v := range in.Headers {
+			out.Headers[k] = v
+		}
+	}
+	if in.Config != nil {
+		out.Config = make(map[string]any, len(in.Config))
+		for k, v := range in.Config {
+			out.Config[k] = v
+		}
 	}
 	if in.Models != nil {
 		out.Models = make([]ProviderModel, len(in.Models))

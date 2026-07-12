@@ -314,7 +314,7 @@ func TestAgentRender(t *testing.T) {
 			},
 		},
 		Spec: AgentSpec{
-			Instructions: "Agent: {{.Agent.Name}} | Dir: {{.Agent.Dir}} | Project: {{.Project.Name}} | Skills: {{range .Agent.Skills}}{{.Name}}{{end}} | Tools: {{range .Agent.Tools}}{{.Name}}{{end}} | Commands: {{range .Agent.Commands}}{{.Name}}{{end}}",
+			Instructions: "Agent: {{.Agent.Name}} | Dir: {{.Agent.Dir}} | Project: {{.Project.Name}} | Skills: {{range .Skills}}{{.}} {{end}}| Tools: {{range .Agent.Tools}}{{.Name}}{{end}} | Commands: {{range .Commands}}{{.}} {{end}}| Subagents: {{range .Subagents}}{{.}} {{end}}| RichSubagents: {{range .Agent.Subagents}}{{.Name}} {{end}}",
 		},
 	}
 
@@ -341,6 +341,13 @@ func TestAgentRender(t *testing.T) {
 				},
 			},
 		},
+		Subagents: []*Agent{
+			{
+				BaseResource: BaseResource{
+					Metadata: Metadata{Name: "writer"},
+				},
+			},
+		},
 	}
 
 	opts := &AgentRenderOptions{
@@ -354,7 +361,7 @@ func TestAgentRender(t *testing.T) {
 		t.Fatalf("Agent.Render failed: %v", err)
 	}
 
-	expected := "Agent: researcher | Dir: /Users/user/code/warp/.agents | Project: cli | Skills: go-expert | Tools: view_file | Commands: run-tests"
+	expected := "Agent: researcher | Dir: /Users/user/code/warp/.agents | Project: cli | Skills: go-expert | Tools: view_file | Commands: run-tests | Subagents: writer | RichSubagents: writer "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}

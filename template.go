@@ -191,10 +191,18 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 			}
 			data["Agent"] = ta
 		}
-		data["Models"] = v.Spec.Models
-		data["Skills"] = v.Spec.Skills
-		data["Commands"] = v.Spec.Commands
-		data["Subagents"] = v.Spec.Subagents
+		if _, ok := data["Models"]; !ok {
+			data["Models"] = v.Spec.Models
+		}
+		if _, ok := data["Skills"]; !ok {
+			data["Skills"] = v.Spec.Skills
+		}
+		if _, ok := data["Commands"]; !ok {
+			data["Commands"] = v.Spec.Commands
+		}
+		if _, ok := data["Subagents"]; !ok {
+			data["Subagents"] = v.Spec.Subagents
+		}
 		data["Triggers"] = v.Spec.Triggers
 		data["Temperature"] = v.Spec.Temperature
 	case *Skill:

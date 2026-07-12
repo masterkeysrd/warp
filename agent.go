@@ -113,6 +113,24 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				Path:        filepath.Join(sa.Directory, sa.Metadata.Name+".md"),
 			})
 		}
+
+		var subagentNames []string
+		for _, sa := range opts.Resolved.Subagents {
+			subagentNames = append(subagentNames, sa.Metadata.Name)
+		}
+		mergedGlobals["Subagents"] = subagentNames
+
+		var skillNames []string
+		for _, s := range opts.Resolved.Skills {
+			skillNames = append(skillNames, s.Metadata.Name)
+		}
+		mergedGlobals["Skills"] = skillNames
+
+		var cmdNames []string
+		for _, cmd := range opts.Resolved.Commands {
+			cmdNames = append(cmdNames, cmd.Metadata.Name)
+		}
+		mergedGlobals["Commands"] = cmdNames
 	} else {
 		ta = TemplateAgent{
 			Name:        a.Metadata.Name,

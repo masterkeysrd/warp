@@ -621,3 +621,36 @@ func TestAgent_Subagents(t *testing.T) {
 		t.Error("Expected validation to fail for missing subagent reference, got nil")
 	}
 }
+
+func TestRegistry_ListResources_Filter(t *testing.T) {
+	reg := NewRegistry(nil)
+	agentA := agentWithSpec(NamespaceSystem, "agent-a", AgentSpec{
+		Triggers: []string{"human"},
+	})
+	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{
+		Triggers: []string{"agent"},
+	})
+	reg.Set(agentA.QualifiedName(), agentA)
+	reg.Set(agentB.QualifiedName(), agentB)
+
+	scoped := reg.Project("myproject")
+
+	// Filter for agents that can be triggered by "human"
+	humanAgents := scoped.ListResources(QueryOptions{
+		Kinds: []Kind{KindAgent},
+		Filter: func(res Resource) bool {
+			if a, ok := res.(*Agent); ok {
+				for _, trg := range a.Spec.Triggers {
+					if trg == "human" {
+						return true
+					}
+				}
+			}
+			return false
+		},
+	})
+
+	if len(humanAgents) != 1 || humanAgents[0].GetName() != "agent-a" {
+		t.Errorf("expected only agent-a to match filter, got: %v", humanAgents)
+	}
+}

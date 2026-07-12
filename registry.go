@@ -23,6 +23,9 @@ type QueryOptions struct {
 	// Effective applies shadowing: when true, only the highest-priority
 	// namespace version of each short name is returned.
 	Effective bool
+	// Filter is an optional custom predicate function called for each candidate resource.
+	// If set and it returns false, the resource is excluded from the results.
+	Filter func(Resource) bool
 }
 
 // Registry is the base resource store, safe for concurrent use. Resources are
@@ -327,6 +330,9 @@ func (r *Registry) ListResources(opts QueryOptions) []Resource {
 		if len(nsSet) > 0 && !nsSet[ns] {
 			continue
 		}
+		if opts.Filter != nil && !opts.Filter(res) {
+			continue
+		}
 		filtered = append(filtered, res)
 	}
 	if !opts.Effective {
@@ -411,6 +417,9 @@ func (s *ScopedRegistry) ListResources(opts QueryOptions) []Resource {
 			continue
 		}
 		if len(nsSet) > 0 && !nsSet[res.GetNamespace()] {
+			continue
+		}
+		if opts.Filter != nil && !opts.Filter(res) {
 			continue
 		}
 		filtered = append(filtered, res)

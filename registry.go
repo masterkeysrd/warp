@@ -608,7 +608,9 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: true})
 		for _, r := range all {
 			if a, ok := r.(*Agent); ok {
-				subagents = append(subagents, a)
+				if canBeTriggeredByAgent(a) {
+					subagents = append(subagents, a)
+				}
 			}
 		}
 	} else {
@@ -618,7 +620,9 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 				continue
 			}
 			if a, ok := r.(*Agent); ok {
-				subagents = append(subagents, a)
+				if canBeTriggeredByAgent(a) {
+					subagents = append(subagents, a)
+				}
 			}
 		}
 		subagents = deduplicateAgents(subagents)
@@ -742,4 +746,16 @@ func deduplicateAgents(in []*Agent) []*Agent {
 		}
 	}
 	return out
+}
+
+func canBeTriggeredByAgent(a *Agent) bool {
+	if len(a.Spec.Triggers) == 0 {
+		return true
+	}
+	for _, t := range a.Spec.Triggers {
+		if strings.ToLower(t) == "agent" {
+			return true
+		}
+	}
+	return false
 }

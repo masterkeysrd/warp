@@ -567,10 +567,20 @@ func TestAgent_Subagents(t *testing.T) {
 	})
 	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{})
 	agentC := agentWithSpec(NamespaceSystem, "agent-c", AgentSpec{})
+	// agentD cannot be triggered by agent (only human)
+	agentD := agentWithSpec(NamespaceSystem, "agent-d", AgentSpec{
+		Triggers: []string{"human"},
+	})
+	// agentE can be triggered by agent
+	agentE := agentWithSpec(NamespaceSystem, "agent-e", AgentSpec{
+		Triggers: []string{"agent"},
+	})
 
 	reg.Set(agentA.QualifiedName(), agentA)
 	reg.Set(agentB.QualifiedName(), agentB)
 	reg.Set(agentC.QualifiedName(), agentC)
+	reg.Set(agentD.QualifiedName(), agentD)
+	reg.Set(agentE.QualifiedName(), agentE)
 
 	// 1. Validate passes when subagent exists
 	if err := reg.Validate(); err != nil {
@@ -587,14 +597,19 @@ func TestAgent_Subagents(t *testing.T) {
 		t.Errorf("expected only agent-b as subagent, got: %v", resolvedA.Subagents)
 	}
 
-	// 3. Resolve Agent with empty subagents (should return all agents)
+	// 3. Resolve Agent with empty subagents (should return all agents that can be triggered by "agent")
 	resolvedB, err := scoped.ResolveAgent("agent-b")
 	if err != nil {
 		t.Fatalf("ResolveAgent(agent-b): %v", err)
 	}
-	// It should list all effective agents in the registry (agent-a, agent-b, agent-c)
-	if len(resolvedB.Subagents) != 3 {
-		t.Errorf("expected 3 subagents, got %d", len(resolvedB.Subagents))
+	// It should list agent-a, agent-b, agent-c, and agent-e (total 4), but NOT agent-d (which is only triggered by human).
+	if len(resolvedB.Subagents) != 4 {
+		t.Errorf("expected 4 subagents, got %d (agents: %v)", len(resolvedB.Subagents), resolvedB.Subagents)
+	}
+	for _, sa := range resolvedB.Subagents {
+		if sa.Metadata.Name == "agent-d" {
+			t.Errorf("did not expect agent-d (triggers: human) to be resolved as a subagent")
+		}
 	}
 
 	// 4. Validation fails on missing subagent

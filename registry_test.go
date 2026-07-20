@@ -171,7 +171,7 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 	// system/Agent/main — parent: 1 skill, base instructions.
 	parent := agentWithSpec(NamespaceSystem, "main", AgentSpec{
 		Instructions: "parent instructions",
-		Skills:       []string{"system/Skill/skill-a"},
+		Skills:       &[]string{"system/Skill/skill-a"},
 	})
 	reg.Set(parent.QualifiedName(), parent)
 	reg.Set(MakeQualifiedName(NamespaceSystem, KindSkill, "skill-a"),
@@ -181,7 +181,7 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 	child := agentWithSpec(NamespaceUser, "main", AgentSpec{
 		Extends:      "system/Agent/main",
 		Instructions: "child instructions",
-		Skills:       []string{"user/Skill/skill-b"},
+		Skills:       &[]string{"user/Skill/skill-b"},
 	})
 	reg.Set(child.QualifiedName(), child)
 	reg.Set(MakeQualifiedName(NamespaceUser, KindSkill, "skill-b"),
@@ -194,8 +194,8 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
 
-	if len(merged.Agent.Spec.Skills) != 2 {
-		t.Errorf("expected 2 skills, got %d: %v", len(merged.Agent.Spec.Skills), merged.Agent.Spec.Skills)
+	if len(*merged.Agent.Spec.Skills) != 2 {
+		t.Errorf("expected 2 skills, got %d: %v", len(*merged.Agent.Spec.Skills), *merged.Agent.Spec.Skills)
 	}
 	if !strings.Contains(merged.Agent.Spec.Instructions, "parent instructions") {
 		t.Error("merged instructions should contain parent instructions")
@@ -218,17 +218,17 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 
 	grandparent := agentWithSpec(NamespaceSystem, "base", AgentSpec{
 		Instructions: "grandparent",
-		Skills:       []string{"skill-a"},
+		Skills:       &[]string{"skill-a"},
 	})
 	parent := agentWithSpec(NamespaceUser, "middle", AgentSpec{
 		Extends:      "system/Agent/base",
 		Instructions: "parent",
-		Skills:       []string{"skill-b"},
+		Skills:       &[]string{"skill-b"},
 	})
 	child := agentWithSpec(NamespaceWorkspace, "child", AgentSpec{
 		Extends:      "user/Agent/middle",
 		Instructions: "child",
-		Skills:       []string{"skill-c"},
+		Skills:       &[]string{"skill-c"},
 	})
 	for _, r := range []Resource{grandparent, parent, child} {
 		reg.Set(r.QualifiedName(), r)
@@ -238,8 +238,8 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
-	if len(merged.Agent.Spec.Skills) != 3 {
-		t.Errorf("expected 3 skills, got %d: %v", len(merged.Agent.Spec.Skills), merged.Agent.Spec.Skills)
+	if len(*merged.Agent.Spec.Skills) != 3 {
+		t.Errorf("expected 3 skills, got %d: %v", len(*merged.Agent.Spec.Skills), *merged.Agent.Spec.Skills)
 	}
 	// Instruction order: grandparent → parent → child.
 	gpIdx := strings.Index(merged.Agent.Spec.Instructions, "grandparent")
@@ -563,7 +563,7 @@ func TestAgent_Subagents(t *testing.T) {
 
 	// Define some agents
 	agentA := agentWithSpec(NamespaceSystem, "agent-a", AgentSpec{
-		Subagents: []string{"system/Agent/agent-b"},
+		Subagents: &[]string{"system/Agent/agent-b"},
 	})
 	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{})
 	agentC := agentWithSpec(NamespaceSystem, "agent-c", AgentSpec{})
@@ -612,9 +612,22 @@ func TestAgent_Subagents(t *testing.T) {
 		}
 	}
 
+	// 3b. Resolve Agent with explicitly empty subagents (should return exactly 0 subagents)
+	agentEmptySubagents := agentWithSpec(NamespaceSystem, "agent-empty-subagents", AgentSpec{
+		Subagents: &[]string{},
+	})
+	reg.Set(agentEmptySubagents.QualifiedName(), agentEmptySubagents)
+	resolvedEmpty, err := scoped.ResolveAgent("agent-empty-subagents")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-empty-subagents): %v", err)
+	}
+	if len(resolvedEmpty.Subagents) != 0 {
+		t.Errorf("expected 0 subagents, got %d: %v", len(resolvedEmpty.Subagents), resolvedEmpty.Subagents)
+	}
+
 	// 4. Validation fails on missing subagent
 	agentBad := agentWithSpec(NamespaceSystem, "agent-bad", AgentSpec{
-		Subagents: []string{"system/Agent/missing"},
+		Subagents: &[]string{"system/Agent/missing"},
 	})
 	reg.Set(agentBad.QualifiedName(), agentBad)
 	if err := reg.Validate(); err == nil {
@@ -652,5 +665,37 @@ func TestRegistry_ListResources_Filter(t *testing.T) {
 
 	if len(humanAgents) != 1 || humanAgents[0].GetName() != "agent-a" {
 		t.Errorf("expected only agent-a to match filter, got: %v", humanAgents)
+	}
+}
+
+func TestWildcardSubagents(t *testing.T) {
+	reg := NewRegistry(nil)
+	agentA := agentWithSpec(NamespaceSystem, "agent-a", AgentSpec{
+		Subagents: &[]string{"*"},
+	})
+	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{})
+	agentC := agentWithSpec(NamespaceSystem, "agent-c", AgentSpec{})
+	// agentD cannot be triggered by agent (only human)
+	agentD := agentWithSpec(NamespaceSystem, "agent-d", AgentSpec{
+		Triggers: []string{"human"},
+	})
+	reg.Set(agentA.QualifiedName(), agentA)
+	reg.Set(agentB.QualifiedName(), agentB)
+	reg.Set(agentC.QualifiedName(), agentC)
+	reg.Set(agentD.QualifiedName(), agentD)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("Expected validation to pass with wildcard subagent reference, got: %v", err)
+	}
+
+	scoped := reg.Project("myproject")
+	resolvedA, err := scoped.ResolveAgent("agent-a")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-a): %v", err)
+	}
+
+	// Should list agent-a, agent-b, agent-c (total 3), but NOT agent-d (only human).
+	if len(resolvedA.Subagents) != 3 {
+		t.Errorf("expected 3 subagents, got %d (agents: %v)", len(resolvedA.Subagents), resolvedA.Subagents)
 	}
 }

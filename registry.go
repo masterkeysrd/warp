@@ -157,19 +157,34 @@ func (r *Registry) Validate() error {
 			}
 		}
 		if agent, ok := res.(*Agent); ok {
-			for _, skillRef := range agent.Spec.Skills {
-				if !r.hasLocked(skillRef) {
-					return fmt.Errorf("agent %s references missing skill: %s", name, skillRef)
+			if agent.Spec.Skills != nil {
+				for _, skillRef := range *agent.Spec.Skills {
+					if skillRef == "*" {
+						continue
+					}
+					if !r.hasLocked(skillRef) {
+						return fmt.Errorf("agent %s references missing skill: %s", name, skillRef)
+					}
 				}
 			}
-			for _, cmdRef := range agent.Spec.Commands {
-				if !r.hasLocked(cmdRef) {
-					return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
+			if agent.Spec.Commands != nil {
+				for _, cmdRef := range *agent.Spec.Commands {
+					if cmdRef == "*" {
+						continue
+					}
+					if !r.hasLocked(cmdRef) {
+						return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
+					}
 				}
 			}
-			for _, saRef := range agent.Spec.Subagents {
-				if !r.hasLocked(saRef) {
-					return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
+			if agent.Spec.Subagents != nil {
+				for _, saRef := range *agent.Spec.Subagents {
+					if saRef == "*" {
+						continue
+					}
+					if !r.hasLocked(saRef) {
+						return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
+					}
 				}
 			}
 		}
@@ -490,9 +505,33 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	}
 
 	// Merge: parent is the base; append child lists and instructions after.
-	parent.Spec.Skills = append(parent.Spec.Skills, ag.Spec.Skills...)
-	parent.Spec.Commands = append(parent.Spec.Commands, ag.Spec.Commands...)
-	parent.Spec.Subagents = append(parent.Spec.Subagents, ag.Spec.Subagents...)
+	if ag.Spec.Skills != nil {
+		if parent.Spec.Skills == nil {
+			s := make([]string, len(*ag.Spec.Skills))
+			copy(s, *ag.Spec.Skills)
+			parent.Spec.Skills = &s
+		} else {
+			*parent.Spec.Skills = append(*parent.Spec.Skills, *ag.Spec.Skills...)
+		}
+	}
+	if ag.Spec.Commands != nil {
+		if parent.Spec.Commands == nil {
+			c := make([]string, len(*ag.Spec.Commands))
+			copy(c, *ag.Spec.Commands)
+			parent.Spec.Commands = &c
+		} else {
+			*parent.Spec.Commands = append(*parent.Spec.Commands, *ag.Spec.Commands...)
+		}
+	}
+	if ag.Spec.Subagents != nil {
+		if parent.Spec.Subagents == nil {
+			sa := make([]string, len(*ag.Spec.Subagents))
+			copy(sa, *ag.Spec.Subagents)
+			parent.Spec.Subagents = &sa
+		} else {
+			*parent.Spec.Subagents = append(*parent.Spec.Subagents, *ag.Spec.Subagents...)
+		}
+	}
 	switch {
 	case parent.Spec.Instructions != "" && ag.Spec.Instructions != "":
 		parent.Spec.Instructions = parent.Spec.Instructions + "\n\n" + ag.Spec.Instructions
@@ -555,7 +594,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 1. Resolve Skills
 	var skills []Skill
-	if len(ag.Spec.Skills) == 0 {
+	if ag.Spec.Skills == nil || containsWildcard(ag.Spec.Skills) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: true})
 		for _, r := range all {
 			if sk, ok := r.(*Skill); ok {
@@ -563,7 +602,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			}
 		}
 	} else {
-		for _, sRef := range ag.Spec.Skills {
+		for _, sRef := range *ag.Spec.Skills {
 			r, ok := resolver.ResolveResource(sRef)
 			if !ok {
 				continue
@@ -591,7 +630,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 3. Resolve Commands
 	var commands []*Command
-	if len(ag.Spec.Commands) == 0 {
+	if ag.Spec.Commands == nil || containsWildcard(ag.Spec.Commands) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindCommand}, Effective: true})
 		for _, r := range all {
 			if c, ok := r.(*Command); ok {
@@ -599,7 +638,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			}
 		}
 	} else {
-		for _, cRef := range ag.Spec.Commands {
+		for _, cRef := range *ag.Spec.Commands {
 			r, ok := resolver.ResolveResource(cRef)
 			if !ok {
 				continue
@@ -613,7 +652,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 4. Resolve Subagents
 	var subagents []*Agent
-	if len(ag.Spec.Subagents) == 0 {
+	if ag.Spec.Subagents == nil || containsWildcard(ag.Spec.Subagents) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: true})
 		for _, r := range all {
 			if a, ok := r.(*Agent); ok {
@@ -623,7 +662,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			}
 		}
 	} else {
-		for _, saRef := range ag.Spec.Subagents {
+		for _, saRef := range *ag.Spec.Subagents {
 			r, ok := resolver.ResolveResource(saRef)
 			if !ok {
 				continue
@@ -763,6 +802,18 @@ func canBeTriggeredByAgent(a *Agent) bool {
 	}
 	for _, t := range a.Spec.Triggers {
 		if strings.ToLower(t) == "agent" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsWildcard(slice *[]string) bool {
+	if slice == nil {
+		return false
+	}
+	for _, v := range *slice {
+		if v == "*" {
 			return true
 		}
 	}

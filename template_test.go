@@ -37,7 +37,7 @@ func TestTemplateRender_Fields(t *testing.T) {
 		},
 		Spec: AgentSpec{
 			Instructions: "I am $DisplayName. I know {{range .Skills}}{{.}} {{end}}",
-			Skills:       []string{"go", "rust"},
+			Skills:       &[]string{"go", "rust"},
 		},
 	}
 

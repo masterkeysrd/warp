@@ -192,13 +192,13 @@ type AgentSpec struct {
 	Thinking map[string]any `yaml:"thinking,omitempty"`
 	// Skills is a list of file paths (relative to the FS root) that reference
 	// Skill resources this agent is allowed to use.
-	Skills []string `yaml:"skills,omitempty"`
+	Skills *[]string `yaml:"skills,omitempty"`
 	// Commands is a list of file paths (relative to the FS root) that
 	// reference Command resources this agent can invoke.
-	Commands []string `yaml:"commands,omitempty"`
+	Commands *[]string `yaml:"commands,omitempty"`
 	// Subagents is a list of Agent references (Qualified or Short Names) this agent
 	// is allowed to delegate to.
-	Subagents []string `yaml:"subagents,omitempty"`
+	Subagents *[]string `yaml:"subagents,omitempty"`
 	// Policies defines security and access policies.
 	Policies *Policies `yaml:"policies,omitempty"`
 }
@@ -223,16 +223,19 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 		maps.Copy(out.Thinking, in.Thinking)
 	}
 	if in.Skills != nil {
-		out.Skills = make([]string, len(in.Skills))
-		copy(out.Skills, in.Skills)
+		s := make([]string, len(*in.Skills))
+		copy(s, *in.Skills)
+		out.Skills = &s
 	}
 	if in.Commands != nil {
-		out.Commands = make([]string, len(in.Commands))
-		copy(out.Commands, in.Commands)
+		c := make([]string, len(*in.Commands))
+		copy(c, *in.Commands)
+		out.Commands = &c
 	}
 	if in.Subagents != nil {
-		out.Subagents = make([]string, len(in.Subagents))
-		copy(out.Subagents, in.Subagents)
+		sa := make([]string, len(*in.Subagents))
+		copy(sa, *in.Subagents)
+		out.Subagents = &sa
 	}
 	if in.Policies != nil {
 		out.Policies = in.Policies.DeepCopy()

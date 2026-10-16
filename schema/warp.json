@@ -99,6 +99,27 @@
       "type": "object",
       "description": "CommandSpec contains the configuration details for a Command resource."
     },
+    "ContextSpec": {
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the directive text populated from the Markdown body of\nthe file (below the closing front-matter delimiter)."
+        },
+        "resources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Resources is a list of paths to other Warp files to be explicitly\nloaded into the context."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "resources"
+      ],
+      "description": "ContextSpec contains the configuration details for a Context resource."
+    },
     "MCPPolicies": {
       "properties": {
         "tools": {
@@ -654,6 +675,10 @@
           "type": "string",
           "description": "Used only when defined inline in a Toolkit"
         },
+        "description": {
+          "type": "string",
+          "description": "Short description (used in YAML tools or inline Toolkit tools)"
+        },
         "command": {
           "items": {
             "type": "string"
@@ -718,6 +743,10 @@
         "name": {
           "type": "string",
           "description": "Used only when defined inline in a Toolkit"
+        },
+        "description": {
+          "type": "string",
+          "description": "Short description (used in YAML tools or inline Toolkit tools)"
         },
         "command": {
           "items": {
@@ -943,6 +972,47 @@
                   "source"
                 ],
                 "description": "WorkspacePlugin defines an external repository to load as a plugin."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Context"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/context-spec",
+            "$ref": "#/$defs/ContextSpec",
+            "$defs": {
+              "ContextSpec": {
+                "properties": {
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the directive text populated from the Markdown body of\nthe file (below the closing front-matter delimiter)."
+                  },
+                  "resources": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Resources is a list of paths to other Warp files to be explicitly\nloaded into the context."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "resources"
+                ],
+                "description": "ContextSpec contains the configuration details for a Context resource."
               }
             }
           }
@@ -1539,6 +1609,10 @@
                     "type": "string",
                     "description": "Used only when defined inline in a Toolkit"
                   },
+                  "description": {
+                    "type": "string",
+                    "description": "Short description (used in YAML tools or inline Toolkit tools)"
+                  },
                   "command": {
                     "items": {
                       "type": "string"
@@ -1792,6 +1866,10 @@
                   "name": {
                     "type": "string",
                     "description": "Used only when defined inline in a Toolkit"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Short description (used in YAML tools or inline Toolkit tools)"
                   },
                   "command": {
                     "items": {

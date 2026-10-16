@@ -20,6 +20,7 @@ type exportMock struct {
 func runGet(args []string) {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
 	autoApprove := fs.Bool("y", false, "Auto-approve imports and installation hooks")
+	includeFlag := fs.String("include", "", "Comma-separated list of resource patterns to import non-interactively")
 	fs.Parse(args)
 
 	if fs.NArg() == 0 {
@@ -43,7 +44,6 @@ func runGet(args []string) {
 		os.Exit(1)
 	}
 
-	// Filter based on pluginRes.Spec.Exports (we'll implement glob filtering later, for now we list all)
 	var discoveredExports []exportMock
 	for _, r := range resources {
 		discoveredExports = append(discoveredExports, exportMock{
@@ -58,7 +58,14 @@ func runGet(args []string) {
 	var mode string = "all"
 	var selectedResources []string
 
-	if !*autoApprove {
+	if *includeFlag != "" {
+		mode = "specific"
+		for _, part := range strings.Split(*includeFlag, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				selectedResources = append(selectedResources, trimmed)
+			}
+		}
+	} else if !*autoApprove {
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
@@ -78,7 +85,7 @@ func runGet(args []string) {
 		}
 	}
 
-	if mode == "specific" && !*autoApprove {
+	if mode == "specific" && *includeFlag == "" && !*autoApprove {
 		// Group by kind
 		byKind := make(map[string][]exportMock)
 		kindsOrder := []string{"Agent", "Skill", "Command", "Tool", "MCP", "Toolkit", "ModelProvider"}

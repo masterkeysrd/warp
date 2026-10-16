@@ -73,6 +73,7 @@ func main() {
 	}
 
 	addKind("Workspace", &warp.WorkspaceDefSpec{})
+	addKind("Context", &warp.ContextSpec{})
 	addKind("Agent", &warp.AgentSpec{})
 	addKind("Command", &warp.CommandSpec{})
 	addKind("Skill", &warp.SkillSpec{})

@@ -38,12 +38,14 @@
 //
 // # Resource Kinds
 //
-// Nine resource kinds are supported:
+// Ten resource kinds are supported:
 //
 //	Workspace      – root authority for the session; declares active projects
 //	                 (WORKSPACE.md, optionally without front-matter).
 //	Context        – identity and instructions for a project scope
 //	                 (AGENTS.md, optionally without front-matter).
+//	Plugin         – manifest declaring a plugin's identity and exported resources
+//	                 (PLUGIN.md, optionally without front-matter).
 //	Agent          – an autonomous agent with model configuration and references
 //	                 to skills and commands it may use.
 //	Skill          – a bundle of expertise guidelines for a specific domain.

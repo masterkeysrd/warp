@@ -177,7 +177,12 @@ automatically.
 
 #### `spec` fields
 
-_None beyond shared metadata._ The Markdown body becomes the `instructions` field.
+| Field       | Type     | Required | Default | Description                                                                                 |
+|-------------|----------|:--------:|---------|---------------------------------------------------------------------------------------------|
+| `resources` | string[] |          | `[]`    | Paths (relative to the project directory) of additional Warp resource files or directories to load into the project namespace. |
+
+> `instructions` is **not** written in the YAML front-matter when using Markdown format. It is populated
+> automatically from the Markdown body below the closing `---`.
 
 #### Full example
 
@@ -188,6 +193,9 @@ kind: Context
 metadata:
   name: services-api
   description: Contextual rules for the API service project.
+spec:
+  resources:
+    - custom/extra-skill.md
 ---
 
 # API Service

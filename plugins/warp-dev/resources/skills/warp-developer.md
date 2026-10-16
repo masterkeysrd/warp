@@ -15,7 +15,7 @@ You are an expert in the Workspace Agent Resource Protocol (WARP). Your goal is 
 ### 1. Resource Model
 Every WARP resource is a Markdown file with YAML front-matter or a pure YAML file.
 - **Workspace**: The root authority (`WORKSPACE.md`). Defines project boundaries and global settings.
-- **Context**: Project-specific instructions (`AGENT.md`).
+- **Context**: Project-specific instructions (`AGENTS.md`).
 - **Agent**: Defines an autonomous actor, its persona, and its capabilities (skills, commands, tools).
 - **Skill**: Domain-specific expertise guidelines.
 - **Command**: Reusable operations an agent can invoke.
@@ -78,7 +78,7 @@ spec:
 
 ### 3. Special Files
 - `WORKSPACE.md`: Defines the workspace root and project boundaries.
-- `AGENT.md`: Defines the context/identity for a specific project.
+- `AGENTS.md`: Defines the context/identity for a specific project.
 
 ## Using the Go API
 
@@ -151,7 +151,7 @@ if err != nil {
 
 ### Integrating with WARP
 - When adding capabilities to an agent, add the resource name to the agent's `spec.skills` or `spec.commands` list.
-- Use `AGENT.md` to define the "soul" of a project or directory.
+- Use `AGENTS.md` to define the "soul" of a project or directory.
 - Use `WORKSPACE.md` to orchestrate multiple projects.
 
 ## Best Practices

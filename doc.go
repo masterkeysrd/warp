@@ -43,7 +43,7 @@
 //	Workspace      – root authority for the session; declares active projects
 //	                 (WORKSPACE.md, optionally without front-matter).
 //	Context        – identity and instructions for a project scope
-//	                 (AGENT.md, optionally without front-matter).
+//	                 (AGENTS.md, optionally without front-matter).
 //	Agent          – an autonomous agent with model configuration and references
 //	                 to skills and commands it may use.
 //	Skill          – a bundle of expertise guidelines for a specific domain.

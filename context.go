@@ -69,7 +69,7 @@ func (c *Context) Render(opts *ContextRenderOptions) (string, error) {
 // for any agent operating within a project directory. It is the authoritative
 // entry point for the directory scope it lives in.
 //
-// A file named AGENT.md (case-insensitive) is automatically treated as a
+// A file named AGENTS.md (case-insensitive) is automatically treated as a
 // Context. If the file lacks YAML front-matter the loader infers the
 // apiVersion, kind, and metadata.name fields automatically.
 type Context struct {

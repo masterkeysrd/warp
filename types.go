@@ -13,7 +13,7 @@ type Kind string
 const (
 	// KindWorkspace represents a Workspace resource (WORKSPACE.md).
 	KindWorkspace Kind = "Workspace"
-	// KindContext represents a Context resource (AGENT.md).
+	// KindContext represents a Context resource (AGENTS.md).
 	KindContext Kind = "Context"
 	// KindAgent represents an Agent resource.
 	KindAgent Kind = "Agent"

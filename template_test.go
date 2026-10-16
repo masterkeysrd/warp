@@ -155,7 +155,7 @@ func TestContextRender(t *testing.T) {
 		t.Fatalf("Context.Render failed: %v", err)
 	}
 
-	expected := "Project Name: cli | Project DisplayName: Warp CLI | Project Dir: /Users/user/code/warp/cmd/cli | Workspace Dir: /Users/user/code/warp | Context Path: /Users/user/code/warp/cmd/cli/AGENT.md | Shorthand Project Dir: /Users/user/code/warp/cmd/cli | Shorthand Workspace Dir: /Users/user/code/warp | Shorthand Context Path: /Users/user/code/warp/cmd/cli/AGENT.md | CI: true"
+	expected := "Project Name: cli | Project DisplayName: Warp CLI | Project Dir: /Users/user/code/warp/cmd/cli | Workspace Dir: /Users/user/code/warp | Context Path: /Users/user/code/warp/cmd/cli/AGENTS.md | Shorthand Project Dir: /Users/user/code/warp/cmd/cli | Shorthand Workspace Dir: /Users/user/code/warp | Shorthand Context Path: /Users/user/code/warp/cmd/cli/AGENTS.md | CI: true"
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}
@@ -165,7 +165,7 @@ func TestContextRender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Context.Render with nil opts failed: %v", err)
 	}
-	expectedNilOpts := "Project Name:  | Project DisplayName:  | Project Dir:  | Workspace Dir:  | Context Path: /Users/user/code/warp/cmd/cli/AGENT.md | Shorthand Project Dir:  | Shorthand Workspace Dir:  | Shorthand Context Path: /Users/user/code/warp/cmd/cli/AGENT.md | CI: <no value>"
+	expectedNilOpts := "Project Name:  | Project DisplayName:  | Project Dir:  | Workspace Dir:  | Context Path: /Users/user/code/warp/cmd/cli/AGENTS.md | Shorthand Project Dir:  | Shorthand Workspace Dir:  | Shorthand Context Path: /Users/user/code/warp/cmd/cli/AGENTS.md | CI: <no value>"
 	if resNilOpts != expectedNilOpts {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expectedNilOpts, resNilOpts)
 	}

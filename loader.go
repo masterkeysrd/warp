@@ -22,7 +22,7 @@ const (
 
 	// ContextFileName is the name of the file that defines a project's
 	// identity and instructions.
-	ContextFileName = "AGENT.md"
+	ContextFileName = "AGENTS.md"
 
 	// MarkdownExt is the file extension that the loader looks for when
 	// walking the filesystem. Only files with this extension are parsed as
@@ -135,7 +135,7 @@ func Load(dir string, providers ...ResourceProvider) (*Registry, error) {
 // the workspace's spec.projects field (["*"], explicit list, or default ["."]).
 //
 // Phase 3 — Contextual Loading: for each project directory, loads its
-// AGENT.md (Context) and walks its .agents/ subdirectory for Agents, Skills,
+// AGENTS.md (Context) and walks its .agents/ subdirectory for Agents, Skills,
 // and Commands.
 //
 // Authority Rule: when the only project is "." (WORKSPACE_PATH == PROJECT_PATH)
@@ -182,7 +182,7 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		slug := projectSlug(workspaceRoot, projAbsPath)
 		projectNames = append(projectNames, slug)
 
-		// Load Context (AGENT.md).
+		// Load Context (AGENTS.md).
 		ctx, warn := loadContext(projAbsPath)
 		if warn != "" {
 			reg.warnings = append(reg.warnings, warn)
@@ -452,11 +452,11 @@ func discoverSubdirs(root string) ([]string, error) {
 	return dirs, nil
 }
 
-// loadContext looks for an AGENT.md file in the given project directory and
+// loadContext looks for an AGENTS.md file in the given project directory and
 // returns the parsed Context resource. Returns nil when the file is absent.
 // The second return value carries any non-fatal warning.
 func loadContext(projectDir string) (*Context, string) {
-	// Search for AGENT.md case-insensitively by reading the directory.
+	// Search for AGENTS.md case-insensitively by reading the directory.
 	entries, err := os.ReadDir(projectDir)
 	if err != nil {
 		return nil, ""

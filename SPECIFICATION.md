@@ -61,7 +61,7 @@ Standard resources follow this structure:
 - The file **must** begin with a line containing only `---`.
 - The YAML block **must** be closed by a second line containing only `---`.
 - Everything after the closing `---` is treated as the instruction body.
-- **Exception:** Files named `WORKSPACE.md` or `AGENT.md` (case-insensitive) may omit the YAML
+- **Exception:** Files named `WORKSPACE.md` or `AGENTS.md` (case-insensitive) may omit the YAML
   front-matter entirely. In this case, the entire file content is treated as the instruction body,
   and metadata is inferred by the loader.
 
@@ -170,7 +170,7 @@ All agents in this workspace follow the platform coding standards documented in
 A `Context` defines the **identity and instructions** for a single project scope. It is the
 authoritative entry point for the directory it lives in.
 
-The canonical filename is `AGENT.md` (case-insensitive). A loader that finds an `AGENT.md` file
+The canonical filename is `AGENTS.md` (case-insensitive). A loader that finds an `AGENTS.md` file
 inside a project directory will automatically parse it as a `Context` resource. If the file lacks
 YAML front-matter, the loader infers the `apiVersion`, `kind`, and `metadata.name` fields
 automatically.
@@ -776,7 +776,7 @@ The loader enters each project directory and builds its **Identity** and **Resou
 **Per project:**
 
 1. **Context Resolution:**
-   - Check for `AGENT.md` (case-insensitive) in the project directory.
+   - Check for `AGENTS.md` (case-insensitive) in the project directory.
    - **Found:** Parse it as a `Context` resource.
    - **Missing:** No implicit context is created; the project has no instruction body.
 
@@ -852,7 +852,7 @@ WORKSPACE.md              # Root Authority — defines projects
 │       └── review.md
 services/
 ├── api/
-│   ├── AGENT.md          # Context — identity for the api project
+│   ├── AGENTS.md          # Context — identity for the api project
 │   └── .agents/          # Project-local resources
 │       ├── skills/
 │       │   └── grpc.md
@@ -860,7 +860,7 @@ services/
 │           └── gen-proto.md
 
 └── auth/
-    ├── AGENT.md
+    ├── AGENTS.md
     └── .agents/
         └── skills/
             └── jwt.md
@@ -869,7 +869,7 @@ services/
 A minimal single-project setup (no `WORKSPACE.md` needed):
 
 ```
-AGENT.md                  # Context for the single project
+AGENTS.md                  # Context for the single project
 .agents/
 ├── skills/
 └── commands/
@@ -922,7 +922,7 @@ special inferred-manifest filenames.
 function parse(filePath, fileContent):
   1. fileName = basename(filePath)
   2. isWorkspaceFile = (fileName.toLowerCase() == "workspace.md")
-  3. isContextFile   = (fileName.toLowerCase() == "agent.md")
+  3. isContextFile   = (fileName.toLowerCase() == "agents.md")
 
   4. Split fileContent on "---" into segments.
 
@@ -963,11 +963,11 @@ function parse(filePath, fileContent):
 
 **Examples** (workspace root = `/home/user/repos/platform`):
 
-| Input path                                         | Slug              |
-|----------------------------------------------------|-------------------|
-| `/home/user/repos/platform/AGENT.md`               | `agent`           |
-| `/home/user/repos/platform/services/api/AGENT.md`  | `services-api-agent` |
-| `/home/user/repos/platform/WORKSPACE.md`           | `workspace`       |
+| Input path                                          | Slug                  |
+|-----------------------------------------------------|-----------------------|
+| `/home/user/repos/platform/AGENTS.md`               | `agents`              |
+| `/home/user/repos/platform/services/api/AGENTS.md`  | `services-api-agents` |
+| `/home/user/repos/platform/WORKSPACE.md`            | `workspace`           |
 
 ---
 

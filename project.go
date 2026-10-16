@@ -18,8 +18,8 @@ type Project struct {
 	// Stored here so AbsPath() works without a back-pointer to Workspace.
 	RootPath string
 
-	// Context is the parsed AGENT.md resource for this project. Nil when no
-	// AGENT.md was found.
+	// Context is the parsed AGENTS.md resource for this project. Nil when no
+	// AGENTS.md was found.
 	Context *Context
 }
 

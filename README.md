@@ -158,7 +158,7 @@ To use it in VS Code, add the following to your settings (requires the YAML exte
 "yaml.schemas": {
   "https://raw.githubusercontent.com/masterkeysrd/warp/main/schema/warp.json": [
     "**/.agents/**/*.md",
-    "**/AGENT.md",
+    "**/AGENTS.md",
     "**/WORKSPACE.md"
   ]
 }

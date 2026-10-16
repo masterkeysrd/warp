@@ -22,16 +22,16 @@ If the agent is invoked within the scope of a specific project, the `Project` ob
 | Variable | Description | Example |
 | :--- | :--- | :--- |
 | `{{.Project.Name}}` | The slug identifier of the project. | `warp-cli` |
-| `{{.Project.DisplayName}}` | The human-readable name of the project (derived from its `AGENT.md` context). | `Warp CLI Tool` |
+| `{{.Project.DisplayName}}` | The human-readable name of the project (derived from its `AGENTS.md` context). | `Warp CLI Tool` |
 | `{{.Project.Dir}}` | The absolute filesystem path to the project root. | `/Users/user/code/warp/cmd/cli` |
 
 #### 2. The `Context` Object
-If the project contains an `AGENT.md` file, the `Context` object exposes the project-specific rules and directives defined within it. This allows generic agents to inherit the strict rules of the directory they are operating in.
+If the project contains an `AGENTS.md` file, the `Context` object exposes the project-specific rules and directives defined within it. This allows generic agents to inherit the strict rules of the directory they are operating in.
 
 | Variable | Description | Example |
 | :--- | :--- | :--- |
-| `{{.Context.Instructions}}` | The markdown instructions (rules) defined in the project's `AGENT.md`. | `# Rules\n1. Always write tests.` |
-| `{{.Context.Path}}` | The absolute filesystem path to the `AGENT.md` file. | `/Users/user/code/warp/cmd/cli/AGENT.md` |
+| `{{.Context.Instructions}}` | The markdown instructions (rules) defined in the project's `AGENTS.md`. | `# Rules\n1. Always write tests.` |
+| `{{.Context.Path}}` | The absolute filesystem path to the `AGENTS.md` file. | `/Users/user/code/warp/cmd/cli/AGENTS.md` |
 
 #### 3. The `Workspace` Object
 The `Workspace` object represents the top-level repository or workspace the agent is operating within.
@@ -96,7 +96,7 @@ Skills are reusable sets of instructions or domain expertise that an agent can l
 
 Skill templates have access to the same foundational view models as Agents:
 *   `{{.Project}}`: The active project scope.
-*   `{{.Context}}`: The active project's `AGENT.md` rules.
+*   `{{.Context}}`: The active project's `AGENTS.md` rules.
 *   `{{.Workspace}}`: The active workspace scope.
 *   `Globals`: Any implementor-injected global variables.
 
@@ -152,7 +152,7 @@ Commands represent user-invoked actions or tasks. Unlike Agents and Skills, Comm
 
 Command templates have access to the same foundational view models:
 *   `{{.Project}}`: The active project scope where the command was executed.
-*   `{{.Context}}`: The active project's `AGENT.md` rules.
+*   `{{.Context}}`: The active project's `AGENTS.md` rules.
 *   `{{.Workspace}}`: The active workspace scope.
 *   `Globals`: Any implementor-injected global variables.
 
@@ -253,26 +253,26 @@ You are operating out of `{{.Workspace.Dir}}`.
 
 ---
 
-## Context Templating (`AGENT.md`)
+## Context Templating (`AGENTS.md`)
 
-The `Context` resource (defined via an `AGENT.md` file) acts as the specific rulebook for a project directory. Whenever an agent operates within that directory, it dynamically inherits these instructions.
+The `Context` resource (defined via an `AGENTS.md` file) acts as the specific rulebook for a project directory. Whenever an agent operates within that directory, it dynamically inherits these instructions.
 
 Because a Context belongs to a specific project within a workspace, its template allows the rulebook to be highly aware of its surroundings.
 
 ### Available Context Objects
 
 Context templates have access to:
-*   `{{.Project}}`: Metadata about the specific project directory the `AGENT.md` lives in.
+*   `{{.Project}}`: Metadata about the specific project directory the `AGENTS.md` lives in.
 *   `{{.Workspace}}`: Metadata about the root workspace.
-*   `{{.Context}}`: Metadata about the `AGENT.md` file itself.
+*   `{{.Context}}`: Metadata about the `AGENTS.md` file itself.
 *   `Globals`: Implementor-injected global variables.
 
 #### 1. The `Context` Object (Self)
-Represents the `AGENT.md` file being rendered.
+Represents the `AGENTS.md` file being rendered.
 
 | Variable | Description | Example |
 | :--- | :--- | :--- |
-| `{{.Context.Path}}` | The absolute filesystem path to the `AGENT.md` file. | `/Users/user/code/warp/cmd/cli/AGENT.md` |
+| `{{.Context.Path}}` | The absolute filesystem path to the `AGENTS.md` file. | `/Users/user/code/warp/cmd/cli/AGENTS.md` |
 
 ### Example: A Dynamic Project Rulebook
 

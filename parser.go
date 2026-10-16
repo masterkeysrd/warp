@@ -23,7 +23,7 @@ type ParseResult struct {
 	Resource any
 	// Inferred is true when the resource metadata was inferred rather than
 	// read from an explicit YAML front-matter block. This happens when a
-	// WORKSPACE.md or AGENT.md file is loaded without front-matter delimiters.
+	// WORKSPACE.md or AGENTS.md file is loaded without front-matter delimiters.
 	Inferred bool
 }
 
@@ -34,7 +34,7 @@ type ParseResult struct {
 // filePath is the path of the file relative to the loader root. It is used
 // to detect special files that may omit the YAML front-matter block:
 //   - WORKSPACE.md (case-insensitive) is inferred as a Workspace resource.
-//   - AGENT.md (case-insensitive) is inferred as a Context resource.
+//   - AGENTS.md (case-insensitive) is inferred as a Context resource.
 //
 // A valid warp file has the form:
 //
@@ -50,8 +50,8 @@ type ParseResult struct {
 // unsupported.
 func Parse(filePath, content string) (*ParseResult, error) {
 	fileName := path.Base(filePath)
-	isWorkspaceFile := strings.EqualFold(fileName, "workspace.md")
-	isContextFile := strings.EqualFold(fileName, "agent.md")
+	isWorkspaceFile := strings.EqualFold(fileName, WorkspaceFileName)
+	isContextFile := strings.EqualFold(fileName, ContextFileName)
 	ext := strings.ToLower(path.Ext(filePath))
 	isYamlFile := ext == ".yaml" || ext == ".yml"
 
@@ -78,7 +78,7 @@ func Parse(filePath, content string) (*ParseResult, error) {
 				}
 				return &ParseResult{Kind: KindWorkspace, Resource: w, Inferred: true}, nil
 			case isContextFile:
-				// AGENT.md with no front-matter: infer the Context metadata.
+				// AGENTS.md with no front-matter: infer the Context metadata.
 				c := &Context{
 					BaseResource: BaseResource{
 						APIVersion: "warp/v1alpha1",

@@ -126,7 +126,7 @@ func TestSlugifyPath(t *testing.T) {
 		path     string
 		expected string
 	}{
-		{"agent.md", "agent"},
+		{"agents.md", "agents"},
 		{"tools/ls.yaml", "tools-ls"},
 		{"mcp/sqlite.yml", "mcp-sqlite"},
 		{"./foo/bar.md", "foo-bar"},
@@ -394,9 +394,9 @@ spec:
 		t.Fatal(err)
 	}
 
-	// Create AGENT.md in the project
+	// Create AGENTS.md in the project
 	agentContent := "# Project Instructions"
-	if err := os.WriteFile(filepath.Join(projDir, "AGENT.md"), []byte(agentContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(projDir, "AGENTS.md"), []byte(agentContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -419,9 +419,9 @@ spec:
 	}
 
 	// 3. Verify resolution via short name
-	res, ok := scoped.ResolveResource("agent")
+	res, ok := scoped.ResolveResource("agents")
 	if !ok {
-		t.Fatal("Failed to resolve 'agent' in scoped registry")
+		t.Fatal("Failed to resolve 'agents' in scoped registry")
 	}
 	if res.GetKind() != KindContext {
 		t.Errorf("Expected KindContext, got %v", res.GetKind())

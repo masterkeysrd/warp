@@ -3,7 +3,9 @@ package warp
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/masterkeysrd/warp/internal/fetcher"
@@ -20,32 +22,23 @@ import (
 // imports is the list of resource qualified names to import (e.g. ["Skill/hello"]).
 // If imports is empty/nil, all exported resources are imported.
 func InstallPlugin(workspaceDir, source, version string, imports []string) error {
-	cacheDir, err := fetcher.Fetch(source, version)
+	if version == "" {
+		version = "latest"
+	}
+	resolvedSource := resolvePluginSource(workspaceDir, source)
+	cacheDir, err := fetcher.Fetch(resolvedSource, version)
 	if err != nil {
 		return fmt.Errorf("fetching plugin: %w", err)
 	}
 
-	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
-	content, err := os.ReadFile(pluginPath)
+	pluginRes, pluginPath, err := readPluginManifest(cacheDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			pluginPath = filepath.Join(cacheDir, "PLUGIN.yaml")
-			content, err = os.ReadFile(pluginPath)
-		}
-		if err != nil {
-			return fmt.Errorf("repository does not contain a valid PLUGIN.md or PLUGIN.yaml manifest: %w", err)
-		}
+		return err
 	}
-
-	result, err := Parse(pluginPath, string(content))
-	if err != nil || result.Kind != KindPlugin {
-		return fmt.Errorf("failed to parse plugin manifest: %w", err)
-	}
-	pluginRes := result.Resource.(*Plugin)
 
 	resourceDir := pluginRes.Spec.ResourceDir
 	if resourceDir == "" {
-		resourceDir = ".agents"
+		resourceDir = DefaultAgentsDir
 	}
 	absResourceDir := filepath.Join(cacheDir, resourceDir)
 
@@ -64,10 +57,7 @@ func InstallPlugin(workspaceDir, source, version string, imports []string) error
 		return fmt.Errorf("updating warp.lock: %w", err)
 	}
 
-	inferredNamespace := source
-	if lastSlash := strings.LastIndex(source, "/"); lastSlash != -1 {
-		inferredNamespace = source[lastSlash+1:]
-	}
+	inferredNamespace := inferPluginNamespace(source)
 
 	newPlugin := WorkspacePlugin{
 		Source:    source,
@@ -80,7 +70,7 @@ func InstallPlugin(workspaceDir, source, version string, imports []string) error
 		}
 	}
 
-	wsPath := filepath.Join(workspaceDir, "WORKSPACE.md")
+	wsPath := filepath.Join(workspaceDir, WorkspaceFileName)
 	wsContent, err := os.ReadFile(wsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -181,7 +171,34 @@ func InstallPlugin(workspaceDir, source, version string, imports []string) error
 	return nil
 }
 
-func updateLockFile(lockPath, source, version, dirHash, manifestHash, manifestName string) error {
+func resolvePluginSource(workspaceDir, source string) string {
+	if strings.HasPrefix(source, ".") && workspaceDir != "" {
+		return filepath.Join(workspaceDir, source)
+	}
+	return source
+}
+
+func readPluginManifest(cacheDir string) (*Plugin, string, error) {
+	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
+	content, err := os.ReadFile(pluginPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			pluginPath = filepath.Join(cacheDir, "PLUGIN.yaml")
+			content, err = os.ReadFile(pluginPath)
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("repository does not contain a valid PLUGIN.md or PLUGIN.yaml manifest: %w", err)
+		}
+	}
+
+	result, err := Parse(pluginPath, string(content))
+	if err != nil || result.Kind != KindPlugin {
+		return nil, "", fmt.Errorf("failed to parse plugin manifest: %w", err)
+	}
+	return result.Resource.(*Plugin), pluginPath, nil
+}
+
+func parseLockFile(lockPath string) (map[string]string, []string) {
 	existing, err := os.ReadFile(lockPath)
 	locks := make(map[string]string)
 	var keysOrder []string
@@ -204,6 +221,11 @@ func updateLockFile(lockPath, source, version, dirHash, manifestHash, manifestNa
 			}
 		}
 	}
+	return locks, keysOrder
+}
+
+func updateLockFile(lockPath, source, version, dirHash, manifestHash, manifestName string) error {
+	locks, keysOrder := parseLockFile(lockPath)
 
 	key1 := fmt.Sprintf("%s %s", source, version)
 	val1 := dirHash
@@ -228,6 +250,64 @@ func updateLockFile(lockPath, source, version, dirHash, manifestHash, manifestNa
 	return os.WriteFile(lockPath, []byte(sb.String()), 0644)
 }
 
+func matchesPluginExport(exports []string, relPath string, k Kind, name string) bool {
+	if len(exports) == 0 {
+		return true
+	}
+	kindName := string(k) + "/" + name
+	relNoExt := strings.TrimSuffix(relPath, path.Ext(relPath))
+	for _, pat := range exports {
+		if pat == "*" {
+			return true
+		}
+		for _, candidate := range []string{name, kindName, strings.ToLower(kindName), relPath, relNoExt} {
+			if m, _ := path.Match(pat, candidate); m {
+				return true
+			}
+			if m, _ := path.Match(strings.ToLower(pat), strings.ToLower(candidate)); m {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchesPluginImport(filter *ResourceFilter, ns string, relPath string, k Kind, name string) bool {
+	if filter == nil {
+		return true
+	}
+	kindName := string(k) + "/" + name
+	nsKindName := MakeQualifiedName(ns, k, name)
+	nsName := ns + "/" + name
+	relNoExt := strings.TrimSuffix(relPath, path.Ext(relPath))
+	candidates := []string{name, kindName, nsKindName, nsName, relPath, relNoExt}
+
+	matchAny := func(patterns []string) bool {
+		for _, pat := range patterns {
+			if pat == "*" {
+				return true
+			}
+			for _, c := range candidates {
+				if m, _ := path.Match(pat, c); m {
+					return true
+				}
+				if m, _ := path.Match(strings.ToLower(pat), strings.ToLower(c)); m {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if len(filter.Include) > 0 && !matchAny(filter.Include) {
+		return false
+	}
+	if len(filter.Exclude) > 0 && matchAny(filter.Exclude) {
+		return false
+	}
+	return true
+}
+
 // DiscoveredResource holds information about a discovered resource in a plugin.
 type DiscoveredResource struct {
 	Kind        Kind
@@ -236,34 +316,25 @@ type DiscoveredResource struct {
 }
 
 // DiscoverPluginResources fetches the plugin at the given source and version,
-// and returns the list of all resources exposed by it.
+// and returns the list of all resources exposed by it (filtered by the plugin's
+// spec.exports).
 func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *PluginHooks, error) {
+	if version == "" {
+		version = "latest"
+	}
 	cacheDir, err := fetcher.Fetch(source, version)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetching plugin: %w", err)
 	}
 
-	pluginPath := filepath.Join(cacheDir, "PLUGIN.md")
-	content, err := os.ReadFile(pluginPath)
+	pluginRes, _, err := readPluginManifest(cacheDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			pluginPath = filepath.Join(cacheDir, "PLUGIN.yaml")
-			content, err = os.ReadFile(pluginPath)
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("repository does not contain a valid PLUGIN.md or PLUGIN.yaml manifest: %w", err)
-		}
+		return nil, nil, err
 	}
-
-	result, err := Parse(pluginPath, string(content))
-	if err != nil || result.Kind != KindPlugin {
-		return nil, nil, fmt.Errorf("failed to parse plugin manifest: %w", err)
-	}
-	pluginRes := result.Resource.(*Plugin)
 
 	resourceDir := pluginRes.Spec.ResourceDir
 	if resourceDir == "" {
-		resourceDir = ".agents"
+		resourceDir = DefaultAgentsDir
 	}
 	absResourceDir := filepath.Join(cacheDir, resourceDir)
 
@@ -275,7 +346,10 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *Plu
 
 	var resources []DiscoveredResource
 
-	appendResource := func(k Kind, name, desc string) {
+	appendResource := func(relPath string, k Kind, name, desc string) {
+		if !matchesPluginExport(pluginRes.Spec.Exports, relPath, k, name) {
+			return
+		}
 		resources = append(resources, DiscoveredResource{
 			Kind:        k,
 			Name:        name,
@@ -283,27 +357,34 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *Plu
 		})
 	}
 
-	for _, a := range tempReg.Agents {
-		appendResource(a.Kind, a.GetName(), a.GetMetadata().Description)
+	for p, a := range tempReg.Agents {
+		appendResource(p, a.Kind, a.GetName(), a.GetMetadata().Description)
 	}
-	for _, s := range tempReg.Skills {
-		appendResource(s.Kind, s.GetName(), s.GetMetadata().Description)
+	for p, s := range tempReg.Skills {
+		appendResource(p, s.Kind, s.GetName(), s.GetMetadata().Description)
 	}
-	for _, c := range tempReg.Commands {
-		appendResource(c.Kind, c.GetName(), c.GetMetadata().Description)
+	for p, c := range tempReg.Commands {
+		appendResource(p, c.Kind, c.GetName(), c.GetMetadata().Description)
 	}
-	for _, p := range tempReg.ModelProviders {
-		appendResource(p.Kind, p.GetName(), p.GetMetadata().Description)
+	for p, mp := range tempReg.ModelProviders {
+		appendResource(p, mp.Kind, mp.GetName(), mp.GetMetadata().Description)
 	}
-	for _, t := range tempReg.Tools {
-		appendResource(t.Kind, t.GetName(), t.GetMetadata().Description)
+	for p, t := range tempReg.Tools {
+		appendResource(p, t.Kind, t.GetName(), t.GetMetadata().Description)
 	}
-	for _, m := range tempReg.MCPs {
-		appendResource(m.Kind, m.GetName(), m.GetMetadata().Description)
+	for p, m := range tempReg.MCPs {
+		appendResource(p, m.Kind, m.GetName(), m.GetMetadata().Description)
 	}
-	for _, tk := range tempReg.Toolkits {
-		appendResource(tk.Kind, tk.GetName(), tk.GetMetadata().Description)
+	for p, tk := range tempReg.Toolkits {
+		appendResource(p, tk.Kind, tk.GetName(), tk.GetMetadata().Description)
 	}
+
+	sort.Slice(resources, func(i, j int) bool {
+		if resources[i].Kind != resources[j].Kind {
+			return resources[i].Kind < resources[j].Kind
+		}
+		return resources[i].Name < resources[j].Name
+	})
 
 	return resources, pluginRes.Spec.Hooks, nil
 }

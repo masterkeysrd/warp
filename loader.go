@@ -8,6 +8,9 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/masterkeysrd/warp/internal/fetcher"
+	"github.com/masterkeysrd/warp/internal/hasher"
 )
 
 const (
@@ -167,11 +170,17 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		return nil, err
 	}
 
+	isFlatRoot := len(projectPaths) == 1 && projectPaths[0] == "."
+
 	// Phase 3a: load workspace-global resources from WORKSPACE_ROOT/.agents/
-	globalAgentsDir := filepath.Join(workspaceRoot, DefaultAgentsDir)
-	if info, err := os.Stat(globalAgentsDir); err == nil && info.IsDir() {
-		if err := loadAgentsDirIntoRegistry(reg, os.DirFS(globalAgentsDir), NamespaceWorkspace, globalAgentsDir); err != nil {
-			return nil, fmt.Errorf("workspace global agents dir: %w", err)
+	// When the only project is "." (Flat-Root Authority Rule), .agents/ at the
+	// root belongs exclusively to the project's local namespace.
+	if !isFlatRoot {
+		globalAgentsDir := filepath.Join(workspaceRoot, DefaultAgentsDir)
+		if info, err := os.Stat(globalAgentsDir); err == nil && info.IsDir() {
+			if err := loadAgentsDirIntoRegistry(reg, os.DirFS(globalAgentsDir), NamespaceWorkspace, globalAgentsDir); err != nil {
+				return nil, fmt.Errorf("workspace global agents dir: %w", err)
+			}
 		}
 	}
 
@@ -196,16 +205,18 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		}
 		reg.AddProject(proj)
 
-		// Also register the Context as a first-class resource.
+		// Also register the Context as a first-class resource and load any
+		// explicitly referenced Context.Spec.Resources files.
 		if ctx != nil {
 			ctx.SetNamespace(slug)
 			reg.set(ctx.QualifiedName(), ctx)
+			loadContextResources(reg, projAbsPath, slug, ctx.Spec.Resources)
 		}
 
 		// Load project-local resources from PROJECT_DIR/.agents/
-		// Skip if it's the root directory, as Phase 3a already loaded it into
-		// the workspace-global namespace.
-		if relPath == "." {
+		// Skip if it's the root directory in a multi-project workspace, as
+		// Phase 3a already loaded it into the workspace-global namespace.
+		if relPath == "." && !isFlatRoot {
 			continue
 		}
 		projAgentsDir := filepath.Join(projAbsPath, DefaultAgentsDir)
@@ -213,6 +224,13 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 			if err := loadAgentsDirIntoRegistry(reg, os.DirFS(projAgentsDir), slug, projAgentsDir); err != nil {
 				return nil, fmt.Errorf("project %s agents dir: %w", slug, err)
 			}
+		}
+	}
+
+	// Phase 3c: load declared workspace plugins and verify warp.lock hashes.
+	if wsDef != nil && len(wsDef.Spec.Plugins) > 0 {
+		if err := loadWorkspacePlugins(reg, workspaceRoot, wsDef.Spec.Plugins); err != nil {
+			return nil, err
 		}
 	}
 
@@ -243,6 +261,149 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 	return reg, nil
 }
 
+func loadContextResources(reg *Registry, projAbsPath, ns string, refs []string) {
+	for _, rel := range refs {
+		if rel == "" {
+			continue
+		}
+		target := filepath.Join(projAbsPath, filepath.FromSlash(rel))
+		content, err := os.ReadFile(target) // #nosec G304
+		if err != nil {
+			reg.warnings = append(reg.warnings, fmt.Sprintf("context resource %q: %v", rel, err))
+			continue
+		}
+		res, err := Parse(rel, string(content))
+		if err != nil {
+			reg.warnings = append(reg.warnings, fmt.Sprintf("parse context resource %q: %v", rel, err))
+			continue
+		}
+		r, ok := res.Resource.(Resource)
+		if !ok {
+			continue
+		}
+		br := resourceBase(r)
+		if br == nil {
+			continue
+		}
+		br.Directory = filepath.Dir(target)
+		br.SetNamespace(ns)
+		reg.set(r.QualifiedName(), r)
+	}
+}
+
+func loadWorkspacePlugins(reg *Registry, workspaceRoot string, plugins []WorkspacePlugin) error {
+	lockPath := filepath.Join(workspaceRoot, "warp.lock")
+	locks, _ := parseLockFile(lockPath)
+
+	for _, wp := range plugins {
+		if wp.Source == "" {
+			return fmt.Errorf("workspace plugin source is required")
+		}
+		version := wp.Version
+		if version == "" {
+			version = "latest"
+		}
+		ns := wp.Namespace
+		if ns == "" {
+			ns = inferPluginNamespace(wp.Source)
+		}
+		if ns == NamespaceLocal || isStandardNamespace(ns) {
+			return fmt.Errorf("plugin %q cannot use reserved namespace %q", wp.Source, ns)
+		}
+
+		resolvedSource := resolvePluginSource(workspaceRoot, wp.Source)
+		cacheDir, err := fetcher.Fetch(resolvedSource, version)
+		if err != nil {
+			return fmt.Errorf("plugin %s@%s: %w", wp.Source, version, err)
+		}
+
+		pluginRes, pluginPath, err := readPluginManifest(cacheDir)
+		if err != nil {
+			return fmt.Errorf("plugin %s@%s: %w", wp.Source, version, err)
+		}
+
+		for _, exp := range pluginRes.Spec.Exports {
+			lower := strings.ToLower(exp)
+			if strings.HasPrefix(lower, "workspace/") || strings.HasPrefix(lower, "context/") || strings.HasPrefix(lower, "plugin/") ||
+				lower == "workspace" || lower == "context" || lower == "plugin" {
+				return fmt.Errorf("plugin %s@%s cannot export structural resource pattern %q", wp.Source, version, exp)
+			}
+		}
+
+		resourceDir := pluginRes.Spec.ResourceDir
+		if resourceDir == "" {
+			resourceDir = DefaultAgentsDir
+		}
+		absResourceDir := filepath.Join(cacheDir, resourceDir)
+
+		// Verify warp.lock hashes if entries are present in warp.lock.
+		dirKey := fmt.Sprintf("%s %s", wp.Source, version)
+		if expectedDirHash, ok := locks[dirKey]; ok {
+			actualDirHash, err := hasher.DirHash(absResourceDir)
+			if err != nil {
+				return fmt.Errorf("plugin %s@%s: compute dir hash: %w", wp.Source, version, err)
+			}
+			if actualDirHash != expectedDirHash {
+				return fmt.Errorf("plugin %s@%s: directory hash mismatch (expected %s, got %s)", wp.Source, version, expectedDirHash, actualDirHash)
+			}
+		}
+		manifestKey := fmt.Sprintf("%s %s/%s", wp.Source, version, filepath.Base(pluginPath))
+		if expectedManifestHash, ok := locks[manifestKey]; ok {
+			actualManifestHash, err := hasher.FileHash(pluginPath)
+			if err != nil {
+				return fmt.Errorf("plugin %s@%s: compute manifest hash: %w", wp.Source, version, err)
+			}
+			if actualManifestHash != expectedManifestHash {
+				return fmt.Errorf("plugin %s@%s: manifest hash mismatch (expected %s, got %s)", wp.Source, version, expectedManifestHash, actualManifestHash)
+			}
+		}
+
+		provider := NewFSResourceProvider(os.DirFS(absResourceDir), absResourceDir)
+		rs, err := provider.LoadResources()
+		if err != nil {
+			return fmt.Errorf("plugin %s@%s: load resources: %w", wp.Source, version, err)
+		}
+
+		injectPluginResource := func(relPath string, r Resource) {
+			if !matchesPluginExport(pluginRes.Spec.Exports, relPath, r.GetKind(), r.GetName()) {
+				return
+			}
+			if !matchesPluginImport(wp.Imports, ns, relPath, r.GetKind(), r.GetName()) {
+				return
+			}
+			br := resourceBase(r)
+			if br == nil {
+				return
+			}
+			br.SetNamespace(ns)
+			reg.set(r.QualifiedName(), r)
+		}
+
+		for p, a := range rs.Agents {
+			injectPluginResource(p, a)
+		}
+		for p, s := range rs.Skills {
+			injectPluginResource(p, s)
+		}
+		for p, c := range rs.Commands {
+			injectPluginResource(p, c)
+		}
+		for p, mp := range rs.ModelProviders {
+			injectPluginResource(p, mp)
+		}
+		for p, t := range rs.Tools {
+			injectPluginResource(p, t)
+		}
+		for p, m := range rs.MCPs {
+			injectPluginResource(p, m)
+		}
+		for p, tk := range rs.Toolkits {
+			injectPluginResource(p, tk)
+		}
+	}
+	return nil
+}
+
 func applyResourceProviders(reg *Registry, providers []ResourceProvider) error {
 	for i, provider := range providers {
 		if provider == nil {
@@ -253,9 +414,6 @@ func applyResourceProviders(reg *Registry, providers []ResourceProvider) error {
 			return fmt.Errorf("load resources from provider %d: %w", i, err)
 		}
 		// Inject as system namespace; do not overwrite existing keys.
-		for _, maps := range []map[string]interface{}{} {
-			_ = maps // placeholder — handled below
-		}
 		injectResourceSetFallback(reg, resources)
 	}
 	return nil

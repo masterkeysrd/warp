@@ -71,28 +71,65 @@ func Fetch(source, version string) (string, error) {
 		cloneURL = "https://" + source
 	}
 
-	if version == "latest" {
-		// Clone default branch (usually main/master)
-		_, err = git.PlainClone(targetDir, false, &git.CloneOptions{
-			URL:      cloneURL,
-			Progress: os.Stdout,
-		})
-	} else {
-		// Clone specific tag/branch
-		_, err = git.PlainClone(targetDir, false, &git.CloneOptions{
-			URL:           cloneURL,
-			ReferenceName: plumbing.NewTagReferenceName(version),
-			SingleBranch:  true,
-			Depth:         1,
-			Progress:      os.Stdout,
-		})
-	}
-
-	if err != nil {
+	if err := cloneAtVersion(cloneURL, targetDir, version); err != nil {
 		// Cleanup partial clone on failure
 		os.RemoveAll(targetDir)
 		return "", fmt.Errorf("failed to clone repository %s: %w", cloneURL, err)
 	}
 
 	return targetDir, nil
+}
+
+func cloneAtVersion(cloneURL, targetDir, version string) error {
+	if version == "" || version == "latest" {
+		_, err := git.PlainClone(targetDir, false, &git.CloneOptions{
+			URL:      cloneURL,
+			Progress: os.Stdout,
+		})
+		return err
+	}
+
+	// 1. Try cloning as a tag
+	_, err := git.PlainClone(targetDir, false, &git.CloneOptions{
+		URL:           cloneURL,
+		ReferenceName: plumbing.NewTagReferenceName(version),
+		SingleBranch:  true,
+		Depth:         1,
+		Progress:      os.Stdout,
+	})
+	if err == nil {
+		return nil
+	}
+	os.RemoveAll(targetDir)
+
+	// 2. Try cloning as a branch
+	_, err = git.PlainClone(targetDir, false, &git.CloneOptions{
+		URL:           cloneURL,
+		ReferenceName: plumbing.NewBranchReferenceName(version),
+		SingleBranch:  true,
+		Depth:         1,
+		Progress:      os.Stdout,
+	})
+	if err == nil {
+		return nil
+	}
+	os.RemoveAll(targetDir)
+
+	// 3. Full clone and checkout commit SHA / revision
+	repo, err := git.PlainClone(targetDir, false, &git.CloneOptions{
+		URL:      cloneURL,
+		Progress: os.Stdout,
+	})
+	if err != nil {
+		return err
+	}
+	hash, err := repo.ResolveRevision(plumbing.Revision(version))
+	if err != nil {
+		return err
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return err
+	}
+	return wt.Checkout(&git.CheckoutOptions{Hash: *hash})
 }

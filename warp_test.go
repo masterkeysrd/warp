@@ -519,3 +519,181 @@ malformed: [
 		t.Errorf("Expected a warning for malformed.md, but got: %v", warnings)
 	}
 }
+
+func TestFlatRootAuthorityRule(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	wsMd := `---
+apiVersion: warp/v1alpha1
+kind: Workspace
+metadata:
+  name: flat-ws
+spec:
+  projects: ["."]
+---
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(tmpDir, ".agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillMd := `---
+apiVersion: warp/v1alpha1
+kind: Skill
+metadata:
+  name: root-skill
+---
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "root-skill.md"), []byte(skillMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	// Workspace-global namespace must be empty for flat-root project
+	if _, ok := reg.ResolveResource(MakeQualifiedName(NamespaceWorkspace, KindSkill, "root-skill")); ok {
+		t.Error("expected workspace-global namespace to be empty when only project is '.'")
+	}
+
+	projSlug := strings.ToLower(filepath.Base(tmpDir))
+	res, ok := reg.Project(projSlug).ResolveResource("local/Skill/root-skill")
+	if !ok {
+		t.Fatal("expected root-skill to be loaded into project local namespace")
+	}
+	if res.GetNamespace() != projSlug {
+		t.Errorf("expected namespace %q, got %q", projSlug, res.GetNamespace())
+	}
+}
+
+func TestContextSpecResources(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	ctxMd := `---
+apiVersion: warp/v1alpha1
+kind: Context
+metadata:
+  name: custom-ctx
+spec:
+  resources:
+    - extra/custom-skill.md
+---
+# Project rules
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(ctxMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+	extraDir := filepath.Join(tmpDir, "extra")
+	if err := os.MkdirAll(extraDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	skillMd := `---
+apiVersion: warp/v1alpha1
+kind: Skill
+metadata:
+  name: extra-skill
+---
+Extra instructions
+`
+	if err := os.WriteFile(filepath.Join(extraDir, "custom-skill.md"), []byte(skillMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	projSlug := strings.ToLower(filepath.Base(tmpDir))
+	if _, ok := reg.Project(projSlug).ResolveResource("extra-skill"); !ok {
+		t.Error("expected extra-skill referenced in AGENTS.md spec.resources to be loaded")
+	}
+}
+
+func TestInstallAndLoadPlugin_WithLockVerification(t *testing.T) {
+	pluginDir := t.TempDir()
+	resDir := filepath.Join(pluginDir, "resources", "skills")
+	if err := os.MkdirAll(resDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	pluginManifest := `---
+apiVersion: warp/v1alpha1
+kind: Plugin
+metadata:
+  name: acme-plugin
+spec:
+  resourceDir: "resources"
+  exports:
+    - "Skill/public-*"
+---
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "PLUGIN.md"), []byte(pluginManifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pubSkill := `---
+apiVersion: warp/v1alpha1
+kind: Skill
+metadata:
+  name: public-one
+  description: Exposed skill
+---
+`
+	privSkill := `---
+apiVersion: warp/v1alpha1
+kind: Skill
+metadata:
+  name: private-one
+  description: Private skill
+---
+`
+	if err := os.WriteFile(filepath.Join(resDir, "public.md"), []byte(pubSkill), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resDir, "private.md"), []byte(privSkill), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. DiscoverPluginResources should respect spec.exports
+	discovered, _, err := DiscoverPluginResources(pluginDir, "latest")
+	if err != nil {
+		t.Fatalf("DiscoverPluginResources failed: %v", err)
+	}
+	if len(discovered) != 1 || discovered[0].Name != "public-one" {
+		t.Fatalf("expected only [public-one] to be discovered, got %+v", discovered)
+	}
+
+	// 2. InstallPlugin into a workspace and LoadWorkspace
+	wsDir := t.TempDir()
+	if err := InstallPlugin(wsDir, pluginDir, "latest", []string{"Skill/public-one"}); err != nil {
+		t.Fatalf("InstallPlugin failed: %v", err)
+	}
+
+	reg, err := LoadWorkspace(wsDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace with plugin failed: %v", err)
+	}
+
+	if _, ok := reg.ResolveResource("public-one"); !ok {
+		t.Error("expected public-one skill from plugin to be resolved in workspace")
+	}
+	if _, ok := reg.ResolveResource("private-one"); ok {
+		t.Error("did not expect unexported private-one skill to be loaded")
+	}
+
+	// 3. Tamper with plugin resource after locking -> LoadWorkspace must fail hash check
+	tampered := pubSkill + "\n# Tampered content\n"
+	if err := os.WriteFile(filepath.Join(resDir, "public.md"), []byte(tampered), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadWorkspace(wsDir); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
+		t.Errorf("expected hash mismatch error after tampering, got: %v", err)
+	}
+}
+

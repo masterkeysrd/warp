@@ -25,6 +25,7 @@ type ToolSpec struct {
 	// Instructions is the detailed description of what the tool does, populated from the Markdown body.
 	Instructions string            `yaml:"instructions,omitempty"`
 	Name         string            `yaml:"name,omitempty"`         // Used only when defined inline in a Toolkit
+	Description  string            `yaml:"description,omitempty"`  // Short description (used in YAML tools or inline Toolkit tools)
 	Command      []string          `yaml:"command"`                // Executable and static args (e.g., ["python", "script.py"])
 	Env          map[string]string `yaml:"env,omitempty"`          // Environment variables injected into the process
 	InputSchema  map[string]any    `yaml:"inputSchema,omitempty"`  // JSON Schema object defining arguments the LLM must pass

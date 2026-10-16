@@ -2,7 +2,9 @@ package warp
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -34,7 +36,7 @@ type QueryOptions struct {
 // constant is a virtual alias, never stored literally.
 //
 // Consumers interact either through the base Registry (workspace-root scope:
-// workspace/user/system only) or through a ScopedRegistry obtained via
+// workspace/user/system/plugins) or through a ScopedRegistry obtained via
 // Project(), which elevates a specific project namespace to the top priority.
 type Registry struct {
 	mu        sync.RWMutex
@@ -61,7 +63,7 @@ func (r *Registry) AddProject(p *Project) {
 	r.projects[p.Name] = p
 }
 
-// ListProjects returns all registered projects in undefined order.
+// ListProjects returns all registered projects sorted by project name.
 func (r *Registry) ListProjects() []*Project {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -69,6 +71,9 @@ func (r *Registry) ListProjects() []*Project {
 	for _, p := range r.projects {
 		projects = append(projects, p)
 	}
+	sort.Slice(projects, func(i, j int) bool {
+		return projects[i].Name < projects[j].Name
+	})
 	return projects
 }
 
@@ -80,7 +85,8 @@ func (r *Registry) GetProject(slug string) (*Project, bool) {
 	return p, ok
 }
 
-// ProjectFromPath returns the project whose absolute directory matches absPath,
+// ProjectFromPath returns the project whose directory contains absPath
+// (matching the most specific nested project when multiple projects match),
 // or (nil, false) when no project matches. This is the preferred way for the
 // application layer to determine which project is "current" — callers should
 // pass os.Getwd() or an equivalent path rather than letting the Registry
@@ -88,12 +94,19 @@ func (r *Registry) GetProject(slug string) (*Project, bool) {
 func (r *Registry) ProjectFromPath(absPath string) (*Project, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	cleanTarget := filepath.Clean(absPath)
+	var best *Project
+	bestLen := -1
 	for _, p := range r.projects {
-		if filepath.Clean(p.AbsPath()) == filepath.Clean(absPath) {
-			return p, true
+		projAbs := filepath.Clean(p.AbsPath())
+		if cleanTarget == projAbs || strings.HasPrefix(cleanTarget, projAbs+string(filepath.Separator)) {
+			if len(projAbs) > bestLen || (len(projAbs) == bestLen && best != nil && p.Name < best.Name) {
+				best = p
+				bestLen = len(projAbs)
+			}
 		}
 	}
-	return nil, false
+	return best, best != nil
 }
 
 // WorkspaceSpec returns the immutable workspace specification.
@@ -133,7 +146,7 @@ func (r *Registry) set(qualifiedName string, res Resource) {
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
-// Validate checks every resource for structural correctness and resolves Agent
+// Validate checks every resource for structural correctness and resolves
 // cross-references. Returns the first error encountered.
 func (r *Registry) Validate() error {
 	if r.workspace != nil && r.workspace.Def != nil {
@@ -150,39 +163,70 @@ func (r *Registry) Validate() error {
 	type validator interface{ ValidateBase() error }
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for name, res := range r.resources {
+
+	if r.workspace != nil && r.workspace.Def != nil {
+		if da := r.workspace.Def.Spec.DefaultAgent; da != "" {
+			if !r.hasKindLocked(NamespaceWorkspace, KindAgent, da) {
+				return fmt.Errorf("workspace defaultAgent references missing agent: %s", da)
+			}
+		}
+		if dp := r.workspace.Def.Spec.DefaultProvider; dp != "" && len(r.findProvidersLocked()) > 0 {
+			if !r.hasProviderLocked(dp) {
+				return fmt.Errorf("workspace defaultProvider references missing provider: %s", dp)
+			}
+		}
+	}
+
+	// Iterate in deterministic order so validation errors are reproducible.
+	keys := make([]string, 0, len(r.resources))
+	for k := range r.resources {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, name := range keys {
+		res := r.resources[name]
 		if v, ok := res.(validator); ok {
 			if err := v.ValidateBase(); err != nil {
 				return fmt.Errorf("resource %s: %w", name, err)
 			}
 		}
+		ns := res.GetNamespace()
 		if agent, ok := res.(*Agent); ok {
+			if agent.Spec.Extends != "" {
+				if !r.hasKindLocked(ns, KindAgent, agent.Spec.Extends) {
+					return fmt.Errorf("agent %s extends missing agent: %s", name, agent.Spec.Extends)
+				}
+				if err := r.checkInheritanceCycleLocked(agent); err != nil {
+					return err
+				}
+			}
 			if agent.Spec.Skills != nil {
 				for _, skillRef := range *agent.Spec.Skills {
-					if skillRef == "*" {
+					if hasGlobMeta(skillRef) {
 						continue
 					}
-					if !r.hasLocked(skillRef) {
+					if !r.hasKindLocked(ns, KindSkill, skillRef) {
 						return fmt.Errorf("agent %s references missing skill: %s", name, skillRef)
 					}
 				}
 			}
 			if agent.Spec.Commands != nil {
 				for _, cmdRef := range *agent.Spec.Commands {
-					if cmdRef == "*" {
+					if hasGlobMeta(cmdRef) {
 						continue
 					}
-					if !r.hasLocked(cmdRef) {
+					if !r.hasKindLocked(ns, KindCommand, cmdRef) {
 						return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
 					}
 				}
 			}
 			if agent.Spec.Subagents != nil {
 				for _, saRef := range *agent.Spec.Subagents {
-					if saRef == "*" {
+					if hasGlobMeta(saRef) {
 						continue
 					}
-					if !r.hasLocked(saRef) {
+					if !r.hasKindLocked(ns, KindAgent, saRef) {
 						return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
 					}
 				}
@@ -190,8 +234,36 @@ func (r *Registry) Validate() error {
 		}
 		if cmd, ok := res.(*Command); ok {
 			for _, toolRef := range cmd.Spec.Tools {
-				if !r.hasLocked(toolRef) {
+				if hasGlobMeta(toolRef) {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindTool, toolRef) {
 					return fmt.Errorf("command %s references missing tool: %s", name, toolRef)
+				}
+			}
+		}
+		if tk, ok := res.(*Toolkit); ok {
+			for i, item := range tk.Spec.Tools {
+				if item.Ref != "" {
+					if !r.hasKindLocked(ns, KindTool, item.Ref) {
+						return fmt.Errorf("toolkit %s tool[%d] references missing tool: %s", name, i, item.Ref)
+					}
+				} else {
+					if item.Name == "" {
+						return fmt.Errorf("toolkit %s tool[%d]: inline tool requires name", name, i)
+					}
+					if len(item.Command) == 0 {
+						return fmt.Errorf("toolkit %s tool[%d] (%s): inline tool requires command", name, i, item.Name)
+					}
+				}
+			}
+		}
+		if pl, ok := res.(*Plugin); ok {
+			for _, exp := range pl.Spec.Exports {
+				lower := strings.ToLower(exp)
+				if strings.HasPrefix(lower, "workspace/") || strings.HasPrefix(lower, "context/") || strings.HasPrefix(lower, "plugin/") ||
+					lower == "workspace" || lower == "context" || lower == "plugin" {
+					return fmt.Errorf("plugin %s cannot export structural resource pattern %q", name, exp)
 				}
 			}
 		}
@@ -222,6 +294,47 @@ func (r *Registry) Validate() error {
 	return nil
 }
 
+func (r *Registry) findProvidersLocked() []*ModelProvider {
+	var out []*ModelProvider
+	for _, res := range r.resources {
+		if mp, ok := res.(*ModelProvider); ok {
+			out = append(out, mp)
+		}
+	}
+	return out
+}
+
+func (r *Registry) hasProviderLocked(ref string) bool {
+	for _, mp := range r.findProvidersLocked() {
+		if mp.Metadata.Name == ref || mp.Spec.Type == ref || mp.QualifiedName() == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Registry) checkInheritanceCycleLocked(start *Agent) error {
+	visited := make(map[string]struct{})
+	curr := start
+	for curr != nil && curr.Spec.Extends != "" {
+		qn := curr.QualifiedName()
+		if _, seen := visited[qn]; seen {
+			return fmt.Errorf("circular agent inheritance detected at %q", qn)
+		}
+		visited[qn] = struct{}{}
+		nextRes := r.resolveRefLocked(curr.GetNamespace(), KindAgent, curr.Spec.Extends)
+		if nextRes == nil {
+			break
+		}
+		nextAgent, ok := nextRes.(*Agent)
+		if !ok {
+			break
+		}
+		curr = nextAgent
+	}
+	return nil
+}
+
 // checkToolPolicyLocked evaluates a tool against the workspace tool policy.
 func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicies) error {
 	if policy.AllowDangerous != nil && !*policy.AllowDangerous {
@@ -239,15 +352,7 @@ func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicie
 	if len(policy.Include) > 0 {
 		matched := false
 		for _, pat := range policy.Include {
-			if m, _ := filepath.Match(pat, shortName); m {
-				matched = true
-				break
-			}
-			if m, _ := filepath.Match(pat, nsName); m {
-				matched = true
-				break
-			}
-			if m, _ := filepath.Match(pat, qualifiedName); m {
+			if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
 				matched = true
 				break
 			}
@@ -257,35 +362,72 @@ func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicie
 		}
 	}
 	for _, pat := range policy.Exclude {
-		if m, _ := filepath.Match(pat, shortName); m {
-			return fmt.Errorf("matches exclude pattern %q", pat)
-		}
-		if m, _ := filepath.Match(pat, nsName); m {
-			return fmt.Errorf("matches exclude pattern %q", pat)
-		}
-		if m, _ := filepath.Match(pat, qualifiedName); m {
+		if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
 			return fmt.Errorf("matches exclude pattern %q", pat)
 		}
 	}
 	return nil
 }
 
-// hasLocked reports whether ref resolves to any resource. Must be called with
-// r.mu held for reading.
-func (r *Registry) hasLocked(ref string) bool {
-	if strings.Contains(ref, "/") {
-		_, ok := r.resources[ref]
-		return ok
+func matchResourcePattern(pat, shortName, nsName, qualifiedName string) bool {
+	if m, _ := filepath.Match(pat, shortName); m {
+		return true
 	}
-	for _, res := range r.resources {
-		if res.GetName() == ref {
-			return true
-		}
+	if m, _ := filepath.Match(pat, nsName); m {
+		return true
+	}
+	if m, _ := filepath.Match(pat, qualifiedName); m {
+		return true
 	}
 	return false
 }
 
-// Resources returns all resources stored in the registry across all namespaces.
+// resolveRefLocked finds a resource of the given kind matching ref from the
+// perspective of fromNamespace. Must be called with r.mu held for reading.
+func (r *Registry) resolveRefLocked(fromNamespace string, kind Kind, ref string) Resource {
+	if strings.HasPrefix(ref, NamespaceLocal+"/") {
+		suffix := ref[len(NamespaceLocal):]
+		if fromNamespace != "" {
+			if res, ok := r.resources[fromNamespace+suffix]; ok && res.GetKind() == kind {
+				return res
+			}
+		}
+		if res, ok := r.resources[NamespaceWorkspace+suffix]; ok && res.GetKind() == kind {
+			return res
+		}
+		return nil
+	}
+	if strings.Contains(ref, "/") {
+		if res, ok := r.resources[ref]; ok && res.GetKind() == kind {
+			return res
+		}
+		// Support relative file path references such as "skills/go.md" or "tools/ls.yaml"
+		slug := slugifyPath(ref)
+		baseSlug := slugifyPath(path.Base(ref))
+		for _, res := range r.resources {
+			if res.GetKind() == kind && (res.GetName() == slug || res.GetName() == baseSlug) {
+				return res
+			}
+		}
+		return nil
+	}
+	baseSlug := slugifyPath(ref)
+	for _, res := range r.resources {
+		if res.GetKind() == kind && (res.GetName() == ref || res.GetName() == baseSlug) {
+			return res
+		}
+	}
+	return nil
+}
+
+// hasKindLocked reports whether ref resolves to a resource of the expected kind.
+// Must be called with r.mu held for reading.
+func (r *Registry) hasKindLocked(fromNamespace string, kind Kind, ref string) bool {
+	return r.resolveRefLocked(fromNamespace, kind, ref) != nil
+}
+
+// Resources returns all resources stored in the registry across all namespaces,
+// sorted deterministically by qualified name.
 func (r *Registry) Resources() []Resource {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -293,6 +435,7 @@ func (r *Registry) Resources() []Resource {
 	for _, v := range r.resources {
 		res = append(res, v)
 	}
+	sortResources(res)
 	return res
 }
 
@@ -300,11 +443,17 @@ func (r *Registry) Resources() []Resource {
 
 // ResolveResource implements Resolver for the base Registry.
 // Qualified refs ("namespace/Kind/name") are direct key lookups.
-// Short names are resolved through [workspace, user, system]; project-specific
+// Short names are resolved through global and plugin namespaces; project-specific
 // namespaces are never returned, ensuring workspace-root isolation.
 func (r *Registry) ResolveResource(ref string) (Resource, bool) {
 	if strings.Contains(ref, "/") {
-		return r.get(ref)
+		if res, ok := r.get(ref); ok {
+			return res, true
+		}
+		// Fallback for relative file paths like "skills/go.md"
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		return r.resolvePathFallbackLocked(ref, r.isAllowedInBaseScopeLocked, NamespacePriority)
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -315,10 +464,11 @@ func (r *Registry) ResolveResource(ref string) (Resource, bool) {
 			continue
 		}
 		ns := res.GetNamespace()
-		if !isStandardNamespace(ns) {
+		if !r.isAllowedInBaseScopeLocked(ns) {
 			continue // exclude project-specific slugs
 		}
-		if p := NamespacePriority(ns); p > bestPrio {
+		p := NamespacePriority(ns)
+		if p > bestPrio || (p == bestPrio && best != nil && res.QualifiedName() < best.QualifiedName()) {
 			best = res
 			bestPrio = p
 		}
@@ -326,8 +476,30 @@ func (r *Registry) ResolveResource(ref string) (Resource, bool) {
 	return best, best != nil
 }
 
-// ListResources implements Resolver for the base Registry. Only resources from
-// standard namespaces (workspace/user/system) are included.
+func (r *Registry) resolvePathFallbackLocked(ref string, allowNS func(string) bool, prioFn func(string) int) (Resource, bool) {
+	slug := slugifyPath(ref)
+	baseSlug := slugifyPath(path.Base(ref))
+	var best Resource
+	bestPrio := -1
+	for _, res := range r.resources {
+		if res.GetName() != slug && res.GetName() != baseSlug {
+			continue
+		}
+		ns := res.GetNamespace()
+		if allowNS != nil && !allowNS(ns) {
+			continue
+		}
+		p := prioFn(ns)
+		if p > bestPrio || (p == bestPrio && best != nil && res.QualifiedName() < best.QualifiedName()) {
+			best = res
+			bestPrio = p
+		}
+	}
+	return best, best != nil
+}
+
+// ListResources implements Resolver for the base Registry. Project-specific
+// namespaces are excluded; standard and plugin namespaces are included.
 func (r *Registry) ListResources(opts QueryOptions) []Resource {
 	kindSet := stringSet(opts.Kinds)
 	nsSet := stringSet(opts.Namespaces)
@@ -336,7 +508,8 @@ func (r *Registry) ListResources(opts QueryOptions) []Resource {
 	var filtered []Resource
 	for _, res := range r.resources {
 		ns := res.GetNamespace()
-		if !isStandardNamespace(ns) {
+		// If caller explicitly requested specific namespaces, honor them; otherwise exclude project slugs.
+		if len(nsSet) == 0 && !r.isAllowedInBaseScopeLocked(ns) {
 			continue
 		}
 		if len(kindSet) > 0 && !kindSet[res.GetKind()] {
@@ -350,10 +523,49 @@ func (r *Registry) ListResources(opts QueryOptions) []Resource {
 		}
 		filtered = append(filtered, res)
 	}
-	if !opts.Effective {
-		return filtered
+	if opts.Effective {
+		filtered = deduplicateByName(filtered, NamespacePriority)
 	}
-	return deduplicateByName(filtered, NamespacePriority)
+	sortResources(filtered)
+	return filtered
+}
+
+// isAllowedInBaseScopeLocked reports whether ns is visible at the base Registry
+// (workspace-root) scope. Registered project namespaces and "local" are excluded.
+// When no projects are registered (e.g. unit tests constructing a bare Registry
+// with ad-hoc project names), only standard namespaces and registered workspace
+// plugins are visible.
+func (r *Registry) isAllowedInBaseScopeLocked(ns string) bool {
+	if isStandardNamespace(ns) {
+		return true
+	}
+	if ns == NamespaceLocal || ns == "" {
+		return false
+	}
+	if _, isProj := r.projects[ns]; isProj {
+		return false
+	}
+	if r.workspace != nil && r.workspace.Def != nil {
+		for _, p := range r.workspace.Def.Spec.Plugins {
+			pNS := p.Namespace
+			if pNS == "" {
+				pNS = inferPluginNamespace(p.Source)
+			}
+			if pNS == ns {
+				return true
+			}
+		}
+	}
+	// If projects have been registered (real workspace load), any non-project
+	// namespace is a plugin/custom provider namespace.
+	return len(r.projects) > 0
+}
+
+func inferPluginNamespace(source string) string {
+	if lastSlash := strings.LastIndex(source, "/"); lastSlash != -1 {
+		return source[lastSlash+1:]
+	}
+	return source
 }
 
 // isStandardNamespace reports whether ns is one of the three fixed global
@@ -381,10 +593,17 @@ func (s *ScopedRegistry) priorityFor(ns string) int {
 	return NamespacePriority(ns)
 }
 
+func (s *ScopedRegistry) isAllowedNamespaceLocked(ns string) bool {
+	if ns == s.projectSlug {
+		return true
+	}
+	return s.base.isAllowedInBaseScopeLocked(ns)
+}
+
 // ResolveResource implements Resolver for ScopedRegistry.
 //   - "local/<Kind>/<name>" is rewritten to "<projectSlug>/<Kind>/<name>".
 //   - Other qualified refs ("namespace/Kind/name") are direct key lookups.
-//   - Short names are resolved through [projectSlug, workspace, user, system].
+//   - Short names are resolved through [projectSlug, workspace, user, system, plugins].
 func (s *ScopedRegistry) ResolveResource(ref string) (Resource, bool) {
 	// Rewrite the local/ virtual alias to the concrete project slug.
 	if strings.HasPrefix(ref, NamespaceLocal+"/") {
@@ -400,9 +619,14 @@ func (s *ScopedRegistry) ResolveResource(ref string) (Resource, bool) {
 		return nil, false
 	}
 	if strings.Contains(ref, "/") {
-		return s.base.get(ref)
+		if r, ok := s.base.get(ref); ok {
+			return r, true
+		}
+		s.base.mu.RLock()
+		defer s.base.mu.RUnlock()
+		return s.base.resolvePathFallbackLocked(ref, s.isAllowedNamespaceLocked, s.priorityFor)
 	}
-	// Short-name: pick the highest-priority match across all namespaces.
+	// Short-name: pick the highest-priority match across visible namespaces.
 	s.base.mu.RLock()
 	defer s.base.mu.RUnlock()
 	var best Resource
@@ -411,7 +635,12 @@ func (s *ScopedRegistry) ResolveResource(ref string) (Resource, bool) {
 		if res.GetName() != ref {
 			continue
 		}
-		if p := s.priorityFor(res.GetNamespace()); p > bestPrio {
+		ns := res.GetNamespace()
+		if !s.isAllowedNamespaceLocked(ns) {
+			continue
+		}
+		p := s.priorityFor(ns)
+		if p > bestPrio || (p == bestPrio && best != nil && res.QualifiedName() < best.QualifiedName()) {
 			best = res
 			bestPrio = p
 		}
@@ -428,10 +657,14 @@ func (s *ScopedRegistry) ListResources(opts QueryOptions) []Resource {
 	defer s.base.mu.RUnlock()
 	var filtered []Resource
 	for _, res := range s.base.resources {
+		ns := res.GetNamespace()
+		if len(nsSet) == 0 && !s.isAllowedNamespaceLocked(ns) {
+			continue
+		}
 		if len(kindSet) > 0 && !kindSet[res.GetKind()] {
 			continue
 		}
-		if len(nsSet) > 0 && !nsSet[res.GetNamespace()] {
+		if len(nsSet) > 0 && !nsSet[ns] {
 			continue
 		}
 		if opts.Filter != nil && !opts.Filter(res) {
@@ -439,10 +672,11 @@ func (s *ScopedRegistry) ListResources(opts QueryOptions) []Resource {
 		}
 		filtered = append(filtered, res)
 	}
-	if !opts.Effective {
-		return filtered
+	if opts.Effective {
+		filtered = deduplicateByName(filtered, s.priorityFor)
 	}
-	return deduplicateByName(filtered, s.priorityFor)
+	sortResources(filtered)
+	return filtered
 }
 
 // SkillsForAgent returns the Skill resources available to the named agent
@@ -462,9 +696,6 @@ func (s *ScopedRegistry) SkillsForAgent(agentName string) ([]Skill, error) {
 // ToolsForAgent returns the Tool resources available to the named agent within
 // this project scope. Inheritance is resolved first via ResolveAgent, so the
 // merged tool list from the full inheritance chain is used.
-// If the merged agent declares a non-empty Tools list, only those referenced
-// tools are returned. When the list is empty every tool visible in this
-// project scope is returned.
 func (s *ScopedRegistry) ToolsForAgent(agentName string) ([]*Tool, error) {
 	rag, err := s.ResolveAgent(agentName)
 	if err != nil {
@@ -558,13 +789,25 @@ func (s *ScopedRegistry) ResolveAgent(ref string) (*ResolvedAgent, error) {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
+func sortResources(resources []Resource) {
+	sort.Slice(resources, func(i, j int) bool {
+		return resources[i].QualifiedName() < resources[j].QualifiedName()
+	})
+}
+
 // deduplicateByName returns one resource per short name, keeping the one whose
-// namespace yields the highest value from prioFn.
+// namespace yields the highest value from prioFn (breaking ties by QualifiedName).
 func deduplicateByName(resources []Resource, prioFn func(string) int) []Resource {
 	byName := make(map[string]Resource, len(resources))
 	for _, res := range resources {
 		existing, ok := byName[res.GetName()]
-		if !ok || prioFn(res.GetNamespace()) > prioFn(existing.GetNamespace()) {
+		if !ok {
+			byName[res.GetName()] = res
+			continue
+		}
+		pNew := prioFn(res.GetNamespace())
+		pOld := prioFn(existing.GetNamespace())
+		if pNew > pOld || (pNew == pOld && res.QualifiedName() < existing.QualifiedName()) {
 			byName[res.GetName()] = res
 		}
 	}
@@ -572,6 +815,7 @@ func deduplicateByName(resources []Resource, prioFn func(string) int) []Resource
 	for _, res := range byName {
 		out = append(out, res)
 	}
+	sortResources(out)
 	return out
 }
 
@@ -602,7 +846,19 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			}
 		}
 	} else {
+		var allSkills []Resource
 		for _, sRef := range *ag.Spec.Skills {
+			if hasGlobMeta(sRef) {
+				if allSkills == nil {
+					allSkills = resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: false})
+				}
+				for _, r := range allSkills {
+					if sk, ok := r.(*Skill); ok && matchRefPattern(resolver, sRef, r) {
+						skills = append(skills, *sk)
+					}
+				}
+				continue
+			}
 			r, ok := resolver.ResolveResource(sRef)
 			if !ok {
 				continue
@@ -614,14 +870,8 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		skills = deduplicateSkills(skills)
 	}
 
-	// 2. Resolve Tools
-	var tools []*Tool
-	allTools := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
-	for _, r := range allTools {
-		if t, ok := r.(*Tool); ok {
-			tools = append(tools, t)
-		}
-	}
+	// 2. Resolve Tools (including Toolkit expansions)
+	tools := resolveToolsAndToolkits(resolver)
 
 	// Apply tool policy filter
 	if ag.Spec.Policies != nil && ag.Spec.Policies.Tools != nil {
@@ -638,7 +888,19 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			}
 		}
 	} else {
+		var allCommands []Resource
 		for _, cRef := range *ag.Spec.Commands {
+			if hasGlobMeta(cRef) {
+				if allCommands == nil {
+					allCommands = resolver.ListResources(QueryOptions{Kinds: []Kind{KindCommand}, Effective: false})
+				}
+				for _, r := range allCommands {
+					if c, ok := r.(*Command); ok && matchRefPattern(resolver, cRef, r) {
+						commands = append(commands, c)
+					}
+				}
+				continue
+			}
 			r, ok := resolver.ResolveResource(cRef)
 			if !ok {
 				continue
@@ -662,7 +924,19 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			}
 		}
 	} else {
+		var allAgents []Resource
 		for _, saRef := range *ag.Spec.Subagents {
+			if hasGlobMeta(saRef) {
+				if allAgents == nil {
+					allAgents = resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: false})
+				}
+				for _, r := range allAgents {
+					if a, ok := r.(*Agent); ok && canBeTriggeredByAgent(a) && matchRefPattern(resolver, saRef, r) {
+						subagents = append(subagents, a)
+					}
+				}
+				continue
+			}
 			r, ok := resolver.ResolveResource(saRef)
 			if !ok {
 				continue
@@ -683,6 +957,87 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		Commands:  commands,
 		Subagents: subagents,
 	}, nil
+}
+
+func resolveToolsAndToolkits(resolver Resolver) []*Tool {
+	var tools []*Tool
+	seen := make(map[string]bool)
+	addTool := func(t *Tool) {
+		if t == nil {
+			return
+		}
+		// Copy and ensure Metadata.Description falls back to Spec.Description if needed
+		if t.Metadata.Description == "" && t.Spec.Description != "" {
+			cp := t.DeepCopy()
+			cp.Metadata.Description = cp.Spec.Description
+			t = cp
+		}
+		qn := t.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			tools = append(tools, t)
+		}
+	}
+
+	allTools := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
+	for _, r := range allTools {
+		if t, ok := r.(*Tool); ok {
+			addTool(t)
+		}
+	}
+
+	allToolkits := resolver.ListResources(QueryOptions{Kinds: []Kind{KindToolkit}, Effective: true})
+	for _, r := range allToolkits {
+		tk, ok := r.(*Toolkit)
+		if !ok {
+			continue
+		}
+		for _, item := range tk.Spec.Tools {
+			if item.Ref != "" {
+				if refRes, ok := resolver.ResolveResource(item.Ref); ok {
+					if t, ok := refRes.(*Tool); ok {
+						addTool(t)
+					}
+				}
+				continue
+			}
+			if item.Name != "" {
+				desc := item.Description
+				if desc == "" {
+					desc = item.Instructions
+				}
+				inlineTool := &Tool{
+					BaseResource: BaseResource{
+						APIVersion: tk.APIVersion,
+						Kind:       KindTool,
+						Namespace:  tk.Namespace,
+						Directory:  tk.Directory,
+						Metadata: Metadata{
+							Name:        item.Name,
+							Description: desc,
+						},
+					},
+					Spec: *item.ToolSpec.DeepCopy(),
+				}
+				addTool(inlineTool)
+			}
+		}
+	}
+
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].QualifiedName() < tools[j].QualifiedName()
+	})
+	return tools
+}
+
+func matchRefPattern(resolver Resolver, pat string, res Resource) bool {
+	if scoped, ok := resolver.(*ScopedRegistry); ok && strings.HasPrefix(pat, NamespaceLocal+"/") {
+		pat = scoped.projectSlug + pat[len(NamespaceLocal):]
+	}
+	shortName := res.GetName()
+	nsName := res.GetNamespace() + "/" + shortName
+	qualifiedName := res.QualifiedName()
+	return matchResourcePattern(pat, shortName, nsName, qualifiedName)
 }
 
 func mergePolicies(parent, child *Policies) *Policies {
@@ -806,6 +1161,10 @@ func canBeTriggeredByAgent(a *Agent) bool {
 		}
 	}
 	return false
+}
+
+func hasGlobMeta(s string) bool {
+	return strings.ContainsAny(s, "*?[")
 }
 
 func containsWildcard(slice *[]string) bool {

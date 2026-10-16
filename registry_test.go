@@ -699,3 +699,149 @@ func TestWildcardSubagents(t *testing.T) {
 		t.Errorf("expected 3 subagents, got %d (agents: %v)", len(resolvedA.Subagents), resolvedA.Subagents)
 	}
 }
+
+func TestProjectFromPath_SubdirectoryMatching(t *testing.T) {
+	reg := NewRegistry(nil)
+	reg.AddProject(&Project{Name: "root", Path: ".", RootPath: "/repo"})
+	reg.AddProject(&Project{Name: "api", Path: "services/api", RootPath: "/repo"})
+
+	// Exact match on nested project
+	if p, ok := reg.ProjectFromPath("/repo/services/api"); !ok || p.Name != "api" {
+		t.Errorf("expected project 'api', got %v (ok=%v)", p, ok)
+	}
+	// Subdirectory inside nested project should resolve to the deepest matching project ('api')
+	if p, ok := reg.ProjectFromPath("/repo/services/api/internal/handlers"); !ok || p.Name != "api" {
+		t.Errorf("expected project 'api' for nested dir, got %v (ok=%v)", p, ok)
+	}
+	// Directory outside nested project but inside root should resolve to 'root'
+	if p, ok := reg.ProjectFromPath("/repo/docs/guide"); !ok || p.Name != "root" {
+		t.Errorf("expected project 'root', got %v (ok=%v)", p, ok)
+	}
+	// Unrelated path should not match
+	if p, ok := reg.ProjectFromPath("/other/path"); ok {
+		t.Errorf("expected no match for /other/path, got %v", p)
+	}
+}
+
+func TestToolkitExpansion_And_GlobCapabilities(t *testing.T) {
+	reg := NewRegistry(nil)
+	reg.AddProject(&Project{Name: "app", Path: ".", RootPath: "/repo"})
+
+	// Plugin skill & command under namespace "warp-dev"
+	pluginSkill := makeSkillResource("warp-dev", "warp-developer")
+	pluginCmd := makeCommandResource("warp-dev", "scaffold")
+	otherSkill := makeSkillResource("other-plugin", "ignored-skill")
+	reg.Set(pluginSkill.QualifiedName(), pluginSkill)
+	reg.Set(pluginCmd.QualifiedName(), pluginCmd)
+	reg.Set(otherSkill.QualifiedName(), otherSkill)
+
+	// Standalone tool + Toolkit with both $ref and inline tool
+	refTool := makeToolResource(NamespaceWorkspace, "list-files")
+	refTool.Spec.Command = []string{"ls", "-la"}
+	refTool.Spec.Description = "List files"
+	reg.Set(refTool.QualifiedName(), refTool)
+
+	tk := &Toolkit{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindToolkit,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "default-toolkit"},
+		},
+		Spec: ToolkitSpec{
+			Tools: []ToolkitTool{
+				{Ref: "list-files.yaml"},
+				{
+					ToolSpec: ToolSpec{
+						Name:        "echo-inline",
+						Description: "Inline echo tool",
+						Command:     []string{"echo"},
+					},
+				},
+			},
+		},
+	}
+	reg.Set(tk.QualifiedName(), tk)
+
+	agent := agentWithSpec("app", "dev-agent", AgentSpec{
+		Skills:   &[]string{"warp-dev/*"},
+		Commands: &[]string{"warp-dev/Command/*"},
+	})
+	reg.Set(agent.QualifiedName(), agent)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("Validate failed: %v", err)
+	}
+
+	// Base registry should also see plugin namespace resources since 'app' is registered
+	if _, ok := reg.ResolveResource("warp-developer"); !ok {
+		t.Error("expected base Registry to resolve plugin skill 'warp-developer'")
+	}
+
+	scoped := reg.Project("app")
+	resolved, err := scoped.ResolveAgent("dev-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	if len(resolved.Skills) != 1 || resolved.Skills[0].Metadata.Name != "warp-developer" {
+		t.Errorf("expected [warp-developer] skill from glob, got %v", resolved.Skills)
+	}
+	if len(resolved.Commands) != 1 || resolved.Commands[0].Metadata.Name != "scaffold" {
+		t.Errorf("expected [scaffold] command from glob, got %v", resolved.Commands)
+	}
+	if len(resolved.Tools) != 2 {
+		t.Fatalf("expected 2 tools (1 standalone + 1 inline from toolkit), got %d: %v", len(resolved.Tools), resolved.Tools)
+	}
+	if resolved.Tools[0].Metadata.Name != "echo-inline" || resolved.Tools[1].Metadata.Name != "list-files" {
+		t.Errorf("expected deterministic sorted tools [echo-inline, list-files], got [%s, %s]",
+			resolved.Tools[0].Metadata.Name, resolved.Tools[1].Metadata.Name)
+	}
+	if resolved.Tools[0].Metadata.Description != "Inline echo tool" {
+		t.Errorf("expected inline tool description to be populated, got %q", resolved.Tools[0].Metadata.Description)
+	}
+}
+
+func TestValidate_KindAwareness_And_Inheritance(t *testing.T) {
+	// 1. Referencing a Tool where a Skill is expected must fail validation.
+	reg1 := NewRegistry(nil)
+	tool := makeToolResource(NamespaceWorkspace, "not-a-skill")
+	tool.Spec.Command = []string{"echo"}
+	agentWrongKind := agentWithSpec(NamespaceWorkspace, "bad-agent", AgentSpec{
+		Skills: &[]string{"not-a-skill"},
+	})
+	reg1.Set(tool.QualifiedName(), tool)
+	reg1.Set(agentWrongKind.QualifiedName(), agentWrongKind)
+	if err := reg1.Validate(); err == nil {
+		t.Error("expected Validate() to fail when skill ref points to a Tool")
+	}
+
+	// 2. Circular inheritance must fail Validate().
+	reg2 := NewRegistry(nil)
+	loopy := agentWithSpec(NamespaceWorkspace, "loopy", AgentSpec{
+		Extends: "workspace/Agent/loopy",
+	})
+	reg2.Set(loopy.QualifiedName(), loopy)
+	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "circular") {
+		t.Errorf("expected circular inheritance validation error, got: %v", err)
+	}
+
+	// 3. Plugin exporting structural resources must fail Validate().
+	reg3 := NewRegistry(nil)
+	badPlugin := &Plugin{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindPlugin,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-plugin"},
+		},
+		Spec: PluginSpec{
+			Exports: []string{"Workspace/*"},
+		},
+	}
+	reg3.Set(badPlugin.QualifiedName(), badPlugin)
+	if err := reg3.Validate(); err == nil {
+		t.Error("expected Validate() to fail when Plugin exports structural resource kind")
+	}
+}
+

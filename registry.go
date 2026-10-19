@@ -175,6 +175,11 @@ func (r *Registry) Validate() error {
 				return fmt.Errorf("workspace defaultProvider references missing provider: %s", dp)
 			}
 		}
+		if dm := r.workspace.Def.Spec.DefaultModels; dm != nil {
+			if err := r.validateModelDefaultsLocked("workspace", dm); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Iterate in deterministic order so validation errors are reproducible.
@@ -199,6 +204,11 @@ func (r *Registry) Validate() error {
 				}
 				if err := r.checkInheritanceCycleLocked(agent); err != nil {
 					return err
+				}
+			}
+			for _, mRef := range agent.Spec.Models {
+				if m := r.findDeclaredModelLocked(mRef); m != nil && !m.Capabilities.SupportsCompletion() {
+					return fmt.Errorf("agent %s: model %q does not support completion capability", name, mRef)
 				}
 			}
 			if agent.Spec.Skills != nil {
@@ -229,6 +239,18 @@ func (r *Registry) Validate() error {
 					if !r.hasKindLocked(ns, KindAgent, saRef) {
 						return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
 					}
+				}
+			}
+		}
+		if dec, ok := res.(*Decision); ok {
+			if err := r.validateDecisionLocked(name, dec); err != nil {
+				return err
+			}
+		}
+		if mp, ok := res.(*ModelProvider); ok {
+			if mp.Spec.DefaultModels != nil {
+				if err := validateProviderDefaultModels(name, mp); err != nil {
+					return err
 				}
 			}
 		}
@@ -288,6 +310,151 @@ func (r *Registry) Validate() error {
 				}
 			default:
 				return fmt.Errorf("mcp %s: unknown transport type %q", name, transport)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Registry) validateDecisionLocked(name string, dec *Decision) error {
+	seenNames := make(map[string]bool, len(dec.Spec.Questions))
+	for i, q := range dec.Spec.Questions {
+		if q.Name == "" {
+			return fmt.Errorf("decision %s question[%d]: name is required", name, i)
+		}
+		if seenNames[q.Name] {
+			return fmt.Errorf("decision %s: duplicate question name %q", name, q.Name)
+		}
+		seenNames[q.Name] = true
+		if q.Threshold != nil && (*q.Threshold < 0.0 || *q.Threshold > 1.0) {
+			return fmt.Errorf("decision %s question %q: threshold must be between 0.0 and 1.0", name, q.Name)
+		}
+		if q.MinConfidence != nil && (*q.MinConfidence < 0.0 || *q.MinConfidence > 1.0) {
+			return fmt.Errorf("decision %s question %q: minConfidence must be between 0.0 and 1.0", name, q.Name)
+		}
+		switch q.Type {
+		case DecisionQuestionPredicate:
+			// valid
+		case DecisionQuestionChoice:
+			if len(q.Options) < 2 {
+				return fmt.Errorf("decision %s question %q: choice question requires at least 2 options", name, q.Name)
+			}
+			for j, opt := range q.Options {
+				if opt.Value == "" {
+					return fmt.Errorf("decision %s question %q option[%d]: value is required", name, q.Name, j)
+				}
+			}
+		case DecisionQuestionScore:
+			if len(q.Levels) < 2 {
+				return fmt.Errorf("decision %s question %q: score question requires at least 2 levels", name, q.Name)
+			}
+			for j, lvl := range q.Levels {
+				if lvl.Label == "" {
+					return fmt.Errorf("decision %s question %q level[%d]: label is required", name, q.Name, j)
+				}
+			}
+		default:
+			return fmt.Errorf("decision %s question %q: invalid type %q (must be predicate, choice, or score)", name, q.Name, q.Type)
+		}
+	}
+	for _, mRef := range dec.Spec.Models {
+		if m := r.findDeclaredModelLocked(mRef); m != nil && !m.Capabilities.SupportsDecision() {
+			return fmt.Errorf("decision %s: model %q does not support decision capability", name, mRef)
+		}
+	}
+	return nil
+}
+
+func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) error {
+	hasProviders := len(r.findProvidersLocked()) > 0
+	checkRef := func(role, ref string, checkCap func(*ProviderModelCapabilities) bool) error {
+		if ref == "" {
+			return nil
+		}
+		if hasProviders {
+			if idx := strings.IndexByte(ref, '/'); idx != -1 {
+				prov := ref[:idx]
+				if !r.hasProviderLocked(prov) {
+					return fmt.Errorf("%s defaultModels.%s references missing provider: %s", scope, role, prov)
+				}
+			}
+		}
+		if m := r.findDeclaredModelLocked(ref); m != nil && !checkCap(m.Capabilities) {
+			return fmt.Errorf("%s defaultModels.%s %q does not support %s capability", scope, role, ref, role)
+		}
+		return nil
+	}
+	if err := checkRef("completion", dm.Completion, (*ProviderModelCapabilities).SupportsCompletion); err != nil {
+		return err
+	}
+	if err := checkRef("decision", dm.Decision, (*ProviderModelCapabilities).SupportsDecision); err != nil {
+		return err
+	}
+	if err := checkRef("embedding", dm.Embedding, (*ProviderModelCapabilities).SupportsEmbedding); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProviderDefaultModels(name string, mp *ModelProvider) error {
+	dm := mp.Spec.DefaultModels
+	if dm == nil || len(mp.Spec.Models) == 0 {
+		return nil
+	}
+	findModel := func(ref string) *ProviderModel {
+		for i := range mp.Spec.Models {
+			m := &mp.Spec.Models[i]
+			if m.ID == ref || m.Name == ref {
+				return m
+			}
+		}
+		return nil
+	}
+	if dm.Completion != "" {
+		if m := findModel(dm.Completion); m != nil && !m.Capabilities.SupportsCompletion() {
+			return fmt.Errorf("provider %s: defaultModels.completion %q does not support completion capability", name, dm.Completion)
+		}
+	}
+	if dm.Decision != "" {
+		if m := findModel(dm.Decision); m != nil && !m.Capabilities.SupportsDecision() {
+			return fmt.Errorf("provider %s: defaultModels.decision %q does not support decision capability", name, dm.Decision)
+		}
+	}
+	if dm.Embedding != "" {
+		if m := findModel(dm.Embedding); m != nil && !m.Capabilities.SupportsEmbedding() {
+			return fmt.Errorf("provider %s: defaultModels.embedding %q does not support embedding capability", name, dm.Embedding)
+		}
+	}
+	return nil
+}
+
+func (r *Registry) findDeclaredModelLocked(ref string) *ProviderModel {
+	if ref == "" {
+		return nil
+	}
+	providers := r.findProvidersLocked()
+	if len(providers) == 0 {
+		return nil
+	}
+	if idx := strings.IndexByte(ref, '/'); idx != -1 {
+		prov, modelID := ref[:idx], ref[idx+1:]
+		for _, mp := range providers {
+			if mp.Metadata.Name == prov || mp.Spec.Type == prov {
+				for i := range mp.Spec.Models {
+					m := &mp.Spec.Models[i]
+					if m.ID == modelID || m.Name == modelID {
+						return m
+					}
+				}
+			}
+		}
+		return nil
+	}
+	for _, mp := range providers {
+		for i := range mp.Spec.Models {
+			m := &mp.Spec.Models[i]
+			if m.ID == ref || m.Name == ref {
+				return m
 			}
 		}
 	}

@@ -20,13 +20,14 @@ func (in *ModelProvider) DeepCopy() *ModelProvider {
 
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
-	Type         string            `yaml:"type"`                                       // e.g., "ollama", "openai", "anthropic"
-	Endpoint     string            `yaml:"endpoint"`                                   // API base URL
-	DefaultModel string            `yaml:"defaultModel"`                               // Model to use if none specified
-	Auth         *ProviderAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`       // Authentication configuration
-	Headers      map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"` // Custom HTTP headers for all provider requests
-	Config       map[string]any    `yaml:"config,omitempty" json:"config,omitempty"`   // Provider-specific settings and custom configuration parameters
-	Models       []ProviderModel   `yaml:"models"`                                     // Available models from this provider
+	Type          string            `yaml:"type"`                                                   // e.g., "ollama", "openai", "anthropic", "typesafe"
+	Endpoint      string            `yaml:"endpoint"`                                               // API base URL
+	DefaultModel  string            `yaml:"defaultModel,omitempty"`                                 // Default completion model to use if none specified
+	DefaultModels *ModelDefaults    `yaml:"defaultModels,omitempty" json:"defaultModels,omitempty"` // Role-based default models (completion, decision, embedding)
+	Auth          *ProviderAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`                   // Authentication configuration
+	Headers       map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`             // Custom HTTP headers for all provider requests
+	Config        map[string]any    `yaml:"config,omitempty" json:"config,omitempty"`               // Provider-specific settings and custom configuration parameters
+	Models        []ProviderModel   `yaml:"models"`                                                 // Available models from this provider
 }
 
 // DeepCopy returns a deep copy of the ModelProviderSpec.
@@ -36,6 +37,9 @@ func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	}
 	out := new(ModelProviderSpec)
 	*out = *in
+	if in.DefaultModels != nil {
+		out.DefaultModels = in.DefaultModels.DeepCopy()
+	}
 	if in.Auth != nil {
 		out.Auth = in.Auth.DeepCopy()
 	}
@@ -83,7 +87,7 @@ type ProviderModel struct {
 	ID           string                     `yaml:"id"`                     // Unique model ID (e.g., "gpt-4")
 	Name         string                     `yaml:"name"`                   // Model name (e.g., "gpt-4")
 	Label        string                     `yaml:"label"`                  // Human-friendly label (e.g., "GPT-4")
-	Limits       ProviderModelLimits        `yaml:"limits"`                 // Context and output token limits
+	Limits       ProviderModelLimits        `yaml:"limits"`                 // Context, output token, and vector dimension limits
 	Capabilities *ProviderModelCapabilities `yaml:"capabilities,omitempty"` // Supported features and configuration boundaries
 	Cost         *ProviderModelCost         `yaml:"cost,omitempty"`         // Token pricing and conditional tiers
 }
@@ -103,19 +107,51 @@ func (in *ProviderModel) DeepCopy() *ProviderModel {
 	return out
 }
 
-// ProviderModelLimits defines the token limits for a specific model.
+// ProviderModelLimits defines the token and vector dimension limits for a specific model.
 type ProviderModelLimits struct {
-	Context int `yaml:"context"` // Max context length in tokens
-	Output  int `yaml:"output"`  // Max output length in tokens
+	Context    int `yaml:"context"`              // Max context length in tokens
+	Output     int `yaml:"output,omitempty"`     // Max output length in tokens
+	Dimensions int `yaml:"dimensions,omitempty"` // Default/max output vector dimensions (for embedding models)
 }
 
 type ProviderModelCapabilities struct {
-	Attachment       *bool                             `yaml:"attachment,omitempty"`       // Whether the model supports file/document attachments
-	Tools            *bool                             `yaml:"tools,omitempty"`            // Whether the model supports function/tool calling (tool_call)
-	StructuredOutput *bool                             `yaml:"structuredOutput,omitempty"` // Whether the model supports strict structured outputs
-	Temperature      *bool                             `yaml:"temperature,omitempty"`      // Whether the model allows configuring the sampling temperature
-	Thinking         []ProviderModelThinkingCapability `yaml:"thinking,omitempty"`         // List of supported reasoning configuration strategies
-	Modalities       *ProviderModelModalities          `yaml:"modalities,omitempty"`       // Defines supported input and output data modalities
+	Completion       *bool                             `yaml:"completion,omitempty"`            // Whether the model supports text/chat completion (defaults to true)
+	Decision         *bool                             `yaml:"decision,omitempty"`              // Whether the model supports probabilistic decision evaluation (defaults to false)
+	Embedding        *bool                             `yaml:"embedding,omitempty"`             // Whether the model supports vector embedding generation (defaults to false)
+	Dimensions       []int                             `yaml:"dimensions,omitempty,flow"`       // Supported output vector dimensions for configurable embedding models
+	Attachment       *bool                             `yaml:"attachment,omitempty"`            // Whether the model supports file/document attachments
+	Tools            *bool                             `yaml:"tools,omitempty"`                 // Whether the model supports function/tool calling (tool_call)
+	StructuredOutput *bool                             `yaml:"structuredOutput,omitempty"`      // Whether the model supports strict structured outputs
+	Temperature      *bool                             `yaml:"temperature,omitempty"`           // Whether the model allows configuring the sampling temperature
+	Thinking         []ProviderModelThinkingCapability `yaml:"thinking,omitempty"`              // List of supported reasoning configuration strategies
+	Modalities       *ProviderModelModalities          `yaml:"modalities,omitempty"`            // Defines supported input and output data modalities
+}
+
+// SupportsCompletion reports whether the model supports text/chat completions.
+// Defaults to true when Capabilities or Completion is nil.
+func (in *ProviderModelCapabilities) SupportsCompletion() bool {
+	if in == nil || in.Completion == nil {
+		return true
+	}
+	return *in.Completion
+}
+
+// SupportsDecision reports whether the model supports probabilistic decision evaluation.
+// Defaults to false when Capabilities or Decision is nil.
+func (in *ProviderModelCapabilities) SupportsDecision() bool {
+	if in == nil || in.Decision == nil {
+		return false
+	}
+	return *in.Decision
+}
+
+// SupportsEmbedding reports whether the model supports vector embedding generation.
+// Defaults to false when Capabilities or Embedding is nil.
+func (in *ProviderModelCapabilities) SupportsEmbedding() bool {
+	if in == nil || in.Embedding == nil {
+		return false
+	}
+	return *in.Embedding
 }
 
 func (in *ProviderModelCapabilities) DeepCopy() *ProviderModelCapabilities {
@@ -124,6 +160,22 @@ func (in *ProviderModelCapabilities) DeepCopy() *ProviderModelCapabilities {
 	}
 	out := new(ProviderModelCapabilities)
 	*out = *in
+	if in.Completion != nil {
+		b := *in.Completion
+		out.Completion = &b
+	}
+	if in.Decision != nil {
+		b := *in.Decision
+		out.Decision = &b
+	}
+	if in.Embedding != nil {
+		b := *in.Embedding
+		out.Embedding = &b
+	}
+	if in.Dimensions != nil {
+		out.Dimensions = make([]int, len(in.Dimensions))
+		copy(out.Dimensions, in.Dimensions)
+	}
 	if in.Attachment != nil {
 		b := *in.Attachment
 		out.Attachment = &b
@@ -197,7 +249,7 @@ func (in *ProviderModelModalities) DeepCopy() *ProviderModelModalities {
 
 type ProviderModelCost struct {
 	Input      float64                 `yaml:"input"`                // Base cost for input tokens (typically per 1M tokens)
-	Output     float64                 `yaml:"output"`               // Base cost for output tokens
+	Output     float64                 `yaml:"output,omitempty"`     // Base cost for output tokens
 	CacheRead  float64                 `yaml:"cacheRead,omitempty"`  // Cost for reading from prompt cache
 	CacheWrite float64                 `yaml:"cacheWrite,omitempty"` // Cost for writing to prompt cache
 	Tiers      []ProviderModelCostTier `yaml:"tiers,omitempty"`      // Array of conditional pricing tiers
@@ -222,7 +274,7 @@ type ProviderModelCostTier struct {
 	Label      string                         `yaml:"label"`                // A human-readable label for the tier (e.g., "Context over 200k")
 	Tier       ProviderModelCostTierCondition `yaml:"tier"`                 // The condition that triggers this pricing
 	Input      float64                        `yaml:"input"`                // Override cost for input tokens
-	Output     float64                        `yaml:"output"`               // Override cost for output tokens
+	Output     float64                        `yaml:"output,omitempty"`     // Override cost for output tokens
 	CacheRead  float64                        `yaml:"cacheRead,omitempty"`  // Override cost for cache read
 	CacheWrite float64                        `yaml:"cacheWrite,omitempty"` // Override cost for cache write
 }

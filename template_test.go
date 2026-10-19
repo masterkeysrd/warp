@@ -376,3 +376,58 @@ func TestAgentRender(t *testing.T) {
 		t.Errorf("nil Agent should render empty string, got %q", resNil)
 	}
 }
+
+func TestDecisionRender(t *testing.T) {
+	ws := &Workspace{
+		RootPath: "/Users/user/code/warp",
+	}
+
+	proj := &Project{
+		Name:     "cli",
+		Path:     "cmd/cli",
+		RootPath: "/Users/user/code/warp",
+	}
+
+	dec := &Decision{
+		BaseResource: BaseResource{
+			Directory: "/Users/user/code/warp/.agents/decisions",
+			Metadata: Metadata{
+				Name:        "pr-triage",
+				Description: "Triage PR",
+			},
+		},
+		Spec: DecisionSpec{
+			Hints: []string{"branch"},
+			Questions: []DecisionQuestion{
+				{Name: "is_safe", Type: DecisionQuestionPredicate},
+			},
+			Instructions: "Decision: {{.Decision.Name}} | Dir: {{.Decision.Dir}} | Project: {{.Project.Name}} | Branch: $branch | Questions: {{range .Questions}}{{.Name}}({{.Type}}){{end}}",
+		},
+	}
+
+	opts := &DecisionRenderOptions{
+		Workspace: ws,
+		Project:   proj,
+		Args:      []string{"feature/auth"},
+	}
+
+	res, err := dec.Render(opts)
+	if err != nil {
+		t.Fatalf("Decision.Render failed: %v", err)
+	}
+
+	expected := "Decision: pr-triage | Dir: /Users/user/code/warp/.agents/decisions | Project: cli | Branch: feature/auth | Questions: is_safe(predicate)"
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+
+	var nilDec *Decision
+	resNil, err := nilDec.Render(nil)
+	if err != nil {
+		t.Errorf("nil Decision should not error, got %v", err)
+	}
+	if resNil != "" {
+		t.Errorf("nil Decision should render empty string, got %q", resNil)
+	}
+}
+

@@ -23,10 +23,12 @@ execute Warp resources without modification.
    - [3.3 Agent](#33-agent)
    - [3.4 Skill](#34-skill)
    - [3.5 Command](#35-command)
-   - [3.6 ModelProvider](#36-modelprovider)
-   - [3.7 Tool](#37-tool)
-   - [3.8 MCP](#38-mcp)
-   - [3.9 Toolkit](#39-toolkit)
+   - [3.6 Decision](#36-decision)
+   - [3.7 ModelProvider](#37-modelprovider)
+   - [3.8 Tool](#38-tool)
+   - [3.9 MCP](#39-mcp)
+   - [3.10 Toolkit](#310-toolkit)
+   - [3.11 Plugin](#311-plugin)
 4. [Cross-References](#4-cross-references)
 5. [Discovery and Loading](#5-discovery-and-loading)
    - [5.1 Phase 1: Workspace Discovery](#51-phase-1-workspace-discovery)
@@ -80,7 +82,7 @@ Every resource kind shares the following top-level YAML fields.
 | Field                  | Type   | Required | Description                                                                                |
 |------------------------|--------|:--------:|--------------------------------------------------------------------------------------------|
 | `apiVersion`           | string | ✅       | Schema version. Currently always `warp/v1alpha1`.                                          |
-| `kind`                 | string | ✅       | Resource type. One of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`. |
+| `kind`                 | string | ✅       | Resource type. One of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`, `Plugin`. |
 | `metadata.name`        | string | ✅       | Unique identifier for the resource within its kind.                                        |
 | `metadata.description` | string |          | Short human-readable summary.                                                              |
 | `metadata.displayName` | string |          | Pretty-printed label for UIs.                                                              |
@@ -107,9 +109,19 @@ created automatically with its root set to `$CWD`.
 |-------------------|----------|:--------:|----------|-------------------------------------------------------------------------------------------------------------------------------|
 | `projects`        | string[] |          | `[]`     | Directories to load as active projects. `["*"]` discovers all non-hidden immediate subdirectories. An empty value or omission defaults to `["."]`. |
 | `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.models`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
-| `defaultAgent`    | string   |          |          | Default agent to use for this workspace if none is specified. |
-| `plugins`         | object[] |          | `[]`     | External repositories to load as plugins into this workspace. |
+| `defaultModel`    | string   |          |          | Default completion model to use when an agent omits `spec.models`.                                                            |
+| `defaultModels`   | object   |          | —        | Role-specific default models (`completion`, `decision`, `embedding`) across the workspace.                                    |
+| `defaultAgent`    | string   |          |          | Default agent to use for this workspace if none is specified.                                                                 |
+| `plugins`         | object[] |          | `[]`     | External repositories to load as plugins into this workspace.                                                                 |
 | `policies`        | object   |          | —        | Security and access policies (e.g., tool execution restrictions).                                                             |
+
+#### `ModelDefaults` fields
+
+| Field        | Type   | Description                                                                                      |
+|--------------|--------|--------------------------------------------------------------------------------------------------|
+| `completion` | string | Default model for text/chat generation (e.g., `"anthropic/claude-3-7-sonnet"`).                  |
+| `decision`   | string | Default model for probabilistic decision evaluations (e.g., `"typesafe/jev-latest"`).            |
+| `embedding`  | string | Default model for vector embeddings (e.g., `"openai/text-embedding-3-small"`).                   |
 
 #### `WorkspacePlugin` fields
 
@@ -155,6 +167,10 @@ spec:
     - services/auth
     - libs/core
   defaultProvider: genai
+  defaultModels:
+    completion: anthropic/claude-3-7-sonnet
+    decision: typesafe/jev-latest
+    embedding: openai/text-embedding-3-small
 ---
 ```
 
@@ -410,22 +426,127 @@ Include a disclaimer at the end of every report.
 
 ---
 
-### 3.6 ModelProvider
+### 3.6 Decision
+
+A `Decision` resource encapsulates a probabilistic decision evaluation (such as binary predicates,
+categorical choices, and ordinal scoring rubrics). Its general evaluation context or rubric is
+authored in the Markdown body of the file, while structured questions and criteria are declared in
+`spec.questions` (or supplied dynamically at runtime).
+
+#### `spec` fields
+
+| Field       | Type     | Required | Description                                                                                              |
+|-------------|----------|:--------:|----------------------------------------------------------------------------------------------------------|
+| `models`    | string[] |          | Prioritized list of decision model identifiers (e.g., `["typesafe/jev-latest", "ollama/nimble"]`). Overrides workspace/provider defaults. |
+| `hints`     | string[] |          | Ordered list of argument names for UI and positional template substitution in `instructions`.            |
+| `questions` | object[] |          | List of structured questions (`predicate`, `choice`, `score`) evaluated by this decision.                |
+
+> `instructions` is **not** written in the YAML front-matter when using Markdown format. It is populated
+> automatically from the Markdown body below the closing `---`.
+
+#### `DecisionQuestion` fields
+
+| Field           | Type     | Required | Description                                                                                      |
+|-----------------|----------|:--------:|--------------------------------------------------------------------------------------------------|
+| `name`          | string   | ✅       | Unique identifier for this question within the `Decision`.                                       |
+| `type`          | string   | ✅       | Question evaluation mode: `predicate`, `choice`, or `score`.                                     |
+| `instructions`  | string   |          | Question-specific prompt or condition to evaluate.                                               |
+| `threshold`     | float    |          | Minimum probability (`0.0`–`1.0`) required for a `predicate` question to pass.                   |
+| `minConfidence` | float    |          | Minimum confidence (`0.0`–`1.0`) required for the evaluated answer.                              |
+| `criteria`      | object   |          | Explicit positive (`true`) and negative (`false`) criteria for a `predicate` question.           |
+| `options`       | object[] | *        | Candidate choices (at least 2 required when `type: choice`).                                     |
+| `levels`        | object[] | *        | Ordered rubric levels (at least 2 required when `type: score`).                                  |
+
+#### `DecisionCriteria` fields
+
+| Field   | Type   | Description                                                    |
+|---------|--------|----------------------------------------------------------------|
+| `true`  | string | Description of when the predicate evaluates to `true`.         |
+| `false` | string | Description of when the predicate evaluates to `false`.        |
+
+#### `DecisionOption` fields
+
+| Field         | Type   | Required | Description                                                    |
+|---------------|--------|:--------:|----------------------------------------------------------------|
+| `value`       | string | ✅       | Identifier returned when this option is selected.              |
+| `description` | string |          | Semantic description of when to select this option.            |
+
+#### `DecisionLevel` fields
+
+| Field         | Type   | Required | Description                                                    |
+|---------------|--------|:--------:|----------------------------------------------------------------|
+| `label`       | string | ✅       | Label for this rubric level (e.g., `"low"`, `"medium"`, `"high"`). |
+| `description` | string |          | Rubric description for this score level.                       |
+
+#### Full example (`decisions/pr-triage.md`)
+
+```markdown
+---
+apiVersion: warp/v1alpha1
+kind: Decision
+metadata:
+  name: pr-triage
+  description: Triage an incoming pull request for security, routing, and urgency.
+spec:
+  models: ["typesafe/jev-latest", "ollama/nimble"]
+  questions:
+    - name: is_security_sensitive
+      type: predicate
+      instructions: Does this diff touch authentication, cryptography, or permissions?
+      threshold: 0.7
+      criteria:
+        true: Modifies auth, tokens, RBAC, secrets, or encryption logic.
+        false: Only touches UI, docs, or non-sensitive business logic.
+
+    - name: reviewer_team
+      type: choice
+      instructions: Which team should review this change?
+      minConfidence: 0.6
+      options:
+        - value: security
+          description: Auth, crypto, secrets, or access control changes.
+        - value: backend
+          description: API, database, or service logic changes.
+        - value: frontend
+          description: UI components, styling, or client state changes.
+
+    - name: urgency
+      type: score
+      instructions: How urgent is this pull request?
+      levels:
+        - label: low
+          description: Typo fix, chore, or minor refactor.
+        - label: medium
+          description: Standard feature or bug fix.
+        - label: high
+          description: Production hotfix or critical security patch.
+---
+
+# Pull Request Triage Rubric
+
+Evaluate the provided pull request diff and metadata objectively against each
+question's criteria.
+```
+
+---
+
+### 3.7 ModelProvider
 
 A `ModelProvider` resource describes an LLM provider configuration, such as API
 endpoints and default models.
 
 #### `spec` fields
 
-| Field          | Type   | Required | Description                                     |
-|----------------|--------|:--------:|-------------------------------------------------|
-| `type`         | string | ✅       | e.g., `ollama`, `openai`, `anthropic`.          |
-| `endpoint`     | string | ✅       | API base URL.                                   |
-| `defaultModel` | string |          | Model to use if none specified.                 |
-| `auth`         | object |          | Authentication config (e.g., `type: bearer`, `env: OPENAI_API_KEY`). |
-| `headers`      | map    |          | Custom HTTP headers included in all requests to the provider. |
-| `config`       | map    |          | Provider-specific settings and custom configuration parameters. |
-| `models`       | object[]|          | Available models from this provider.            |
+| Field           | Type     | Required | Description                                                                                      |
+|-----------------|----------|:--------:|--------------------------------------------------------------------------------------------------|
+| `type`          | string   | ✅       | e.g., `ollama`, `openai`, `anthropic`.                                                           |
+| `endpoint`      | string   | ✅       | API base URL.                                                                                    |
+| `defaultModel`  | string   |          | Default completion model to use if none specified.                                               |
+| `defaultModels` | object   |          | Role-specific default models (`completion`, `decision`, `embedding`) for this provider.          |
+| `auth`          | object   |          | Authentication config (e.g., `type: bearer`, `env: OPENAI_API_KEY`).                             |
+| `headers`       | map      |          | Custom HTTP headers included in all requests to the provider.                                    |
+| `config`        | map      |          | Provider-specific settings and custom configuration parameters.                                  |
+| `models`        | object[] |          | Available models from this provider.                                                             |
 
 > **Note on configuration:** The `config` parameters and custom `headers` are entirely provider-specific. Different runtimes or provider backends may define and read different options from the `config` map (e.g., connection timeouts, system-level tweaks, or custom API options).
 
@@ -445,20 +566,24 @@ endpoints and default models.
 | `id`           | string   | ✅       | Unique model ID (e.g., `gpt-4`).                |
 | `name`         | string   | ✅       | Model name (e.g., `gpt-4`).                     |
 | `label`        | string   | ✅       | Human-friendly label (e.g., `GPT-4`).           |
-| `limits`       | object   | ✅       | Context and output token limits.                |
+| `limits`       | object   | ✅       | Context, output token, and vector dimension limits. |
 | `capabilities` | object   |          | Supported features and configuration boundaries.|
 | `cost`         | object   |          | Token pricing and conditional tiers.            |
 
 #### `ProviderModelCapabilities` fields
 
-| Field              | Type     | Description                                                    |
-|--------------------|----------|----------------------------------------------------------------|
-| `attachment`       | bool     | Whether the model supports file/document attachments.          |
-| `tools`            | bool     | Whether the model supports function/tool calling (`tool_call`).|
-| `structuredOutput` | bool     | Whether the model supports strict structured outputs.          |
-| `temperature`      | bool     | Whether the model allows configuring the sampling temperature. |
-| `thinking`         | object[] | List of supported reasoning configuration strategies.          |
-| `modalities`       | object   | Defines supported input and output data modalities.            |
+| Field              | Type     | Default | Description                                                                                 |
+|--------------------|----------|---------|---------------------------------------------------------------------------------------------|
+| `completion`       | bool     | `true`  | Whether the model supports text/chat completion. Set to `false` for pure decision or embedding models. |
+| `decision`         | bool     | `false` | Whether the model supports probabilistic decision evaluation.                               |
+| `embedding`        | bool     | `false` | Whether the model supports generating vector embeddings.                                    |
+| `dimensions`       | int[]    | —       | Configurable output vector dimensions supported by an embedding model (e.g., `[256, 512, 1536]`). |
+| `attachment`       | bool     | `false` | Whether the model supports file/document attachments.                                       |
+| `tools`            | bool     | `false` | Whether the model supports function/tool calling (`tool_call`).                             |
+| `structuredOutput` | bool     | `false` | Whether the model supports strict structured outputs.                                       |
+| `temperature`      | bool     | `false` | Whether the model allows configuring the sampling temperature.                              |
+| `thinking`         | object[] | —       | List of supported reasoning configuration strategies.                                       |
+| `modalities`       | object   | —       | Defines supported input and output data modalities.                                         |
 
 #### `ProviderModelModalities` fields
 
@@ -482,7 +607,7 @@ endpoints and default models.
 | Field        | Type     | Description                                                          |
 |--------------|----------|----------------------------------------------------------------------|
 | `input`      | float    | Base cost for input tokens (typically per 1M tokens).                |
-| `output`     | float    | Base cost for output tokens.                                         |
+| `output`     | float    | Base cost for output tokens (optional for embedding/decision models).|
 | `cacheRead`  | float    | Cost for reading from prompt cache.                                  |
 | `cacheWrite` | float    | Cost for writing to prompt cache.                                    |
 | `tiers`      | object[] | Array of conditional pricing tiers (e.g., for large contexts).       |
@@ -494,16 +619,17 @@ endpoints and default models.
 | `label`      | string | A human-readable label for the tier (e.g., `"Context over 200k"`).          |
 | `tier`       | object | The condition that triggers this pricing (e.g., `{ type: "context", size: 200000 }`). |
 | `input`      | float  | Override cost for input tokens when this tier is active.                    |
-| `output`     | float  | Override cost for output tokens.                                            |
+| `output`     | float  | Override cost for output tokens (optional for embedding/decision models).   |
 | `cacheRead`  | float  | Override cost for cache read.                                               |
 | `cacheWrite` | float  | Override cost for cache write.                                              |
 
 #### `ProviderModelLimits` fields
 
-| Field     | Type | Required | Description                          |
-|-----------|------|:--------:|--------------------------------------|
-| `context` | int  | ✅       | Max context length in tokens.        |
-| `output`  | int  | ✅       | Max output length in tokens.         |
+| Field        | Type | Required | Description                                                             |
+|--------------|------|:--------:|-------------------------------------------------------------------------|
+| `context`    | int  | ✅       | Max context length in tokens.                                           |
+| `output`     | int  |          | Max output length in tokens (optional for non-completion models).       |
+| `dimensions` | int  |          | Default or maximum output vector size for embedding models.             |
 
 #### Full example (`providers/anthropic.yaml`)
 
@@ -556,7 +682,7 @@ spec:
 
 ---
 
-### 3.7 Tool
+### 3.8 Tool
 
 A `Tool` resource describes a custom tool that an agent can invoke.
 
@@ -605,7 +731,7 @@ spec:
 
 ---
 
-### 3.8 MCP
+### 3.9 MCP
 
 An `MCP` resource describes an [Model Context Protocol](https://modelcontextprotocol.io)
 server.
@@ -655,7 +781,7 @@ spec:
 
 ---
 
-### 3.9 Toolkit
+### 3.10 Toolkit
 
 A `Toolkit` resource groups multiple tools together. Tools can be defined inline
 or referenced by file path.
@@ -685,7 +811,7 @@ spec:
           msg: { type: string }
 ```
 
-### 3.10 Plugin
+### 3.11 Plugin
 
 A `Plugin` resource (typically named `PLUGIN.md` or `PLUGIN.yaml`) is placed at the root of a repository to declare it as a distributable WARP package. It acts as the manifest for the repository, telling the loader where to find the resources and which ones are meant for public consumption.
 
@@ -897,7 +1023,7 @@ loaded Workspace.
 | `apiVersion` is present      | Field is empty or absent.                                          |
 | `kind` is present            | Field is empty or absent.                                          |
 | `metadata.name` is present   | Field is empty or absent.                                          |
-| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`. |
+| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`, `Plugin`. |
 
 ### 7.2 Agent-specific
 
@@ -906,18 +1032,31 @@ loaded Workspace.
 | All `spec.skills` paths resolve   | A listed path does not match any loaded `Skill` in the resolution hierarchy. |
 | All `spec.commands` paths resolve | A listed path does not match any loaded `Command` in the resolution hierarchy. |
 | All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
+| Declared `spec.models` support completion | A listed model resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
 
 ### 7.3 Workspace-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | All `spec.projects` paths exist     | A listed path (when not `"*"`) does not exist on the filesystem. |
+| `spec.defaultModels` capabilities match role | A model in `defaultModels` resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
 
 ### 7.4 Plugin-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | No structural resources in exports  | The `spec.exports` list matches a resource of kind `Workspace`, `Context`, or `Plugin`. |
+
+### 7.5 Decision-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Unique question names               | Any `spec.questions` entry has an empty `name` or duplicates another question's `name`. |
+| Valid question type                 | A question's `type` is not `predicate`, `choice`, or `score`.  |
+| Valid probability bounds            | `threshold` or `minConfidence` is outside `[0.0, 1.0]`.        |
+| Choice options                      | A `choice` question has fewer than 2 `options` or an option with an empty `value`. |
+| Score levels                        | A `score` question has fewer than 2 `levels` or a level with an empty `label`. |
+| Declared `spec.models` support decision | A listed model resolves to a `ProviderModel` whose `capabilities.decision` is `false`. |
 
 ---
 
@@ -953,7 +1092,7 @@ function parse(filePath, fileContent):
         return error "missing front-matter delimiters"
 
   6. Decode segments[1] as YAML.
-  7. IF kind is not in {Workspace, Context, Agent, Skill, Command, ModelProvider, Tool, MCP, Toolkit}:
+  7. IF kind is not in {Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Toolkit, Plugin}:
      return error "unsupported kind"
 
   8. Populate resource from YAML and segments[2] (instructions).
@@ -1088,7 +1227,7 @@ To minimize boilerplate, the template context is "flattened." You do not need to
 *   `DisplayName` (from `metadata.displayName`, falls back to `Name`)
 *   `Description` (from `metadata.description`)
 *   `Labels` (from `metadata.labels`)
-*   `Models`, `Skills`, `Tools`, `Commands`, `Triggers`, `Hints`, `Temperature` (lifted from the respective `spec` fields).
+*   `Models`, `Skills`, `Tools`, `Commands`, `Triggers`, `Hints`, `Questions`, `Temperature` (lifted from the respective `spec` fields).
 
 ### Advanced Templating
 

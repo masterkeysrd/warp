@@ -21,6 +21,8 @@ const (
 	KindSkill Kind = "Skill"
 	// KindCommand represents a Command resource.
 	KindCommand Kind = "Command"
+	// KindDecision represents a Decision resource.
+	KindDecision Kind = "Decision"
 	// KindModelProvider represents an LLM Provider resource.
 	KindModelProvider Kind = "ModelProvider"
 	// KindTool represents a Custom Tool resource.
@@ -147,16 +149,34 @@ func (b *BaseResource) ValidateBase() error {
 		return fmt.Errorf("kind is required")
 	}
 	switch b.Kind {
-	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand,
+	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindDecision,
 		KindModelProvider, KindTool, KindMCP, KindToolkit, KindPlugin:
 		// valid
 	default:
-		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Plugin", b.Kind)
+		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Toolkit, Plugin", b.Kind)
 	}
 	if b.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
 	return nil
+}
+
+// ModelDefaults defines role-based default models or providers for completion,
+// decision evaluation, and embedding generation.
+type ModelDefaults struct {
+	Completion string `yaml:"completion,omitempty" json:"completion,omitempty"`
+	Decision   string `yaml:"decision,omitempty" json:"decision,omitempty"`
+	Embedding  string `yaml:"embedding,omitempty" json:"embedding,omitempty"`
+}
+
+// DeepCopy returns a deep copy of the ModelDefaults.
+func (in *ModelDefaults) DeepCopy() *ModelDefaults {
+	if in == nil {
+		return nil
+	}
+	out := new(ModelDefaults)
+	*out = *in
+	return out
 }
 
 // Policies defines security and access policies.

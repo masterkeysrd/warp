@@ -19,6 +19,7 @@ Every WARP resource is a Markdown file with YAML front-matter or a pure YAML fil
 - **Agent**: Defines an autonomous actor, its persona, and its capabilities (skills, commands, tools).
 - **Skill**: Domain-specific expertise guidelines.
 - **Command**: Reusable operations an agent can invoke.
+- **Decision**: Probabilistic decision evaluations (`predicate`, `choice`, `score` questions and evaluation rubrics).
 - **ModelProvider**: LLM provider configuration (API endpoints, default models).
 - **Tool**: Definition for an executable tool with parameter schema.
 - **MCP**: Model Context Protocol server integration.
@@ -30,19 +31,21 @@ Each resource has specific fields in its `spec` block:
 
 | Kind | Key Properties |
 |------|----------------|
-| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultAgent` (string), `plugins` (string[]) |
+| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (string[]) |
 | **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `skills` (string[]), `commands` (string[]), `tools` (string[]) |
 | **Command** | `models` (string[]), `tools` (string[]), `hints` (string[]) |
-| **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `auth` (map), `models` (ProviderModel[]) |
-| **Tool** | `command` (string[]), `description` (string), `env` (map), `parameters` (JSON Schema), `annotations` (ToolAnnotation) |
+| **Decision** | `models` (string[]), `hints` (string[]), `questions` (DecisionQuestion[]) |
+| **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (map), `models` (ProviderModel[]) |
+| **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
 | **MCP** | `command` (string[]), `env` (map), `tools` (MCPFilter), `overrides` (map) |
 | **Toolkit** | `tools` (ToolRef[]) |
 
 ### 3. Directory Layout
 - `.agents/`: The standard location for resources.
-  - `defs/`: Markdown files for Agents.
+  - `defs/` or `agents/`: Markdown files for Agents.
   - `skills/`: Markdown files for Skills.
   - `commands/`: Markdown files for Commands.
+  - `decisions/`: Markdown files for Decisions.
   - `tools/`, `mcps/`, `providers/`: YAML files for technical configurations.
 
 ### 4. Resource Resolution

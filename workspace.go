@@ -71,6 +71,7 @@ func (w *WorkspaceDef) DeepCopy() *WorkspaceDef {
 type WorkspaceDefSpec struct {
 	Projects        []string          `yaml:"projects,flow"`
 	DefaultProvider string            `yaml:"defaultProvider"`
+	DefaultModels   *ModelDefaults    `yaml:"defaultModels,omitempty"`
 	DefaultAgent    string            `yaml:"defaultAgent"`
 	Plugins         []WorkspacePlugin `yaml:"plugins"`
 	Policies        *Policies         `yaml:"policies,omitempty"`
@@ -106,6 +107,9 @@ func (in *WorkspaceDefSpec) DeepCopy() *WorkspaceDefSpec {
 	if in.Projects != nil {
 		out.Projects = make([]string, len(in.Projects))
 		copy(out.Projects, in.Projects)
+	}
+	if in.DefaultModels != nil {
+		out.DefaultModels = in.DefaultModels.DeepCopy()
 	}
 	if in.Plugins != nil {
 		out.Plugins = make([]WorkspacePlugin, len(in.Plugins))

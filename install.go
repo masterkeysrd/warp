@@ -366,6 +366,9 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *Plu
 	for p, c := range tempReg.Commands {
 		appendResource(p, c.Kind, c.GetName(), c.GetMetadata().Description)
 	}
+	for p, d := range tempReg.Decisions {
+		appendResource(p, d.Kind, d.GetName(), d.GetMetadata().Description)
+	}
 	for p, mp := range tempReg.ModelProviders {
 		appendResource(p, mp.Kind, mp.GetName(), mp.GetMetadata().Description)
 	}

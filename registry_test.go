@@ -845,3 +845,162 @@ func TestValidate_KindAwareness_And_Inheritance(t *testing.T) {
 	}
 }
 
+func TestValidate_Decision_And_ModelCapabilities(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	floatPtr := func(f float64) *float64 { return &f }
+
+	provider := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "local-ai"},
+		},
+		Spec: ModelProviderSpec{
+			Type:     "ollama",
+			Endpoint: "http://localhost:11434",
+			DefaultModels: &ModelDefaults{
+				Completion: "llama3.3",
+				Decision:   "nimble",
+				Embedding:  "nomic-embed-text",
+			},
+			Models: []ProviderModel{
+				{
+					ID:    "llama3.3",
+					Name:  "llama3.3",
+					Label: "Llama 3.3",
+					Limits: ProviderModelLimits{
+						Context: 128000,
+						Output:  4096,
+					},
+				},
+				{
+					ID:    "nimble",
+					Name:  "nimble",
+					Label: "Nimble",
+					Limits: ProviderModelLimits{
+						Context: 64000,
+					},
+					Capabilities: &ProviderModelCapabilities{
+						Completion: boolPtr(false),
+						Decision:   boolPtr(true),
+					},
+				},
+				{
+					ID:    "nomic-embed-text",
+					Name:  "nomic-embed-text",
+					Label: "Nomic Embed Text",
+					Limits: ProviderModelLimits{
+						Context:    8192,
+						Dimensions: 768,
+					},
+					Capabilities: &ProviderModelCapabilities{
+						Completion: boolPtr(false),
+						Embedding:  boolPtr(true),
+					},
+				},
+			},
+		},
+	}
+
+	validDecision := &Decision{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindDecision,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "triage"},
+		},
+		Spec: DecisionSpec{
+			Models: []string{"local-ai/nimble"},
+			Questions: []DecisionQuestion{
+				{
+					Name:      "is_bug",
+					Type:      DecisionQuestionPredicate,
+					Threshold: floatPtr(0.8),
+				},
+				{
+					Name:          "category",
+					Type:          DecisionQuestionChoice,
+					MinConfidence: floatPtr(0.6),
+					Options: []DecisionOption{
+						{Value: "ui"},
+						{Value: "api"},
+					},
+				},
+				{
+					Name: "severity",
+					Type: DecisionQuestionScore,
+					Levels: []DecisionLevel{
+						{Label: "low"},
+						{Label: "high"},
+					},
+				},
+			},
+		},
+	}
+
+	reg := NewRegistry(&Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "ws"},
+			},
+			Spec: WorkspaceDefSpec{
+				DefaultModels: &ModelDefaults{
+					Completion: "local-ai/llama3.3",
+					Decision:   "local-ai/nimble",
+					Embedding:  "local-ai/nomic-embed-text",
+				},
+			},
+		},
+	})
+	reg.Set(provider.QualifiedName(), provider)
+	reg.Set(validDecision.QualifiedName(), validDecision)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("Expected valid Decision and ModelDefaults to pass Validate(), got: %v", err)
+	}
+
+	// 1. Decision referencing a non-decision model should fail
+	badModelDec := validDecision.DeepCopy()
+	badModelDec.Metadata.Name = "bad-model-dec"
+	badModelDec.Spec.Models = []string{"local-ai/llama3.3"}
+	regBadModel := NewRegistry(nil)
+	regBadModel.Set(provider.QualifiedName(), provider)
+	regBadModel.Set(badModelDec.QualifiedName(), badModelDec)
+	if err := regBadModel.Validate(); err == nil || !strings.Contains(err.Error(), "does not support decision capability") {
+		t.Errorf("Expected decision capability error, got: %v", err)
+	}
+
+	// 2. Agent referencing a pure decision/embedding model (completion: false) should fail
+	badAgent := agentWithSpec(NamespaceWorkspace, "bad-agent", AgentSpec{
+		Models: []string{"local-ai/nimble"},
+	})
+	regBadAgent := NewRegistry(nil)
+	regBadAgent.Set(provider.QualifiedName(), provider)
+	regBadAgent.Set(badAgent.QualifiedName(), badAgent)
+	if err := regBadAgent.Validate(); err == nil || !strings.Contains(err.Error(), "does not support completion capability") {
+		t.Errorf("Expected completion capability error, got: %v", err)
+	}
+
+	// 3. Decision with out-of-range threshold should fail
+	badThreshDec := validDecision.DeepCopy()
+	badThreshDec.Spec.Questions[0].Threshold = floatPtr(1.5)
+	regBadThresh := NewRegistry(nil)
+	regBadThresh.Set(badThreshDec.QualifiedName(), badThreshDec)
+	if err := regBadThresh.Validate(); err == nil || !strings.Contains(err.Error(), "threshold must be between 0.0 and 1.0") {
+		t.Errorf("Expected threshold bounds error, got: %v", err)
+	}
+
+	// 4. Decision with duplicate question name should fail
+	dupNameDec := validDecision.DeepCopy()
+	dupNameDec.Spec.Questions[1].Name = "is_bug"
+	regDup := NewRegistry(nil)
+	regDup.Set(dupNameDec.QualifiedName(), dupNameDec)
+	if err := regDup.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate question name") {
+		t.Errorf("Expected duplicate question name error, got: %v", err)
+	}
+}
+
+

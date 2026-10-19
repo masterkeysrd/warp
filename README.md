@@ -55,7 +55,8 @@ You are a helpful assistant that specializes in financial analysis...
 | `Agent`         | An autonomous agent with LLM configuration, inheritance (`extends`), policies, and references to skills, commands, tools/toolkits, MCPs, and subagents. |
 | `Skill`         | A bundle of expertise guidelines for a specific domain. Agents load skills to adopt a persona or follow conventions. |
 | `Command`       | A discrete, reusable operation an agent can invoke (e.g. "generate a report"). |
-| `ModelProvider` | Configuration for an LLM provider (API key env var, base URL, available models, default thinking config). |
+| `Decision`      | A probabilistic decision evaluation defining structured questions (`predicate`, `choice`, `score`) and an evaluation rubric. |
+| `ModelProvider` | Configuration for an LLM provider (API key env var, base URL, available models, default models, thinking config). |
 | `Tool`          | A custom tool definition (input schema, execution binding, and safety annotations). |
 | `Toolkit`       | A collection of referenced (`$ref`) or inline `Tool` definitions that can be attached to an `Agent` as a unit. |
 | `MCP`           | A Model Context Protocol server configuration (`stdio` or `sse`). |
@@ -123,6 +124,8 @@ AGENTS.md             # Project context instructions (kind: Context)
 │   └── analyst.md    # kind: Agent
 ├── commands/         # Command definitions
 │   └── report.md     # kind: Command
+├── decisions/        # Decision definitions
+│   └── triage.md     # kind: Decision
 ├── skills/           # Skill definitions
 │   └── finance.md    # kind: Skill
 ├── tools/            # Tool definitions (kind: Tool)

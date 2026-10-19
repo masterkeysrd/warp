@@ -69,6 +69,14 @@ type TemplateCommand struct {
 	Tools       []TemplateTool
 }
 
+// TemplateDecision represents the decision view model for templates.
+type TemplateDecision struct {
+	Name        string
+	Description string
+	Dir         string
+	Path        string
+}
+
 // TemplateTool represents the tool view model for templates.
 type TemplateTool struct {
 	Name        string
@@ -258,6 +266,32 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 				}
 			}
 		}
+	case *Decision:
+		if _, ok := data["Decision"]; !ok {
+			td := TemplateDecision{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Dir:         v.Directory,
+				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+			}
+			data["Decision"] = td
+		}
+		data["Models"] = v.Spec.Models
+		data["Hints"] = v.Spec.Hints
+		data["Questions"] = v.Spec.Questions
+
+		// Map arguments
+		if len(opts.Args) > 0 {
+			data["Args"] = opts.Args
+			for i, arg := range opts.Args {
+				data[fmt.Sprintf("%d", i+1)] = arg
+			}
+			for i, hint := range v.Spec.Hints {
+				if i < len(opts.Args) {
+					data[hint] = opts.Args[i]
+				}
+			}
+		}
 	}
 
 	return data
@@ -274,6 +308,8 @@ func getInstructions(res Resource) string {
 	case *Skill:
 		return v.Spec.Instructions
 	case *Command:
+		return v.Spec.Instructions
+	case *Decision:
 		return v.Spec.Instructions
 	default:
 		return ""

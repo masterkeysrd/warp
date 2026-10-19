@@ -143,6 +143,13 @@ func Parse(filePath, content string) (*ParseResult, error) {
 		}
 		c.Spec.Instructions = markdownPart
 		resource = &c
+	case KindDecision:
+		var d Decision
+		if err := yaml.Unmarshal([]byte(yamlPart), &d); err != nil {
+			return nil, fmt.Errorf("failed to parse Decision spec: %w", err)
+		}
+		d.Spec.Instructions = markdownPart
+		resource = &d
 	case KindModelProvider:
 		var res ModelProvider
 		if err := yaml.Unmarshal([]byte(yamlPart), &res); err != nil {
@@ -276,6 +283,16 @@ func Format(res Resource) ([]byte, error) {
 			return nil, err
 		}
 		yamlPart = b
+	case *Decision:
+		useDelimiters = true
+		cp := r.DeepCopy()
+		markdownPart = cp.Spec.Instructions
+		cp.Spec.Instructions = ""
+		b, err := marshalYAML(cp)
+		if err != nil {
+			return nil, err
+		}
+		yamlPart = b
 	case *Tool:
 		// If a Tool has instructions, use delimiters. Otherwise, just marshal as YAML.
 		if r.Spec.Instructions != "" {
@@ -336,7 +353,7 @@ func Format(res Resource) ([]byte, error) {
 // for the given resource kind.
 func RecommendedExtension(kind Kind) string {
 	switch kind {
-	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindPlugin:
+	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindDecision, KindPlugin:
 		return ".md"
 	default:
 		return ".yaml"

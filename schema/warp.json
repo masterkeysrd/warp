@@ -120,6 +120,138 @@
       ],
       "description": "ContextSpec contains the configuration details for a Context resource."
     },
+    "DecisionCriteria": {
+      "properties": {
+        "true": {
+          "type": "string",
+          "description": "Description of when the predicate evaluates to true"
+        },
+        "false": {
+          "type": "string",
+          "description": "Description of when the predicate evaluates to false"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "DecisionCriteria defines explicit positive and negative criteria for a predicate question."
+    },
+    "DecisionLevel": {
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Label for this level (e.g., \"low\", \"medium\", \"high\")"
+        },
+        "description": {
+          "type": "string",
+          "description": "Rubric description for this score level"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "label"
+      ],
+      "description": "DecisionLevel defines a single ordinal rubric level for a score question."
+    },
+    "DecisionOption": {
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "Identifier returned when this option is selected"
+        },
+        "description": {
+          "type": "string",
+          "description": "Semantic description of when to select this option"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "description": "DecisionOption defines a single categorical choice option."
+    },
+    "DecisionQuestion": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the unique identifier for this question within the Decision."
+        },
+        "type": {
+          "type": "string",
+          "description": "Type is the question evaluation mode: \"predicate\", \"choice\", or \"score\"."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Instructions describes the specific question or condition to evaluate."
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Threshold is an optional minimum probability [0.0, 1.0] required for a predicate to pass."
+        },
+        "minConfidence": {
+          "type": "number",
+          "description": "MinConfidence is an optional minimum confidence [0.0, 1.0] required for an answer."
+        },
+        "criteria": {
+          "$ref": "#/$defs/DecisionCriteria",
+          "description": "Criteria defines optional positive and negative evaluation criteria for a predicate question."
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "type": "array",
+          "description": "Options defines the candidate choices when type is \"choice\"."
+        },
+        "levels": {
+          "items": {
+            "$ref": "#/$defs/DecisionLevel"
+          },
+          "type": "array",
+          "description": "Levels defines the ordered rubric levels when type is \"score\"."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "description": "DecisionQuestion defines a single structured question within a Decision resource."
+    },
+    "DecisionSpec": {
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the evaluation prompt/rubric populated from the Markdown\nbody of the file (below the closing front-matter delimiter)."
+        },
+        "models": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Models is a prioritized list of decision model identifiers to use\n(e.g., [\"typesafe/jev-latest\", \"ollama/nimble\"]). Overrides workspace/provider defaults."
+        },
+        "hints": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Hints is an ordered list of argument hints that UIs and runtimes can use\nfor positional template substitution in Instructions."
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/DecisionQuestion"
+          },
+          "type": "array",
+          "description": "Questions is the list of structured questions (predicates, choices, scores)\nevaluated by this Decision. Optional when questions are supplied dynamically at runtime."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "DecisionSpec contains the configuration details for a Decision resource."
+    },
     "MCPPolicies": {
       "properties": {
         "tools": {
@@ -209,11 +341,27 @@
       ],
       "description": "Metadata holds the identifying and descriptive fields shared by every resource kind."
     },
+    "ModelDefaults": {
+      "properties": {
+        "completion": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "embedding": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ModelDefaults defines role-based default models or providers for completion, decision evaluation, and embedding generation."
+    },
     "ModelProviderSpec": {
       "properties": {
         "type": {
           "type": "string",
-          "description": "e.g., \"ollama\", \"openai\", \"anthropic\""
+          "description": "e.g., \"ollama\", \"openai\", \"anthropic\", \"typesafe\""
         },
         "endpoint": {
           "type": "string",
@@ -221,7 +369,11 @@
         },
         "defaultModel": {
           "type": "string",
-          "description": "Model to use if none specified"
+          "description": "Default completion model to use if none specified"
+        },
+        "defaultModels": {
+          "$ref": "#/$defs/ModelDefaults",
+          "description": "Role-based default models (completion, decision, embedding)"
         },
         "auth": {
           "$ref": "#/$defs/ProviderAuth",
@@ -251,7 +403,6 @@
       "required": [
         "type",
         "endpoint",
-        "defaultModel",
         "models"
       ],
       "description": "ModelProviderSpec contains the configuration details for a ModelProvider resource."
@@ -352,7 +503,7 @@
         },
         "limits": {
           "$ref": "#/$defs/ProviderModelLimits",
-          "description": "Context and output token limits"
+          "description": "Context, output token, and vector dimension limits"
         },
         "capabilities": {
           "$ref": "#/$defs/ProviderModelCapabilities",
@@ -375,6 +526,25 @@
     },
     "ProviderModelCapabilities": {
       "properties": {
+        "completion": {
+          "type": "boolean",
+          "description": "Whether the model supports text/chat completion (defaults to true)"
+        },
+        "decision": {
+          "type": "boolean",
+          "description": "Whether the model supports probabilistic decision evaluation (defaults to false)"
+        },
+        "embedding": {
+          "type": "boolean",
+          "description": "Whether the model supports vector embedding generation (defaults to false)"
+        },
+        "dimensions": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array",
+          "description": "Supported output vector dimensions for configurable embedding models"
+        },
         "attachment": {
           "type": "boolean",
           "description": "Whether the model supports file/document attachments"
@@ -435,8 +605,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "input",
-        "output"
+        "input"
       ]
     },
     "ProviderModelCostTier": {
@@ -471,8 +640,7 @@
       "required": [
         "label",
         "tier",
-        "input",
-        "output"
+        "input"
       ]
     },
     "ProviderModelCostTierCondition": {
@@ -502,15 +670,18 @@
         "output": {
           "type": "integer",
           "description": "Max output length in tokens"
+        },
+        "dimensions": {
+          "type": "integer",
+          "description": "Default/max output vector dimensions (for embedding models)"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "context",
-        "output"
+        "context"
       ],
-      "description": "ProviderModelLimits defines the token limits for a specific model."
+      "description": "ProviderModelLimits defines the token and vector dimension limits for a specific model."
     },
     "ProviderModelModalities": {
       "properties": {
@@ -793,6 +964,9 @@
         "defaultProvider": {
           "type": "string"
         },
+        "defaultModels": {
+          "$ref": "#/$defs/ModelDefaults"
+        },
         "defaultAgent": {
           "type": "string"
         },
@@ -858,6 +1032,22 @@
             "$id": "https://github.com/masterkeysrd/warp/workspace-def-spec",
             "$ref": "#/$defs/WorkspaceDefSpec",
             "$defs": {
+              "ModelDefaults": {
+                "properties": {
+                  "completion": {
+                    "type": "string"
+                  },
+                  "decision": {
+                    "type": "string"
+                  },
+                  "embedding": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ModelDefaults defines role-based default models or providers for completion, decision evaluation, and embedding generation."
+              },
               "Policies": {
                 "properties": {
                   "tools": {
@@ -924,6 +1114,9 @@
                   },
                   "defaultProvider": {
                     "type": "string"
+                  },
+                  "defaultModels": {
+                    "$ref": "#/$defs/ModelDefaults"
                   },
                   "defaultAgent": {
                     "type": "string"
@@ -1195,6 +1388,158 @@
       "if": {
         "properties": {
           "kind": {
+            "const": "Decision"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/decision-spec",
+            "$ref": "#/$defs/DecisionSpec",
+            "$defs": {
+              "DecisionCriteria": {
+                "properties": {
+                  "true": {
+                    "type": "string",
+                    "description": "Description of when the predicate evaluates to true"
+                  },
+                  "false": {
+                    "type": "string",
+                    "description": "Description of when the predicate evaluates to false"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "DecisionCriteria defines explicit positive and negative criteria for a predicate question."
+              },
+              "DecisionLevel": {
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "description": "Label for this level (e.g., \"low\", \"medium\", \"high\")"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Rubric description for this score level"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "label"
+                ],
+                "description": "DecisionLevel defines a single ordinal rubric level for a score question."
+              },
+              "DecisionOption": {
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "description": "Identifier returned when this option is selected"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Semantic description of when to select this option"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "value"
+                ],
+                "description": "DecisionOption defines a single categorical choice option."
+              },
+              "DecisionQuestion": {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Name is the unique identifier for this question within the Decision."
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Type is the question evaluation mode: \"predicate\", \"choice\", or \"score\"."
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions describes the specific question or condition to evaluate."
+                  },
+                  "threshold": {
+                    "type": "number",
+                    "description": "Threshold is an optional minimum probability [0.0, 1.0] required for a predicate to pass."
+                  },
+                  "minConfidence": {
+                    "type": "number",
+                    "description": "MinConfidence is an optional minimum confidence [0.0, 1.0] required for an answer."
+                  },
+                  "criteria": {
+                    "$ref": "#/$defs/DecisionCriteria",
+                    "description": "Criteria defines optional positive and negative evaluation criteria for a predicate question."
+                  },
+                  "options": {
+                    "items": {
+                      "$ref": "#/$defs/DecisionOption"
+                    },
+                    "type": "array",
+                    "description": "Options defines the candidate choices when type is \"choice\"."
+                  },
+                  "levels": {
+                    "items": {
+                      "$ref": "#/$defs/DecisionLevel"
+                    },
+                    "type": "array",
+                    "description": "Levels defines the ordered rubric levels when type is \"score\"."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "name",
+                  "type"
+                ],
+                "description": "DecisionQuestion defines a single structured question within a Decision resource."
+              },
+              "DecisionSpec": {
+                "properties": {
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the evaluation prompt/rubric populated from the Markdown\nbody of the file (below the closing front-matter delimiter)."
+                  },
+                  "models": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Models is a prioritized list of decision model identifiers to use\n(e.g., [\"typesafe/jev-latest\", \"ollama/nimble\"]). Overrides workspace/provider defaults."
+                  },
+                  "hints": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Hints is an ordered list of argument hints that UIs and runtimes can use\nfor positional template substitution in Instructions."
+                  },
+                  "questions": {
+                    "items": {
+                      "$ref": "#/$defs/DecisionQuestion"
+                    },
+                    "type": "array",
+                    "description": "Questions is the list of structured questions (predicates, choices, scores)\nevaluated by this Decision. Optional when questions are supplied dynamically at runtime."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "DecisionSpec contains the configuration details for a Decision resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "Skill"
           }
         }
@@ -1248,11 +1593,27 @@
             "$id": "https://github.com/masterkeysrd/warp/model-provider-spec",
             "$ref": "#/$defs/ModelProviderSpec",
             "$defs": {
+              "ModelDefaults": {
+                "properties": {
+                  "completion": {
+                    "type": "string"
+                  },
+                  "decision": {
+                    "type": "string"
+                  },
+                  "embedding": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ModelDefaults defines role-based default models or providers for completion, decision evaluation, and embedding generation."
+              },
               "ModelProviderSpec": {
                 "properties": {
                   "type": {
                     "type": "string",
-                    "description": "e.g., \"ollama\", \"openai\", \"anthropic\""
+                    "description": "e.g., \"ollama\", \"openai\", \"anthropic\", \"typesafe\""
                   },
                   "endpoint": {
                     "type": "string",
@@ -1260,7 +1621,11 @@
                   },
                   "defaultModel": {
                     "type": "string",
-                    "description": "Model to use if none specified"
+                    "description": "Default completion model to use if none specified"
+                  },
+                  "defaultModels": {
+                    "$ref": "#/$defs/ModelDefaults",
+                    "description": "Role-based default models (completion, decision, embedding)"
                   },
                   "auth": {
                     "$ref": "#/$defs/ProviderAuth",
@@ -1290,7 +1655,6 @@
                 "required": [
                   "type",
                   "endpoint",
-                  "defaultModel",
                   "models"
                 ],
                 "description": "ModelProviderSpec contains the configuration details for a ModelProvider resource."
@@ -1334,7 +1698,7 @@
                   },
                   "limits": {
                     "$ref": "#/$defs/ProviderModelLimits",
-                    "description": "Context and output token limits"
+                    "description": "Context, output token, and vector dimension limits"
                   },
                   "capabilities": {
                     "$ref": "#/$defs/ProviderModelCapabilities",
@@ -1357,6 +1721,25 @@
               },
               "ProviderModelCapabilities": {
                 "properties": {
+                  "completion": {
+                    "type": "boolean",
+                    "description": "Whether the model supports text/chat completion (defaults to true)"
+                  },
+                  "decision": {
+                    "type": "boolean",
+                    "description": "Whether the model supports probabilistic decision evaluation (defaults to false)"
+                  },
+                  "embedding": {
+                    "type": "boolean",
+                    "description": "Whether the model supports vector embedding generation (defaults to false)"
+                  },
+                  "dimensions": {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "type": "array",
+                    "description": "Supported output vector dimensions for configurable embedding models"
+                  },
                   "attachment": {
                     "type": "boolean",
                     "description": "Whether the model supports file/document attachments"
@@ -1417,8 +1800,7 @@
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
-                  "input",
-                  "output"
+                  "input"
                 ]
               },
               "ProviderModelCostTier": {
@@ -1453,8 +1835,7 @@
                 "required": [
                   "label",
                   "tier",
-                  "input",
-                  "output"
+                  "input"
                 ]
               },
               "ProviderModelCostTierCondition": {
@@ -1484,15 +1865,18 @@
                   "output": {
                     "type": "integer",
                     "description": "Max output length in tokens"
+                  },
+                  "dimensions": {
+                    "type": "integer",
+                    "description": "Default/max output vector dimensions (for embedding models)"
                   }
                 },
                 "additionalProperties": false,
                 "type": "object",
                 "required": [
-                  "context",
-                  "output"
+                  "context"
                 ],
-                "description": "ProviderModelLimits defines the token limits for a specific model."
+                "description": "ProviderModelLimits defines the token and vector dimension limits for a specific model."
               },
               "ProviderModelModalities": {
                 "properties": {
@@ -1994,6 +2378,7 @@
         "Agent",
         "Skill",
         "Command",
+        "Decision",
         "ModelProvider",
         "Tool",
         "MCP",

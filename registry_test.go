@@ -1003,4 +1003,83 @@ func TestValidate_Decision_And_ModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
+	reg := NewRegistry(nil)
+	parentTemp := 0.7
+	childTemp := 0.0
+
+	parent := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Namespace:  NamespaceSystem,
+			Directory:  "/system/agents",
+			Metadata: Metadata{
+				Name:        "base-agent",
+				Description: "Base description",
+			},
+		},
+		Spec: AgentSpec{
+			Models:       []string{"gpt-4o"},
+			Temperature:  &parentTemp,
+			Thinking:     map[string]any{"type": "effort", "effort": "low"},
+			Triggers:     []string{"human", "agent"},
+			Instructions: "Base prompt.",
+		},
+	}
+
+	child := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Namespace:  NamespaceWorkspace,
+			Directory:  "/workspace/.agents/defs",
+			Metadata: Metadata{
+				Name:        "custom-agent",
+				Description: "Child description",
+			},
+		},
+		Spec: AgentSpec{
+			Extends:      "system/Agent/base-agent",
+			Models:       []string{"claude-3-7-sonnet"},
+			Temperature:  &childTemp,
+			Thinking:     map[string]any{"type": "budget", "budgetTokens": 4096},
+			Triggers:     []string{"human"},
+			Instructions: "Child prompt.",
+		},
+	}
+
+	reg.Set(parent.QualifiedName(), parent)
+	reg.Set(child.QualifiedName(), child)
+
+	resolved, err := reg.ResolveAgent("workspace/Agent/custom-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	ag := resolved.Agent
+	if ag.Metadata.Name != "custom-agent" || ag.Metadata.Description != "Child description" {
+		t.Errorf("expected child metadata, got %+v", ag.Metadata)
+	}
+	if ag.Namespace != NamespaceWorkspace {
+		t.Errorf("expected child namespace %q, got %q", NamespaceWorkspace, ag.Namespace)
+	}
+	if ag.Directory != "/workspace/.agents/defs" {
+		t.Errorf("expected child directory, got %q", ag.Directory)
+	}
+	if !slicesEqual(ag.Spec.Models, []string{"claude-3-7-sonnet"}) {
+		t.Errorf("expected child models override, got %v", ag.Spec.Models)
+	}
+	if ag.Spec.Temperature == nil || *ag.Spec.Temperature != 0.0 {
+		t.Errorf("expected child temperature override 0.0, got %v", ag.Spec.Temperature)
+	}
+	if ag.Spec.Thinking["type"] != "budget" || ag.Spec.Thinking["budgetTokens"] != 4096 {
+		t.Errorf("expected child thinking override, got %v", ag.Spec.Thinking)
+	}
+	if !slicesEqual(ag.Spec.Triggers, []string{"human"}) {
+		t.Errorf("expected child triggers override, got %v", ag.Spec.Triggers)
+	}
+}
+
+
 

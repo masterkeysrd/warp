@@ -31,14 +31,14 @@ Each resource has specific fields in its `spec` block:
 
 | Kind | Key Properties |
 |------|----------------|
-| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (string[]) |
-| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `skills` (string[]), `commands` (string[]), `tools` (string[]) |
+| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
+| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `policies` (Policies) |
 | **Command** | `models` (string[]), `tools` (string[]), `hints` (string[]) |
 | **Decision** | `models` (string[]), `hints` (string[]), `questions` (DecisionQuestion[]) |
-| **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (map), `models` (ProviderModel[]) |
-| **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
-| **MCP** | `command` (string[]), `env` (map), `tools` (MCPFilter), `overrides` (map) |
-| **Toolkit** | `tools` (ToolRef[]) |
+| **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
+| **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `outputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
+| **MCP** | `type` (string), `command` (string[]), `endpoint` (string), `env` (map), `annotations` (ToolAnnotation), `policies` (MCPPolicies), `overrides` (map) |
+| **Toolkit** | `tools` (ToolkitTool[]) |
 
 ### 3. Directory Layout
 - `.agents/`: The standard location for resources.

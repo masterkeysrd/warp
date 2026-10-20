@@ -187,7 +187,7 @@ type AgentSpec struct {
 	// first available model.
 	Models []string `yaml:"models,omitempty,flow"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
-	Temperature float64 `yaml:"temperature"`
+	Temperature *float64 `yaml:"temperature,omitempty"`
 	// Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default.
 	Thinking map[string]any `yaml:"thinking,omitempty"`
 	// Skills is a list of file paths (relative to the FS root) that reference
@@ -217,6 +217,10 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	if in.Models != nil {
 		out.Models = make([]string, len(in.Models))
 		copy(out.Models, in.Models)
+	}
+	if in.Temperature != nil {
+		t := *in.Temperature
+		out.Temperature = &t
 	}
 	if in.Thinking != nil {
 		out.Thinking = make(map[string]any, len(in.Thinking))

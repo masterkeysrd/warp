@@ -2,6 +2,7 @@ package warp
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -410,5 +411,80 @@ spec:
 		t.Errorf("Round-trip failed: ModelProvider resources are not equal")
 	}
 }
+
+func TestOmitemptyFormatting(t *testing.T) {
+	// 1. Agent without temperature should omit temperature when formatted
+	ag := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Metadata:   Metadata{Name: "no-temp"},
+		},
+		Spec: AgentSpec{
+			Models: []string{"gpt-4o"},
+		},
+	}
+	agBytes, err := Format(ag)
+	if err != nil {
+		t.Fatalf("Format(Agent) failed: %v", err)
+	}
+	if strings.Contains(string(agBytes), "temperature:") {
+		t.Errorf("expected omitted temperature in formatted Agent, got:\n%s", string(agBytes))
+	}
+
+	// 2. Workspace with only DefaultModel should omit empty Projects, DefaultProvider, DefaultAgent, Plugins
+	ws := &WorkspaceDef{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindWorkspace,
+			Metadata:   Metadata{Name: "clean-ws"},
+		},
+		Spec: WorkspaceDefSpec{
+			DefaultModel: "claude-3-7-sonnet",
+		},
+	}
+	wsBytes, err := Format(ws)
+	if err != nil {
+		t.Fatalf("Format(WorkspaceDef) failed: %v", err)
+	}
+	wsOut := string(wsBytes)
+	for _, unwanted := range []string{"projects:", "defaultProvider:", "defaultAgent:", "plugins:"} {
+		if strings.Contains(wsOut, unwanted) {
+			t.Errorf("expected %q to be omitted in formatted WorkspaceDef, got:\n%s", unwanted, wsOut)
+		}
+	}
+	if !strings.Contains(wsOut, "defaultModel: claude-3-7-sonnet") {
+		t.Errorf("expected defaultModel to be serialized in formatted WorkspaceDef, got:\n%s", wsOut)
+	}
+
+	// 3. ToolAnnotation with only IsReadOnly=true should omit false booleans and empty userHint
+	tool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Metadata:   Metadata{Name: "read-tool"},
+		},
+		Spec: ToolSpec{
+			Command: []string{"cat"},
+			Annotations: &ToolAnnotation{
+				IsReadOnly: true,
+			},
+		},
+	}
+	toolBytes, err := Format(tool)
+	if err != nil {
+		t.Fatalf("Format(Tool) failed: %v", err)
+	}
+	toolOut := string(toolBytes)
+	for _, unwanted := range []string{"isOpenWorld:", "isDangerous:", "isIdempotent:", "userHint:"} {
+		if strings.Contains(toolOut, unwanted) {
+			t.Errorf("expected %q to be omitted in formatted Tool, got:\n%s", unwanted, toolOut)
+		}
+	}
+	if !strings.Contains(toolOut, "isReadOnly: true") {
+		t.Errorf("expected isReadOnly: true in formatted Tool, got:\n%s", toolOut)
+	}
+}
+
 
 

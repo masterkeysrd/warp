@@ -2,6 +2,7 @@ package warp
 
 import (
 	"fmt"
+	"maps"
 	"path"
 	"path/filepath"
 	"sort"
@@ -900,6 +901,27 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	parent, err := resolveAgentChain(resolver, ag.Spec.Extends, visited)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", qn, err)
+	}
+
+	parent.Metadata = *ag.Metadata.DeepCopy()
+	parent.Namespace = ag.Namespace
+	parent.Directory = ag.Directory
+
+	if len(ag.Spec.Models) > 0 {
+		parent.Spec.Models = make([]string, len(ag.Spec.Models))
+		copy(parent.Spec.Models, ag.Spec.Models)
+	}
+	if ag.Spec.Temperature != nil {
+		t := *ag.Spec.Temperature
+		parent.Spec.Temperature = &t
+	}
+	if len(ag.Spec.Thinking) > 0 {
+		parent.Spec.Thinking = make(map[string]any, len(ag.Spec.Thinking))
+		maps.Copy(parent.Spec.Thinking, ag.Spec.Thinking)
+	}
+	if len(ag.Spec.Triggers) > 0 {
+		parent.Spec.Triggers = make([]string, len(ag.Spec.Triggers))
+		copy(parent.Spec.Triggers, ag.Spec.Triggers)
 	}
 
 	// Merge: parent is the base; append child lists and instructions after.

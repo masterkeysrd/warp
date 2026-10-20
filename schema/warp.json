@@ -62,9 +62,6 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "temperature"
-      ],
       "description": "AgentSpec contains the configuration details for an Agent resource."
     },
     "CommandSpec": {
@@ -802,13 +799,6 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "isOpenWorld",
-        "isDangerous",
-        "isReadOnly",
-        "isIdempotent",
-        "userHint"
-      ],
       "description": "ToolAnnotation defines the safety profile for a tool."
     },
     "ToolPolicies": {
@@ -964,6 +954,9 @@
         "defaultProvider": {
           "type": "string"
         },
+        "defaultModel": {
+          "type": "string"
+        },
         "defaultModels": {
           "$ref": "#/$defs/ModelDefaults"
         },
@@ -985,12 +978,6 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "projects",
-        "defaultProvider",
-        "defaultAgent",
-        "plugins"
-      ],
       "description": "WorkspaceDefSpec contains configuration for a Workspace resource."
     },
     "WorkspacePlugin": {
@@ -1115,6 +1102,9 @@
                   "defaultProvider": {
                     "type": "string"
                   },
+                  "defaultModel": {
+                    "type": "string"
+                  },
                   "defaultModels": {
                     "$ref": "#/$defs/ModelDefaults"
                   },
@@ -1136,12 +1126,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "projects",
-                  "defaultProvider",
-                  "defaultAgent",
-                  "plugins"
-                ],
                 "description": "WorkspaceDefSpec contains configuration for a Workspace resource."
               },
               "WorkspacePlugin": {
@@ -1287,9 +1271,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "temperature"
-                ],
                 "description": "AgentSpec contains the configuration details for an Agent resource."
               },
               "Policies": {
@@ -1974,13 +1955,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "isOpenWorld",
-                  "isDangerous",
-                  "isReadOnly",
-                  "isIdempotent",
-                  "userHint"
-                ],
                 "description": "ToolAnnotation defines the safety profile for a tool."
               },
               "ToolSpec": {
@@ -2157,13 +2131,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "isOpenWorld",
-                  "isDangerous",
-                  "isReadOnly",
-                  "isIdempotent",
-                  "userHint"
-                ],
                 "description": "ToolAnnotation defines the safety profile for a tool."
               }
             }
@@ -2211,13 +2178,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "isOpenWorld",
-                  "isDangerous",
-                  "isReadOnly",
-                  "isIdempotent",
-                  "userHint"
-                ],
                 "description": "ToolAnnotation defines the safety profile for a tool."
               },
               "ToolkitSpec": {

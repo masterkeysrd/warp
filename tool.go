@@ -35,11 +35,11 @@ type ToolSpec struct {
 
 // ToolAnnotation defines the safety profile for a tool.
 type ToolAnnotation struct {
-	IsOpenWorld  bool   `yaml:"isOpenWorld"`  // Interacts with external resources
-	IsDangerous  bool   `yaml:"isDangerous"`  // Can perform destructive actions
-	IsReadOnly   bool   `yaml:"isReadOnly"`   // Does not modify state
-	IsIdempotent bool   `yaml:"isIdempotent"` // Safe to retry
-	UserHint     string `yaml:"userHint"`     // Human-readable hint for approval prompts
+	IsOpenWorld  bool   `yaml:"isOpenWorld,omitempty"`  // Interacts with external resources
+	IsDangerous  bool   `yaml:"isDangerous,omitempty"`  // Can perform destructive actions
+	IsReadOnly   bool   `yaml:"isReadOnly,omitempty"`   // Does not modify state
+	IsIdempotent bool   `yaml:"isIdempotent,omitempty"` // Safe to retry
+	UserHint     string `yaml:"userHint,omitempty"`     // Human-readable hint for approval prompts
 }
 
 // DeepCopy returns a deep copy of the ToolAnnotation.

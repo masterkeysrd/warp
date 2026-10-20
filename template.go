@@ -224,7 +224,11 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 			}
 		}
 		data["Triggers"] = v.Spec.Triggers
-		data["Temperature"] = v.Spec.Temperature
+		if v.Spec.Temperature != nil {
+			data["Temperature"] = *v.Spec.Temperature
+		} else {
+			data["Temperature"] = 0.0
+		}
 	case *Skill:
 		if _, ok := data["Skill"]; !ok {
 			ts := TemplateSkill{

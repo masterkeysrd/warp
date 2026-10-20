@@ -38,7 +38,7 @@ execute Warp resources without modification.
 6. [Directory Layout](#6-directory-layout)
 7. [Validation Rules](#7-validation-rules)
 8. [Parsing Algorithm](#8-parsing-algorithm)
-9. [Plugins & Adapters](#9-plugins--adapters)
+9. [Modules and Package Management](#9-modules-and-package-management)
 10. [Standard Namespaces](#10-standard-namespaces)
 11. [Templating](#11-templating)
 
@@ -253,13 +253,14 @@ runtime.
 When `spec.extends` is set the engine performs a **recursive merge**:
 
 1. The parent agent is resolved (which may itself extend another agent, forming a chain).
-2. A deep copy of the resolved parent is made as the merge base.
-3. The child's `skills`, `commands`, and `subagents` lists are **appended** to the parent's lists.
-4. The child's `policies` block is merged with the parent's:
+2. A deep copy of the resolved parent is made as the merge base, with `metadata`, `namespace`, and `directory` updated to reflect the child agent.
+3. Scalar and override fields (`models`, `temperature`, `thinking`, and `triggers`) on the child replace the parent's values when specified (non-empty / non-nil).
+4. The child's `skills`, `commands`, and `subagents` lists are **appended** to the parent's lists.
+5. The child's `policies` block is merged with the parent's:
    - Boolean options (`allowDangerous`, `allowOpenWorld`) in the child override those of the parent if specified.
    - Slice arrays (`include`, `exclude`) are combined using a set union.
-5. The child's Markdown instructions are **concatenated** after the parent's, separated by a blank line.
-6. Circular inheritance chains (including self-extension) are detected and return an error.
+6. The child's Markdown instructions are **concatenated** after the parent's, separated by a blank line.
+7. Circular inheritance chains (including self-extension) are detected and return an error.
 
 #### Tool Access Resolution and Policy Filtering
 
@@ -745,15 +746,23 @@ server.
 | `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type: sse`). |
 | `env`         | map      |          | Environment variables for the MCP server.       |
 | `annotations` | object   |          | Default safety profile for all exposed tools.   |
-| `tools`       | object   |          | Controls which tools are exposed by this server. |
-| `overrides`   | map      |          | Tool-specific annotation overrides.             |
+| `policies`    | object   |          | Controls which external MCP resources (`tools`, `prompts`, `resources`) are exposed by this server. |
+| `overrides`   | map      |          | Tool-specific annotation overrides (keyed by tool name). |
 
-#### `MCPFilter` fields
+#### `MCPPolicies` fields
 
-| Field     | Type     | Description                                           |
-|-----------|----------|-------------------------------------------------------|
-| `include` | string[] | Glob patterns for tools to expose.                    |
-| `exclude` | string[] | Glob patterns for tools to block (applied after include).|
+| Field       | Type   | Description                                                                    |
+|-------------|--------|--------------------------------------------------------------------------------|
+| `tools`     | object | `ResourceFilter` (`include`/`exclude`) controlling which tools are exposed.    |
+| `prompts`   | object | `ResourceFilter` (`include`/`exclude`) controlling which prompts are exposed.  |
+| `resources` | object | `ResourceFilter` (`include`/`exclude`) controlling which resources are exposed.|
+
+#### `ResourceFilter` fields
+
+| Field     | Type     | Description                                                    |
+|-----------|----------|----------------------------------------------------------------|
+| `include` | string[] | Glob patterns for resources to expose.                         |
+| `exclude` | string[] | Glob patterns for resources to block (applied after `include`).|
 
 #### Full example (`mcps/sqlite.yaml`)
 
@@ -1202,48 +1211,7 @@ warp get github.com/acme/finance-skills@v1.2.0 --include="Skill/analysis,Command
 
 ---
 
-## 11. Templating
-
-WARP provides a unified templating system for rendering the `instructions` field of any resource. Runtimes **should** expand these templates before sending prompts to the LLM. 
-
-The reference implementation uses Go's `text/template` engine, but with a preprocessing step to support a developer-friendly shorthand syntax.
-
-### Shorthand Substitution
-
-You can use shell-style variables directly in your Markdown instructions:
-
-- **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
-- **Positional Arguments:** `$1`, `$2` (typically used in Commands)
-- **Command Hints:** If a Command defines `hints: ["ticker"]`, you can use `$ticker` to refer to the first positional argument.
-- **Escaping:** Use `$$` to output a literal `$`.
-
-_Under the hood, the runtime translates `$Var` into Go template syntax `{{.Var}}` and `$1` into `{{index . "1"}}`._
-
-### Flattened Resource Context
-
-To minimize boilerplate, the template context is "flattened." You do not need to write `.Metadata.Name` or `.Spec.Models`. The following variables are lifted to the top level:
-
-*   `Name` (from `metadata.name`)
-*   `DisplayName` (from `metadata.displayName`, falls back to `Name`)
-*   `Description` (from `metadata.description`)
-*   `Labels` (from `metadata.labels`)
-*   `Models`, `Skills`, `Tools`, `Commands`, `Triggers`, `Hints`, `Questions`, `Temperature` (lifted from the respective `spec` fields).
-
-### Advanced Templating
-
-Because it is backed by Go templates, you can write complex logic for arrays or conditionals:
-
-```markdown
-I am $DisplayName.
-My skills are:
-{{range .Skills}}
-- {{.}}
-{{end}}
-```
-
-### System Globals
-
-Implementors (runtimes) can inject a `Globals` map during rendering. WARP restricts globals to project/workspace-related context (e.g., `PWD`, `WorkspaceRoot`, `CurrentProject`) rather than arbitrary OS environment variables to maintain portability and security. You access them just like any other variable: `$PWD`.
+## 10. Standard Namespaces
 
 The following namespace identifiers are reserved and carry fixed priorities in the resolution
 hierarchy. Plugins and adapters **must not** register resources under these names.
@@ -1257,4 +1225,65 @@ hierarchy. Plugins and adapters **must not** register resources under these name
 
 Any namespace not listed above receives priority **0**. Resources in higher-priority namespaces
 shadow same-named resources in lower-priority namespaces when queries use `Effective = true`.
+
+---
+
+## 11. Templating
+
+WARP provides a unified templating system for rendering the `instructions` field of any resource. Runtimes **should** expand these templates before sending prompts to the LLM.
+
+The reference implementation uses Go's `text/template` engine, with a preprocessing step to support a developer-friendly shorthand syntax.
+
+### Shorthand Substitution
+
+You can use shell-style variables directly in your Markdown instructions:
+
+- **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
+- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`
+- **Positional Arguments:** `$1`, `$2` (used in `Command` and `Decision` resources)
+- **Argument Hints:** If a `Command` or `Decision` defines `hints: ["ticker"]`, you can use `$ticker` to refer to the first positional argument.
+- **Escaping:** Use `$$` to output a literal `$`.
+
+_Under the hood, the runtime translates `$Var` into Go template syntax `{{.Var}}` and `$1` into `{{index . "1"}}`._
+
+### Flattened Resource Context
+
+To minimize boilerplate, the template context lifts common metadata and spec fields to the top level:
+
+* `Name` (from `metadata.name`)
+* `DisplayName` (from `metadata.displayName`, falls back to `Name`)
+* `Description` (from `metadata.description`)
+* `Labels` (from `metadata.labels`)
+* `Models`, `Skills`, `Tools`, `Commands`, `Subagents`, `Triggers`, `Hints`, `Questions`, `Temperature`, `Args` (lifted from the respective `spec` fields and render arguments)
+
+### Scoped Template Objects
+
+When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`), structured view models are injected into the template context:
+
+| Object | Fields | Description |
+|--------|--------|-------------|
+| `{{.Workspace}}` | `.Dir`, `.Path` | Workspace root directory and path to `WORKSPACE.md` (also available as `$WorkspaceDir`, `$WorkspacePath`). |
+| `{{.Project}}` | `.Name`, `.DisplayName`, `.Dir` | Active project slug, display name, and absolute directory path (also available as `$ProjectDir`). |
+| `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
+| `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`) for the agent. |
+| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path` | Skill metadata, routing hints, directory, and file path. |
+| `{{.Command}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Tools` | Command metadata, directory, file path, and tools. |
+| `{{.Decision}}` | `.Name`, `.Description`, `.Dir`, `.Path` | Decision metadata, directory, and file path. |
+
+### Advanced Templating
+
+Because it is backed by Go templates, you can write complex logic for arrays or conditionals:
+
+```markdown
+I am $DisplayName operating in {{.Project.DisplayName}} ($ProjectDir).
+My skills are:
+{{range .Agent.Skills}}
+- {{.Name}}: {{.Description}} ({{.Path}})
+{{end}}
+```
+
+### Custom Globals
+
+Implementors (runtimes) can pass a custom `Globals` map in the render options (e.g., `RenderOptions`, `AgentRenderOptions`, `ContextRenderOptions`) to expose additional contextual variables (such as `$PWD` or `$CI_ENV`).
+
 

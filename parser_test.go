@@ -486,5 +486,47 @@ func TestOmitemptyFormatting(t *testing.T) {
 	}
 }
 
+func TestMCPStreamableHttpWithAuthAndHeadersRoundTrip(t *testing.T) {
+	content := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: remote-mcp
+spec:
+  type: streamable-http
+  endpoint: https://mcp.example.com/v1
+  auth:
+    type: bearer
+    env: MCP_API_TOKEN
+  headers:
+    X-Custom-Tenant: acme
+`
+	res, err := Parse("remote-mcp.yaml", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	mcp, ok := res.Resource.(*MCP)
+	if !ok {
+		t.Fatalf("Expected *MCP, got %T", res.Resource)
+	}
+	if mcp.Spec.Type != "streamable-http" {
+		t.Errorf("expected type streamable-http, got %q", mcp.Spec.Type)
+	}
+	if mcp.Spec.Auth == nil || mcp.Spec.Auth.Type != "bearer" || mcp.Spec.Auth.Env != "MCP_API_TOKEN" {
+		t.Errorf("unexpected auth: %+v", mcp.Spec.Auth)
+	}
+	if mcp.Spec.Headers["X-Custom-Tenant"] != "acme" {
+		t.Errorf("unexpected headers: %v", mcp.Spec.Headers)
+	}
 
-
+	formatted, err := Format(mcp)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+	res2, err := Parse("remote-mcp.yaml", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse failed: %v", err)
+	}
+	if !reflect.DeepEqual(res.Resource, res2.Resource) {
+		t.Errorf("Round-trip failed: MCP resources are not equal")
+	}
+}

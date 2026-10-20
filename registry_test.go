@@ -555,6 +555,47 @@ func TestMCP_Validation(t *testing.T) {
 	if err := reg5.Validate(); err == nil {
 		t.Error("Expected validation error for unknown transport type, got nil")
 	}
+
+	// 6. Valid http and streamable-http MCPs
+	for _, tr := range []string{"http", "streamable-http"} {
+		regOk := NewRegistry(nil)
+		mcpRemote := &MCP{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindMCP,
+				Metadata:   Metadata{Name: tr + "-mcp"},
+			},
+			Spec: MCPSpec{
+				Type:     tr,
+				Endpoint: "https://example.com/mcp",
+				Auth: &ProviderAuth{
+					Type: "bearer",
+					Env:  "MCP_TOKEN",
+				},
+				Headers: map[string]string{"X-Header": "val"},
+			},
+		}
+		regOk.set(mcpRemote.QualifiedName(), mcpRemote)
+		if err := regOk.Validate(); err != nil {
+			t.Errorf("Expected valid %s MCP to pass, got: %v", tr, err)
+		}
+
+		regMissing := NewRegistry(nil)
+		mcpMissing := &MCP{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindMCP,
+				Metadata:   Metadata{Name: tr + "-mcp-err"},
+			},
+			Spec: MCPSpec{
+				Type: tr,
+			},
+		}
+		regMissing.set(mcpMissing.QualifiedName(), mcpMissing)
+		if err := regMissing.Validate(); err == nil {
+			t.Errorf("Expected validation error for %s MCP with empty endpoint, got nil", tr)
+		}
+	}
 }
 
 func TestAgent_Subagents(t *testing.T) {
@@ -1081,5 +1122,119 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 	}
 }
 
+func TestResolveModels(t *testing.T) {
+	provider := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "local-ai"},
+		},
+		Spec: ModelProviderSpec{
+			Type:         "ollama",
+			Endpoint:     "http://localhost:11434",
+			DefaultModel: "llama3.3-fallback",
+			DefaultModels: &ModelDefaults{
+				Completion: "llama3.3",
+				Decision:   "nimble",
+				Embedding:  "nomic-embed-text",
+			},
+		},
+	}
 
+	// Case 1: Workspace defines DefaultProvider and DefaultModels
+	reg1 := NewRegistry(&Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "ws"},
+			},
+			Spec: WorkspaceDefSpec{
+				DefaultProvider: "local-ai",
+				DefaultModels: &ModelDefaults{
+					Completion: "ws-comp-model",
+					Decision:   "typesafe/jev-latest",
+				},
+			},
+		},
+	})
+	reg1.Set(provider.QualifiedName(), provider)
 
+	// 1a. Explicit models win; unqualified models get <defaultProvider>/ prefix
+	gotExplicit := reg1.ResolveModels(ModelRoleCompletion, "", "qwen2.5", "anthropic/claude-3-7-sonnet")
+	wantExplicit := []string{"local-ai/qwen2.5", "anthropic/claude-3-7-sonnet"}
+	if !slicesEqual(gotExplicit, wantExplicit) {
+		t.Errorf("explicit ResolveModels = %v, want %v", gotExplicit, wantExplicit)
+	}
+
+	// 1b. Workspace defaultModels.<role> wins when explicit is empty
+	gotWsComp := reg1.ResolveModels(ModelRoleCompletion)
+	if !slicesEqual(gotWsComp, []string{"local-ai/ws-comp-model"}) {
+		t.Errorf("workspace completion ResolveModels = %v, want [local-ai/ws-comp-model]", gotWsComp)
+	}
+	gotWsDec := reg1.ResolveModels(ModelRoleDecision)
+	if !slicesEqual(gotWsDec, []string{"typesafe/jev-latest"}) {
+		t.Errorf("workspace decision ResolveModels = %v, want [typesafe/jev-latest]", gotWsDec)
+	}
+
+	// 1c. Falls through to DefaultProvider's defaultModels.embedding when workspace omits embedding default
+	gotProvEmb := reg1.ResolveModels(ModelRoleEmbedding)
+	if !slicesEqual(gotProvEmb, []string{"local-ai/nomic-embed-text"}) {
+		t.Errorf("provider embedding ResolveModels = %v, want [local-ai/nomic-embed-text]", gotProvEmb)
+	}
+
+	// Case 2: Workspace defines DefaultModel (legacy/scalar) and DefaultProvider
+	reg2 := NewRegistry(&Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "ws2"},
+			},
+			Spec: WorkspaceDefSpec{
+				DefaultProvider: "local-ai",
+				DefaultModel:    "scalar-ws-model",
+			},
+		},
+	})
+	reg2.Set(provider.QualifiedName(), provider)
+	if got := reg2.ResolveModels(ModelRoleCompletion); !slicesEqual(got, []string{"local-ai/scalar-ws-model"}) {
+		t.Errorf("workspace DefaultModel fallback = %v, want [local-ai/scalar-ws-model]", got)
+	}
+
+	// Case 3: Provider defines only DefaultModel (no DefaultModels)
+	provScalar := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "simple-prov"},
+		},
+		Spec: ModelProviderSpec{
+			Type:         "openai",
+			Endpoint:     "https://api.openai.com/v1",
+			DefaultModel: "gpt-4o",
+		},
+	}
+	reg3 := NewRegistry(&Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "ws3"},
+			},
+			Spec: WorkspaceDefSpec{
+				DefaultProvider: "simple-prov",
+			},
+		},
+	})
+	reg3.Set(provScalar.QualifiedName(), provScalar)
+	scoped3 := reg3.Project("app")
+	if got := scoped3.ResolveModels(ModelRoleCompletion); !slicesEqual(got, []string{"simple-prov/gpt-4o"}) {
+		t.Errorf("scoped provider DefaultModel fallback = %v, want [simple-prov/gpt-4o]", got)
+	}
+	if got := scoped3.ResolveModels(ModelRoleDecision); got != nil {
+		t.Errorf("expected nil when no decision model is configured, got %v", got)
+	}
+}

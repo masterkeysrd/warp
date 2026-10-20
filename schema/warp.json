@@ -269,11 +269,11 @@
       "properties": {
         "type": {
           "type": "string",
-          "description": "Transport type: stdio or sse"
+          "description": "Transport type: stdio, sse, http, or streamable-http"
         },
         "endpoint": {
           "type": "string",
-          "description": "HTTP URL for the MCP server if type: sse"
+          "description": "HTTP URL for the MCP server if type is sse, http, or streamable-http"
         },
         "command": {
           "items": {
@@ -288,6 +288,17 @@
           },
           "type": "object",
           "description": "Environment variables for the MCP server"
+        },
+        "auth": {
+          "$ref": "#/$defs/ProviderAuth",
+          "description": "Authentication configuration for remote MCP servers"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Custom HTTP headers for remote MCP servers"
         },
         "annotations": {
           "$ref": "#/$defs/ToolAnnotation",
@@ -2045,11 +2056,11 @@
                 "properties": {
                   "type": {
                     "type": "string",
-                    "description": "Transport type: stdio or sse"
+                    "description": "Transport type: stdio, sse, http, or streamable-http"
                   },
                   "endpoint": {
                     "type": "string",
-                    "description": "HTTP URL for the MCP server if type: sse"
+                    "description": "HTTP URL for the MCP server if type is sse, http, or streamable-http"
                   },
                   "command": {
                     "items": {
@@ -2064,6 +2075,17 @@
                     },
                     "type": "object",
                     "description": "Environment variables for the MCP server"
+                  },
+                  "auth": {
+                    "$ref": "#/$defs/ProviderAuth",
+                    "description": "Authentication configuration for remote MCP servers"
+                  },
+                  "headers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Custom HTTP headers for remote MCP servers"
                   },
                   "annotations": {
                     "$ref": "#/$defs/ToolAnnotation",
@@ -2084,6 +2106,29 @@
                 "additionalProperties": false,
                 "type": "object",
                 "description": "MCPSpec contains the configuration details for an MCP resource."
+              },
+              "ProviderAuth": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\")"
+                  },
+                  "header": {
+                    "type": "string",
+                    "description": "Custom header name if type is \"api-key\""
+                  },
+                  "env": {
+                    "type": "string",
+                    "description": "Read credential from environment variable"
+                  },
+                  "file": {
+                    "type": "string",
+                    "description": "Read credential from file path"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuth defines how to authenticate with the model provider."
               },
               "ResourceFilter": {
                 "properties": {

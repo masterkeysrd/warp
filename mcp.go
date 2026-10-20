@@ -22,10 +22,12 @@ func (in *MCP) DeepCopy() *MCP {
 
 // MCPSpec contains the configuration details for an MCP resource.
 type MCPSpec struct {
-	Type        string                    `yaml:"type,omitempty"`        // Transport type: stdio or sse
-	Endpoint    string                    `yaml:"endpoint,omitempty"`    // HTTP URL for the MCP server if type: sse
+	Type        string                    `yaml:"type,omitempty"`        // Transport type: stdio, sse, http, or streamable-http
+	Endpoint    string                    `yaml:"endpoint,omitempty"`    // HTTP URL for the MCP server if type is sse, http, or streamable-http
 	Command     []string                  `yaml:"command,omitempty"`     // Command to start the MCP server via stdio
 	Env         map[string]string         `yaml:"env,omitempty"`         // Environment variables for the MCP server
+	Auth        *ProviderAuth             `yaml:"auth,omitempty"`        // Authentication configuration for remote MCP servers
+	Headers     map[string]string         `yaml:"headers,omitempty"`     // Custom HTTP headers for remote MCP servers
 	Annotations *ToolAnnotation           `yaml:"annotations,omitempty"` // Default safety profile for all exposed tools
 	Policies    *MCPPolicies              `yaml:"policies,omitempty"`    // Controls which external MCP resources are exposed
 	Overrides   map[string]ToolAnnotation `yaml:"overrides,omitempty"`   // Tool-specific annotation overrides (key is tool name)
@@ -64,6 +66,11 @@ func (in *MCPSpec) DeepCopy() *MCPSpec {
 	if in.Env != nil {
 		out.Env = make(map[string]string, len(in.Env))
 		maps.Copy(out.Env, in.Env)
+	}
+	out.Auth = in.Auth.DeepCopy()
+	if in.Headers != nil {
+		out.Headers = make(map[string]string, len(in.Headers))
+		maps.Copy(out.Headers, in.Headers)
 	}
 	out.Annotations = in.Annotations.DeepCopy()
 	out.Policies = in.Policies.DeepCopy()

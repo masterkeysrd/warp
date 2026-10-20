@@ -430,4 +430,3 @@ func TestDecisionRender(t *testing.T) {
 		t.Errorf("nil Decision should render empty string, got %q", resNil)
 	}
 }
-

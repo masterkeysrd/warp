@@ -696,4 +696,3 @@ metadata:
 		t.Errorf("expected hash mismatch error after tampering, got: %v", err)
 	}
 }
-

@@ -37,7 +37,7 @@ Each resource has specific fields in its `spec` block:
 | **Decision** | `models` (string[]), `hints` (string[]), `questions` (DecisionQuestion[]) |
 | **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
 | **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `outputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
-| **MCP** | `type` (string), `command` (string[]), `endpoint` (string), `env` (map), `annotations` (ToolAnnotation), `policies` (MCPPolicies), `overrides` (map) |
+| **MCP** | `type` (string: `stdio`, `sse`, `http`, `streamable-http`), `command` (string[]), `endpoint` (string), `env` (map), `auth` (ProviderAuth), `headers` (map), `annotations` (ToolAnnotation), `policies` (MCPPolicies), `overrides` (map) |
 | **Toolkit** | `tools` (ToolkitTool[]) |
 
 ### 3. Directory Layout

@@ -115,16 +115,16 @@ type ProviderModelLimits struct {
 }
 
 type ProviderModelCapabilities struct {
-	Completion       *bool                             `yaml:"completion,omitempty"`            // Whether the model supports text/chat completion (defaults to true)
-	Decision         *bool                             `yaml:"decision,omitempty"`              // Whether the model supports probabilistic decision evaluation (defaults to false)
-	Embedding        *bool                             `yaml:"embedding,omitempty"`             // Whether the model supports vector embedding generation (defaults to false)
-	Dimensions       []int                             `yaml:"dimensions,omitempty,flow"`       // Supported output vector dimensions for configurable embedding models
-	Attachment       *bool                             `yaml:"attachment,omitempty"`            // Whether the model supports file/document attachments
-	Tools            *bool                             `yaml:"tools,omitempty"`                 // Whether the model supports function/tool calling (tool_call)
-	StructuredOutput *bool                             `yaml:"structuredOutput,omitempty"`      // Whether the model supports strict structured outputs
-	Temperature      *bool                             `yaml:"temperature,omitempty"`           // Whether the model allows configuring the sampling temperature
-	Thinking         []ProviderModelThinkingCapability `yaml:"thinking,omitempty"`              // List of supported reasoning configuration strategies
-	Modalities       *ProviderModelModalities          `yaml:"modalities,omitempty"`            // Defines supported input and output data modalities
+	Completion       *bool                             `yaml:"completion,omitempty"`       // Whether the model supports text/chat completion (defaults to true)
+	Decision         *bool                             `yaml:"decision,omitempty"`         // Whether the model supports probabilistic decision evaluation (defaults to false)
+	Embedding        *bool                             `yaml:"embedding,omitempty"`        // Whether the model supports vector embedding generation (defaults to false)
+	Dimensions       []int                             `yaml:"dimensions,omitempty,flow"`  // Supported output vector dimensions for configurable embedding models
+	Attachment       *bool                             `yaml:"attachment,omitempty"`       // Whether the model supports file/document attachments
+	Tools            *bool                             `yaml:"tools,omitempty"`            // Whether the model supports function/tool calling (tool_call)
+	StructuredOutput *bool                             `yaml:"structuredOutput,omitempty"` // Whether the model supports strict structured outputs
+	Temperature      *bool                             `yaml:"temperature,omitempty"`      // Whether the model allows configuring the sampling temperature
+	Thinking         []ProviderModelThinkingCapability `yaml:"thinking,omitempty"`         // List of supported reasoning configuration strategies
+	Modalities       *ProviderModelModalities          `yaml:"modalities,omitempty"`       // Defines supported input and output data modalities
 }
 
 // SupportsCompletion reports whether the model supports text/chat completions.

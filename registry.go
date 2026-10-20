@@ -15,6 +15,7 @@ import (
 type Resolver interface {
 	ResolveResource(ref string) (Resource, bool)
 	ListResources(opts QueryOptions) []Resource
+	ResolveModels(role ModelRole, explicit ...string) []string
 }
 
 // QueryOptions controls how ListResources filters and deduplicates results.
@@ -305,9 +306,9 @@ func (r *Registry) Validate() error {
 				if len(mcp.Spec.Command) == 0 {
 					return fmt.Errorf("mcp %s: command is required for stdio transport", name)
 				}
-			case "sse":
+			case "sse", "http", "streamable-http":
 				if mcp.Spec.Endpoint == "" {
-					return fmt.Errorf("mcp %s: endpoint is required for sse transport", name)
+					return fmt.Errorf("mcp %s: endpoint is required for %s transport", name, transport)
 				}
 			default:
 				return fmt.Errorf("mcp %s: unknown transport type %q", name, transport)
@@ -974,6 +975,108 @@ func (r *Registry) ResolveAgent(ref string) (*ResolvedAgent, error) {
 // namespace during resolution of every step in the chain.
 func (s *ScopedRegistry) ResolveAgent(ref string) (*ResolvedAgent, error) {
 	return resolveExecutableAgent(s, ref)
+}
+
+// ResolveModels returns the prioritized list of model identifiers for the given
+// capability role, following the WARP model resolution hierarchy:
+//  1. Non-empty explicit model overrides (e.g., from Agent, Command, or Decision).
+//  2. Workspace role-specific default (spec.defaultModels.<role>), falling back
+//     to spec.defaultModel when role is ModelRoleCompletion.
+//  3. Default Provider role-specific default (spec.defaultModels.<role>), falling
+//     back to spec.defaultModel when role is ModelRoleCompletion.
+//
+// Any resolved model lacking a "<provider>/" prefix is automatically qualified
+// with the workspace's defaultProvider when set.
+func (r *Registry) ResolveModels(role ModelRole, explicit ...string) []string {
+	return resolveModels(r, r, role, explicit)
+}
+
+// ResolveModels resolves models for the given role within this project scope.
+func (s *ScopedRegistry) ResolveModels(role ModelRole, explicit ...string) []string {
+	return resolveModels(s.base, s, role, explicit)
+}
+
+func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit []string) []string {
+	base.mu.RLock()
+	var wsSpec WorkspaceDefSpec
+	if base.workspace != nil && base.workspace.Def != nil {
+		wsSpec = base.workspace.Def.Spec
+	}
+	base.mu.RUnlock()
+
+	defaultProv := wsSpec.DefaultProvider
+	qualify := func(model, prov string) string {
+		if model == "" {
+			return ""
+		}
+		if !strings.Contains(model, "/") && prov != "" && !strings.Contains(prov, "/") {
+			return prov + "/" + model
+		}
+		return model
+	}
+
+	// 1. Explicit model overrides
+	var out []string
+	for _, m := range explicit {
+		if m != "" {
+			out = append(out, qualify(m, defaultProv))
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+
+	// 2. Workspace defaults
+	wsModel := wsSpec.DefaultModels.ForRole(role)
+	if wsModel == "" && role == ModelRoleCompletion {
+		wsModel = wsSpec.DefaultModel
+	}
+	if wsModel != "" {
+		return []string{qualify(wsModel, defaultProv)}
+	}
+
+	// 3. Default Provider defaults
+	if defaultProv != "" {
+		mp := findProviderForResolution(base, resolver, defaultProv)
+		if mp != nil {
+			provModel := mp.Spec.DefaultModels.ForRole(role)
+			if provModel == "" && role == ModelRoleCompletion {
+				provModel = mp.Spec.DefaultModel
+			}
+			if provModel != "" {
+				provPrefix := mp.Metadata.Name
+				if provPrefix == "" {
+					provPrefix = defaultProv
+				}
+				return []string{qualify(provModel, provPrefix)}
+			}
+		}
+	}
+
+	return nil
+}
+
+func findProviderForResolution(base *Registry, resolver Resolver, ref string) *ModelProvider {
+	if res, ok := resolver.ResolveResource(ref); ok {
+		if mp, ok := res.(*ModelProvider); ok {
+			return mp
+		}
+	}
+	for _, res := range resolver.ListResources(QueryOptions{Kinds: []Kind{KindModelProvider}, Effective: true}) {
+		if mp, ok := res.(*ModelProvider); ok {
+			if mp.Metadata.Name == ref || mp.Spec.Type == ref || mp.QualifiedName() == ref {
+				return mp
+			}
+		}
+	}
+	base.mu.RLock()
+	defer base.mu.RUnlock()
+	for _, mp := range base.findProvidersLocked() {
+		if mp.Metadata.Name == ref || mp.Spec.Type == ref || mp.QualifiedName() == ref {
+			return mp
+		}
+	}
+	return nil
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────

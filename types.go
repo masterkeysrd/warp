@@ -161,12 +161,41 @@ func (b *BaseResource) ValidateBase() error {
 	return nil
 }
 
+// ModelRole identifies the capability role for model resolution.
+type ModelRole string
+
+const (
+	// ModelRoleCompletion is the role for text/chat completion models.
+	ModelRoleCompletion ModelRole = "completion"
+	// ModelRoleDecision is the role for probabilistic decision evaluation models.
+	ModelRoleDecision ModelRole = "decision"
+	// ModelRoleEmbedding is the role for vector embedding generation models.
+	ModelRoleEmbedding ModelRole = "embedding"
+)
+
 // ModelDefaults defines role-based default models or providers for completion,
 // decision evaluation, and embedding generation.
 type ModelDefaults struct {
 	Completion string `yaml:"completion,omitempty" json:"completion,omitempty"`
 	Decision   string `yaml:"decision,omitempty" json:"decision,omitempty"`
 	Embedding  string `yaml:"embedding,omitempty" json:"embedding,omitempty"`
+}
+
+// ForRole returns the default model configured for the given role, or "" if unset.
+func (in *ModelDefaults) ForRole(role ModelRole) string {
+	if in == nil {
+		return ""
+	}
+	switch role {
+	case ModelRoleCompletion:
+		return in.Completion
+	case ModelRoleDecision:
+		return in.Decision
+	case ModelRoleEmbedding:
+		return in.Embedding
+	default:
+		return ""
+	}
 }
 
 // DeepCopy returns a deep copy of the ModelDefaults.

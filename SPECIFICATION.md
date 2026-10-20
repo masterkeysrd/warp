@@ -123,6 +123,16 @@ created automatically with its root set to `$CWD`.
 | `decision`   | string | Default model for probabilistic decision evaluations (e.g., `"typesafe/jev-latest"`).            |
 | `embedding`  | string | Default model for vector embeddings (e.g., `"openai/text-embedding-3-small"`).                   |
 
+#### Model Resolution Precedence (`ResolveModels`)
+
+When resolving the prioritized model list for a capability role (`completion`, `decision`, or `embedding`), a conforming runtime or `ResolveModels(role, explicit...)` evaluates sources in the following order:
+
+1. **Resource-Level Explicit Models**: Non-empty `spec.models` declared directly on the resource (`Agent`, `Command`, or `Decision`).
+2. **Workspace Role Defaults**: `workspace.spec.defaultModels.<role>`, falling back to `workspace.spec.defaultModel` when the role is `completion`.
+3. **Default Provider Role Defaults**: On the `ModelProvider` referenced by `workspace.spec.defaultProvider`, `provider.spec.defaultModels.<role>`, falling back to `provider.spec.defaultModel` when the role is `completion`.
+
+Any resolved model identifier that omits a `<provider>/` prefix is automatically qualified with `<defaultProvider>/` when `workspace.spec.defaultProvider` is configured.
+
 #### `WorkspacePlugin` fields
 
 | Field       | Type   | Required | Description                                                         |
@@ -741,10 +751,12 @@ server.
 
 | Field         | Type     | Required | Description                                     |
 |---------------|----------|:--------:|-------------------------------------------------|
-| `type`        | string   |          | Transport type: `stdio` (default) or `sse`.     |
+| `type`        | string   |          | Transport type: `stdio` (default), `sse`, `http`, or `streamable-http`. |
 | `command`     | string[] | *        | Command to start the MCP server (required if `type: stdio`). |
-| `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type: sse`). |
+| `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type` is `sse`, `http`, or `streamable-http`). |
 | `env`         | map      |          | Environment variables for the MCP server.       |
+| `auth`        | object   |          | `ProviderAuth` configuration (`type`, `header`, `env`, `file`) for remote MCP servers. |
+| `headers`     | map      |          | Custom HTTP headers included in requests to remote MCP servers. |
 | `annotations` | object   |          | Default safety profile for all exposed tools.   |
 | `policies`    | object   |          | Controls which external MCP resources (`tools`, `prompts`, `resources`) are exposed by this server. |
 | `overrides`   | map      |          | Tool-specific annotation overrides (keyed by tool name). |

@@ -530,3 +530,95 @@ spec:
 		t.Errorf("Round-trip failed: MCP resources are not equal")
 	}
 }
+
+func TestParseRule(t *testing.T) {
+	content := `---
+apiVersion: warp/v1alpha1
+kind: Rule
+metadata:
+  name: go-error-wrapping
+  description: Enforce fmt.Errorf wrapping in Go
+spec:
+  priority: 100
+  triggers:
+    always: false
+    globs:
+      - "**/*.go"
+      - "!**/vendor/**"
+    useWhen: "When writing Go error handling code"
+    keywords: ["error", "wrap", "fmt"]
+    decision: "eval-error-context"
+    tools: ["bash", "file-editor"]
+---
+# Go Error Wrapping
+
+Always wrap errors using fmt.Errorf with %w.
+`
+	res, err := Parse("go-error-wrapping.md", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	rule, ok := res.Resource.(*Rule)
+	if !ok {
+		t.Fatalf("Expected *Rule, got %T", res.Resource)
+	}
+
+	if RecommendedExtension(rule.GetKind()) != ".md" {
+		t.Errorf("Expected RecommendedExtension(KindRule) == .md, got %s", RecommendedExtension(rule.GetKind()))
+	}
+	if rule.Spec.Priority != 100 {
+		t.Errorf("Expected priority 100, got %d", rule.Spec.Priority)
+	}
+	if rule.Spec.Triggers.Always {
+		t.Errorf("Expected Always == false")
+	}
+	if len(rule.Spec.Triggers.Globs) != 2 {
+		t.Errorf("Expected 2 globs, got %d", len(rule.Spec.Triggers.Globs))
+	}
+	if rule.Spec.Triggers.UseWhen != "When writing Go error handling code" {
+		t.Errorf("Unexpected useWhen: %s", rule.Spec.Triggers.UseWhen)
+	}
+	if rule.Spec.Triggers.Decision != "eval-error-context" {
+		t.Errorf("Unexpected decision: %s", rule.Spec.Triggers.Decision)
+	}
+	if len(rule.Spec.Triggers.Tools) != 2 {
+		t.Errorf("Expected 2 tools, got %d", len(rule.Spec.Triggers.Tools))
+	}
+	if !strings.Contains(rule.Spec.Instructions, "Always wrap errors using fmt.Errorf with %w.") {
+		t.Errorf("Unexpected instructions: %q", rule.Spec.Instructions)
+	}
+
+	// Test matches
+	if !rule.Spec.Triggers.MatchesPath("pkg/api/server.go") {
+		t.Errorf("Expected MatchesPath to match pkg/api/server.go")
+	}
+	if rule.Spec.Triggers.MatchesPath("vendor/github.com/foo/bar.go") {
+		t.Errorf("Expected MatchesPath to exclude vendor path")
+	}
+	if rule.Spec.Triggers.MatchesPath("pkg/api/server.js") {
+		t.Errorf("Expected MatchesPath not to match .js file")
+	}
+	if !rule.Spec.Triggers.MatchesTool("bash") {
+		t.Errorf("Expected MatchesTool to match bash")
+	}
+
+	formatted, err := Format(rule)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+	res2, err := Parse("go-error-wrapping.md", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse failed: %v", err)
+	}
+	rule2, ok := res2.Resource.(*Rule)
+	if !ok {
+		t.Fatalf("Expected *Rule, got %T", res2.Resource)
+	}
+	if rule2.Spec.Priority != rule.Spec.Priority {
+		t.Errorf("Priority mismatch after format: %d vs %d", rule2.Spec.Priority, rule.Spec.Priority)
+	}
+	if strings.TrimSpace(rule2.Spec.Instructions) != strings.TrimSpace(rule.Spec.Instructions) {
+		t.Errorf("Instructions mismatch after format: %q vs %q", rule2.Spec.Instructions, rule.Spec.Instructions)
+	}
+}

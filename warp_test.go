@@ -696,3 +696,59 @@ metadata:
 		t.Errorf("expected hash mismatch error after tampering, got: %v", err)
 	}
 }
+
+func TestLoadRulesFromDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create .agents/rules/
+	rulesDir := filepath.Join(tmpDir, ".agents", "rules")
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	ruleMd := `---
+apiVersion: warp/v1alpha1
+kind: Rule
+metadata:
+  name: repo-lint
+  description: Repository linting rule
+spec:
+  priority: 50
+  triggers:
+    always: true
+---
+# Linting
+Always run gofmt.
+`
+	if err := os.WriteFile(filepath.Join(rulesDir, "lint.md"), []byte(ruleMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	projSlug := strings.ToLower(filepath.Base(tmpDir))
+	scoped := reg.Project(projSlug)
+	res, ok := scoped.ResolveResource("repo-lint")
+	if !ok {
+		t.Fatal("expected repo-lint rule to be resolved in scoped registry")
+	}
+	rl, ok := res.(*Rule)
+	if !ok {
+		t.Fatalf("expected *Rule, got %T", res)
+	}
+	if rl.Spec.Priority != 50 {
+		t.Errorf("expected priority 50, got %d", rl.Spec.Priority)
+	}
+	if !rl.Spec.Triggers.Always {
+		t.Errorf("expected Always == true")
+	}
+
+	// Verify ResolveRulesForPath picks it up
+	rules := scoped.ResolveRulesForPath("cmd/main.go")
+	if len(rules) != 1 || rules[0].GetName() != "repo-lint" {
+		t.Errorf("expected [repo-lint], got %v", rules)
+	}
+}

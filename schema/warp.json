@@ -55,6 +55,13 @@
           "type": "array",
           "description": "Subagents is a list of Agent references (Qualified or Short Names) this agent\nis allowed to delegate to."
         },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by."
+        },
         "policies": {
           "$ref": "#/$defs/Policies",
           "description": "Policies defines security and access policies."
@@ -108,6 +115,13 @@
           },
           "type": "array",
           "description": "Resources is a list of paths to other Warp files to be explicitly\nloaded into the context."
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs that apply to this project context."
         }
       },
       "additionalProperties": false,
@@ -763,6 +777,65 @@
       "type": "object",
       "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
     },
+    "RuleSpec": {
+      "properties": {
+        "triggers": {
+          "$ref": "#/$defs/RuleTriggers",
+          "description": "Triggers defines the activation conditions for this rule."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Priority controls the ordering when multiple rules are resolved and injected.\nHigher numbers take precedence. Default is 0."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Instructions is the directive text populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "RuleSpec contains the configuration details for a Rule resource."
+    },
+    "RuleTriggers": {
+      "properties": {
+        "always": {
+          "type": "boolean",
+          "description": "Always indicates whether this rule applies unconditionally within its scope."
+        },
+        "globs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Globs is a list of file path patterns (e.g. [\"**/*.go\", \"!**/vendor/**\"])\nthat trigger this rule when relevant files are targeted or edited."
+        },
+        "useWhen": {
+          "type": "string",
+          "description": "UseWhen provides semantic instructions to an LLM or router on when this rule applies."
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Keywords is an array of semantic tags used for discovery and prompting."
+        },
+        "decision": {
+          "type": "string",
+          "description": "Decision is an optional reference to a Decision resource evaluated to activate this rule."
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Tools is a list of Tool or Toolkit names that trigger this rule when invoked."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "RuleTriggers specifies when a rule becomes active."
+    },
     "SkillSpec": {
       "properties": {
         "useWhen": {
@@ -974,6 +1047,12 @@
         "defaultAgent": {
           "type": "string"
         },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "plugins": {
           "items": {
             "$ref": "#/$defs/WorkspacePlugin"
@@ -1122,6 +1201,12 @@
                   "defaultAgent": {
                     "type": "string"
                   },
+                  "rules": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
                   "plugins": {
                     "items": {
                       "$ref": "#/$defs/WorkspacePlugin"
@@ -1193,6 +1278,13 @@
                     },
                     "type": "array",
                     "description": "Resources is a list of paths to other Warp files to be explicitly\nloaded into the context."
+                  },
+                  "rules": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs that apply to this project context."
                   }
                 },
                 "additionalProperties": false,
@@ -1274,6 +1366,13 @@
                     },
                     "type": "array",
                     "description": "Subagents is a list of Agent references (Qualified or Short Names) this agent\nis allowed to delegate to."
+                  },
+                  "rules": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by."
                   },
                   "policies": {
                     "$ref": "#/$defs/Policies",
@@ -1522,6 +1621,85 @@
                 "additionalProperties": false,
                 "type": "object",
                 "description": "DecisionSpec contains the configuration details for a Decision resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Rule"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/rule-spec",
+            "$ref": "#/$defs/RuleSpec",
+            "$defs": {
+              "RuleSpec": {
+                "properties": {
+                  "triggers": {
+                    "$ref": "#/$defs/RuleTriggers",
+                    "description": "Triggers defines the activation conditions for this rule."
+                  },
+                  "priority": {
+                    "type": "integer",
+                    "description": "Priority controls the ordering when multiple rules are resolved and injected.\nHigher numbers take precedence. Default is 0."
+                  },
+                  "instructions": {
+                    "type": "string",
+                    "description": "Instructions is the directive text populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "RuleSpec contains the configuration details for a Rule resource."
+              },
+              "RuleTriggers": {
+                "properties": {
+                  "always": {
+                    "type": "boolean",
+                    "description": "Always indicates whether this rule applies unconditionally within its scope."
+                  },
+                  "globs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Globs is a list of file path patterns (e.g. [\"**/*.go\", \"!**/vendor/**\"])\nthat trigger this rule when relevant files are targeted or edited."
+                  },
+                  "useWhen": {
+                    "type": "string",
+                    "description": "UseWhen provides semantic instructions to an LLM or router on when this rule applies."
+                  },
+                  "keywords": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Keywords is an array of semantic tags used for discovery and prompting."
+                  },
+                  "decision": {
+                    "type": "string",
+                    "description": "Decision is an optional reference to a Decision resource evaluated to activate this rule."
+                  },
+                  "tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Tools is a list of Tool or Toolkit names that trigger this rule when invoked."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "RuleTriggers specifies when a rule becomes active."
               }
             }
           }
@@ -2384,6 +2562,7 @@
         "Skill",
         "Command",
         "Decision",
+        "Rule",
         "ModelProvider",
         "Tool",
         "MCP",

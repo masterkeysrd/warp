@@ -33,6 +33,8 @@ const (
 	KindToolkit Kind = "Toolkit"
 	// KindPlugin represents a Plugin resource.
 	KindPlugin Kind = "Plugin"
+	// KindRule represents a Rule resource.
+	KindRule Kind = "Rule"
 )
 
 // Metadata holds the identifying and descriptive fields shared by every
@@ -150,10 +152,10 @@ func (b *BaseResource) ValidateBase() error {
 	}
 	switch b.Kind {
 	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindDecision,
-		KindModelProvider, KindTool, KindMCP, KindToolkit, KindPlugin:
+		KindModelProvider, KindTool, KindMCP, KindToolkit, KindPlugin, KindRule:
 		// valid
 	default:
-		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Toolkit, Plugin", b.Kind)
+		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Toolkit, Plugin, Rule", b.Kind)
 	}
 	if b.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
@@ -264,4 +266,5 @@ type ResolvedAgent struct {
 	Skills    []Skill
 	Commands  []*Command
 	Subagents []*Agent
+	Rules     []Rule
 }

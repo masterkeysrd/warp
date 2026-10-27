@@ -56,6 +56,7 @@ You are a helpful assistant that specializes in financial analysis...
 | `Skill`         | A bundle of expertise guidelines for a specific domain. Agents load skills to adopt a persona or follow conventions. |
 | `Command`       | A discrete, reusable operation an agent can invoke (e.g. "generate a report"). |
 | `Decision`      | A probabilistic decision evaluation defining structured questions (`predicate`, `choice`, `score`) and an evaluation rubric. |
+| `Rule`          | Ambient constraints, coding standards, and guardrails with multi-modal activation triggers (`always`, `globs`, `useWhen`, `decision`, `tools`). |
 | `ModelProvider` | Configuration for an LLM provider (API key env var, base URL, available models, default models, thinking config). |
 | `Tool`          | A custom tool definition (input schema, execution binding, and safety annotations). |
 | `Toolkit`       | A collection of referenced (`$ref`) or inline `Tool` definitions that can be attached to an `Agent` as a unit. |

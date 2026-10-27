@@ -53,6 +53,7 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 		rs.Skills,
 		rs.Commands,
 		rs.Decisions,
+		rs.Rules,
 		rs.ModelProviders,
 		rs.Tools,
 		rs.MCPs,
@@ -78,6 +79,10 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 	for _, d := range rs.Decisions {
 		d.Namespace = p.namespace
 		out = append(out, d)
+	}
+	for _, rl := range rs.Rules {
+		rl.Namespace = p.namespace
+		out = append(out, rl)
 	}
 	for _, mp := range rs.ModelProviders {
 		mp.Namespace = p.namespace

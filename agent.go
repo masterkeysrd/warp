@@ -131,6 +131,22 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			cmdNames = append(cmdNames, cmd.Metadata.Name)
 		}
 		mergedGlobals["Commands"] = cmdNames
+
+		for _, rl := range opts.Resolved.Rules {
+			ta.Rules = append(ta.Rules, TemplateRule{
+				Name:        rl.Metadata.Name,
+				Description: rl.Metadata.Description,
+				Dir:         rl.Directory,
+				Path:        filepath.Join(rl.Directory, rl.Metadata.Name+".md"),
+				Priority:    rl.Spec.Priority,
+			})
+		}
+
+		var ruleNames []string
+		for _, rl := range opts.Resolved.Rules {
+			ruleNames = append(ruleNames, rl.Metadata.Name)
+		}
+		mergedGlobals["Rules"] = ruleNames
 	} else {
 		ta = TemplateAgent{
 			Name:        a.Metadata.Name,
@@ -199,6 +215,9 @@ type AgentSpec struct {
 	// Subagents is a list of Agent references (Qualified or Short Names) this agent
 	// is allowed to delegate to.
 	Subagents *[]string `yaml:"subagents,omitempty"`
+	// Rules is an optional list of Rule references (Qualified or Short Names) or
+	// globs this agent is governed by.
+	Rules *[]string `yaml:"rules,omitempty"`
 	// Policies defines security and access policies.
 	Policies *Policies `yaml:"policies,omitempty"`
 }
@@ -240,6 +259,11 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 		sa := make([]string, len(*in.Subagents))
 		copy(sa, *in.Subagents)
 		out.Subagents = &sa
+	}
+	if in.Rules != nil {
+		r := make([]string, len(*in.Rules))
+		copy(r, *in.Rules)
+		out.Rules = &r
 	}
 	if in.Policies != nil {
 		out.Policies = in.Policies.DeepCopy()

@@ -86,7 +86,7 @@ func executeValidate(out io.Writer, args []string) error {
 		return fmt.Errorf("Validation Error: %w", err)
 	}
 
-	var contexts, agents, skills, commands, decisions, providers, tools, mcps, toolkits int
+	var contexts, agents, skills, commands, decisions, rules, providers, tools, mcps, toolkits int
 	for _, res := range reg.Resources() {
 		switch res.GetKind() {
 		case warp.KindContext:
@@ -99,6 +99,8 @@ func executeValidate(out io.Writer, args []string) error {
 			commands++
 		case warp.KindDecision:
 			decisions++
+		case warp.KindRule:
+			rules++
 		case warp.KindModelProvider:
 			providers++
 		case warp.KindTool:
@@ -117,6 +119,7 @@ func executeValidate(out io.Writer, args []string) error {
 	fmt.Fprintf(out, "   - %d Skills\n", skills)
 	fmt.Fprintf(out, "   - %d Commands\n", commands)
 	fmt.Fprintf(out, "   - %d Decisions\n", decisions)
+	fmt.Fprintf(out, "   - %d Rules\n", rules)
 	fmt.Fprintf(out, "   - %d Model Providers\n", providers)
 	fmt.Fprintf(out, "   - %d Tools\n", tools)
 	fmt.Fprintf(out, "   - %d MCP Servers\n", mcps)
@@ -212,6 +215,11 @@ func executeRender(out io.Writer, args []string) error {
 			Workspace: reg.WorkspaceSpec(),
 			Project:   proj,
 			Args:      posArgs,
+		})
+	case *warp.Rule:
+		rendered, err = v.Render(&warp.RuleRenderOptions{
+			Workspace: reg.WorkspaceSpec(),
+			Project:   proj,
 		})
 	case *warp.Skill:
 		rendered, err = v.Render(&warp.SkillRenderOptions{

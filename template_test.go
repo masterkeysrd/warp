@@ -430,3 +430,95 @@ func TestDecisionRender(t *testing.T) {
 		t.Errorf("nil Decision should render empty string, got %q", resNil)
 	}
 }
+
+func TestRuleRender(t *testing.T) {
+	ws := &Workspace{
+		RootPath: "/Users/user/code/warp",
+	}
+
+	proj := &Project{
+		Name:     "backend",
+		Path:     "services/backend",
+		RootPath: "/Users/user/code/warp",
+	}
+
+	agent := &Agent{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "senior-dev"},
+		},
+	}
+
+	rule := &Rule{
+		BaseResource: BaseResource{
+			Directory: "/Users/user/code/warp/.agents/rules",
+			Metadata: Metadata{
+				Name:        "go-style",
+				Description: "Style guide for Go",
+			},
+		},
+		Spec: RuleSpec{
+			Priority:     50,
+			Instructions: "Rule: {{.Rule.Name}} | Priority: {{.Rule.Priority}} | Project: {{.Project.Name}} | Agent: {{.Agent.Name}} | Path: {{.Rule.Path}}",
+		},
+	}
+
+	opts := &RuleRenderOptions{
+		Workspace: ws,
+		Project:   proj,
+		Agent:     agent,
+	}
+
+	res, err := rule.Render(opts)
+	if err != nil {
+		t.Fatalf("Rule.Render failed: %v", err)
+	}
+
+	expected := "Rule: go-style | Priority: 50 | Project: backend | Agent: senior-dev | Path: /Users/user/code/warp/.agents/rules/go-style.md"
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+
+	var nilRule *Rule
+	resNil, err := nilRule.Render(nil)
+	if err != nil {
+		t.Errorf("nil Rule should not error, got %v", err)
+	}
+	if resNil != "" {
+		t.Errorf("nil Rule should render empty string, got %q", resNil)
+	}
+}
+
+func TestAgentRender_WithRules(t *testing.T) {
+	ag := &Agent{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "test-agent"},
+		},
+		Spec: AgentSpec{
+			Instructions: "Agent: {{.Agent.Name}} | Rules: {{range .Rules}}{{.}} {{end}} | DetailedRules: {{range .Agent.Rules}}{{.Name}}(P{{.Priority}}) {{end}}",
+		},
+	}
+
+	resolved := &ResolvedAgent{
+		Agent: ag,
+		Rules: []Rule{
+			{
+				BaseResource: BaseResource{Metadata: Metadata{Name: "sec-check"}},
+				Spec:         RuleSpec{Priority: 100},
+			},
+			{
+				BaseResource: BaseResource{Metadata: Metadata{Name: "style-guide"}},
+				Spec:         RuleSpec{Priority: 10},
+			},
+		},
+	}
+
+	res, err := ag.Render(&AgentRenderOptions{Resolved: resolved})
+	if err != nil {
+		t.Fatalf("Agent.Render failed: %v", err)
+	}
+
+	expected := "Agent: test-agent | Rules: sec-check style-guide  | DetailedRules: sec-check(P100) style-guide(P10) "
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+}

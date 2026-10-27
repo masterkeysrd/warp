@@ -38,7 +38,7 @@
 //
 // # Resource Kinds
 //
-// Eleven resource kinds are supported:
+// Twelve resource kinds are supported:
 //
 //	Workspace      – root authority for the session; declares active projects
 //	                 (WORKSPACE.md, optionally without front-matter).
@@ -47,10 +47,11 @@
 //	Plugin         – manifest declaring a plugin's identity and exported resources
 //	                 (PLUGIN.md, optionally without front-matter).
 //	Agent          – an autonomous agent with model configuration and references
-//	                 to skills and commands it may use.
+//	                 to skills, rules, and commands it may use.
 //	Skill          – a bundle of expertise guidelines for a specific domain.
 //	Command        – a discrete, reusable operation an agent can invoke.
 //	Decision       – a probabilistic decision evaluation (predicates, choices, scores).
+//	Rule           – ambient constraints, coding standards, and guardrails with triggers.
 //	ModelProvider  – configuration for an LLM provider.
 //	Tool           – a custom tool definition.
 //	MCP            – a Model Context Protocol server configuration.

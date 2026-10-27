@@ -1238,3 +1238,214 @@ func TestResolveModels(t *testing.T) {
 		t.Errorf("expected nil when no decision model is configured, got %v", got)
 	}
 }
+
+func TestRuleResolutionAndInheritance(t *testing.T) {
+	rule1 := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "global-sec"},
+		},
+		Spec: RuleSpec{
+			Priority: 100,
+			Triggers: RuleTriggers{Always: true},
+		},
+	}
+	rule2 := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "app",
+			Metadata:   Metadata{Name: "app-style"},
+		},
+		Spec: RuleSpec{
+			Priority: 50,
+			Triggers: RuleTriggers{Globs: []string{"**/*.go"}},
+		},
+	}
+
+	baseAgent := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "base-agent"},
+		},
+		Spec: AgentSpec{
+			Rules: &[]string{"global-sec"},
+		},
+	}
+
+	childAgent := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Namespace:  "app",
+			Metadata:   Metadata{Name: "child-agent"},
+		},
+		Spec: AgentSpec{
+			Extends: "workspace/Agent/base-agent",
+			Rules:   &[]string{"app-style"},
+		},
+	}
+
+	reg := NewRegistry(nil)
+	reg.Set(rule1.QualifiedName(), rule1)
+	reg.Set(rule2.QualifiedName(), rule2)
+	reg.Set(baseAgent.QualifiedName(), baseAgent)
+	reg.Set(childAgent.QualifiedName(), childAgent)
+
+	scoped := reg.Project("app")
+	resolved, err := scoped.ResolveAgent("child-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	if len(resolved.Rules) != 2 {
+		t.Fatalf("expected 2 resolved rules, got %d", len(resolved.Rules))
+	}
+	// Highest priority (100) first
+	if resolved.Rules[0].GetName() != "global-sec" {
+		t.Errorf("expected first rule to be global-sec (P100), got %s", resolved.Rules[0].GetName())
+	}
+	if resolved.Rules[1].GetName() != "app-style" {
+		t.Errorf("expected second rule to be app-style (P50), got %s", resolved.Rules[1].GetName())
+	}
+}
+
+func TestResolveRulesForPath(t *testing.T) {
+	rAlways := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "always-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 10,
+			Triggers: RuleTriggers{Always: true},
+		},
+	}
+
+	rGo := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "go-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 80,
+			Triggers: RuleTriggers{
+				Globs: []string{"**/*.go", "!**/vendor/**"},
+			},
+		},
+	}
+
+	rTest := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "test-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 90,
+			Triggers: RuleTriggers{
+				Globs: []string{"**/*_test.go"},
+			},
+		},
+	}
+
+	reg := NewRegistry(nil)
+	reg.Set(rAlways.QualifiedName(), rAlways)
+	reg.Set(rGo.QualifiedName(), rGo)
+	reg.Set(rTest.QualifiedName(), rTest)
+
+	// Path 1: "pkg/api/handler.go" -> matches rAlways and rGo (not rTest)
+	rules1 := reg.ResolveRulesForPath("pkg/api/handler.go")
+	if len(rules1) != 2 {
+		t.Fatalf("expected 2 rules for handler.go, got %d", len(rules1))
+	}
+	if rules1[0].GetName() != "go-rule" || rules1[1].GetName() != "always-rule" {
+		t.Errorf("expected [go-rule, always-rule], got [%s, %s]", rules1[0].GetName(), rules1[1].GetName())
+	}
+
+	// Path 2: "pkg/api/handler_test.go" -> matches rTest (P90), rGo (P80), rAlways (P10)
+	rules2 := reg.ResolveRulesForPath("pkg/api/handler_test.go")
+	if len(rules2) != 3 {
+		t.Fatalf("expected 3 rules for handler_test.go, got %d", len(rules2))
+	}
+	if rules2[0].GetName() != "test-rule" || rules2[1].GetName() != "go-rule" || rules2[2].GetName() != "always-rule" {
+		t.Errorf("expected [test-rule, go-rule, always-rule], got [%s, %s, %s]", rules2[0].GetName(), rules2[1].GetName(), rules2[2].GetName())
+	}
+
+	// Path 3: "vendor/pkg/foo.go" -> rGo excluded due to !**/vendor/**; matches rAlways
+	rules3 := reg.ResolveRulesForPath("vendor/pkg/foo.go")
+	if len(rules3) != 1 || rules3[0].GetName() != "always-rule" {
+		t.Errorf("expected only [always-rule] for vendor path, got %v", rules3)
+	}
+
+	// Path 4: "web/app.tsx" -> only rAlways
+	rules4 := reg.ResolveRulesForPath("web/app.tsx")
+	if len(rules4) != 1 || rules4[0].GetName() != "always-rule" {
+		t.Errorf("expected only [always-rule] for tsx path, got %v", rules4)
+	}
+}
+
+func TestRuleValidation(t *testing.T) {
+	// Missing decision
+	rBadDec := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-decision-rule"},
+		},
+		Spec: RuleSpec{
+			Triggers: RuleTriggers{Decision: "missing-decision"},
+		},
+	}
+	reg := NewRegistry(nil)
+	reg.Set(rBadDec.QualifiedName(), rBadDec)
+	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "references missing decision") {
+		t.Errorf("expected missing decision error, got %v", err)
+	}
+
+	// Missing tool in rule
+	rBadTool := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-tool-rule"},
+		},
+		Spec: RuleSpec{
+			Triggers: RuleTriggers{Tools: []string{"missing-tool"}},
+		},
+	}
+	reg2 := NewRegistry(nil)
+	reg2.Set(rBadTool.QualifiedName(), rBadTool)
+	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool or toolkit") {
+		t.Errorf("expected missing tool error, got %v", err)
+	}
+
+	// Missing rule in agent
+	agBadRule := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-agent"},
+		},
+		Spec: AgentSpec{
+			Rules: &[]string{"non-existent-rule"},
+		},
+	}
+	reg3 := NewRegistry(nil)
+	reg3.Set(agBadRule.QualifiedName(), agBadRule)
+	if err := reg3.Validate(); err == nil || !strings.Contains(err.Error(), "references missing rule") {
+		t.Errorf("expected missing rule error in agent, got %v", err)
+	}
+}

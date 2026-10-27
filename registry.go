@@ -16,6 +16,7 @@ type Resolver interface {
 	ResolveResource(ref string) (Resource, bool)
 	ListResources(opts QueryOptions) []Resource
 	ResolveModels(role ModelRole, explicit ...string) []string
+	ResolveRulesForPath(targetPath string) []Rule
 }
 
 // QueryOptions controls how ListResources filters and deduplicates results.
@@ -182,6 +183,14 @@ func (r *Registry) Validate() error {
 				return err
 			}
 		}
+		for _, rRef := range r.workspace.Def.Spec.Rules {
+			if hasGlobMeta(rRef) {
+				continue
+			}
+			if !r.hasKindLocked(NamespaceWorkspace, KindRule, rRef) {
+				return fmt.Errorf("workspace references missing rule: %s", rRef)
+			}
+		}
 	}
 
 	// Iterate in deterministic order so validation errors are reproducible.
@@ -242,6 +251,31 @@ func (r *Registry) Validate() error {
 						return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
 					}
 				}
+			}
+			if agent.Spec.Rules != nil {
+				for _, ruleRef := range *agent.Spec.Rules {
+					if hasGlobMeta(ruleRef) {
+						continue
+					}
+					if !r.hasKindLocked(ns, KindRule, ruleRef) {
+						return fmt.Errorf("agent %s references missing rule: %s", name, ruleRef)
+					}
+				}
+			}
+		}
+		if ctx, ok := res.(*Context); ok {
+			for _, rRef := range ctx.Spec.Rules {
+				if hasGlobMeta(rRef) {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindRule, rRef) {
+					return fmt.Errorf("context %s references missing rule: %s", name, rRef)
+				}
+			}
+		}
+		if rule, ok := res.(*Rule); ok {
+			if err := r.validateRuleLocked(name, rule); err != nil {
+				return err
 			}
 		}
 		if dec, ok := res.(*Decision); ok {
@@ -362,6 +396,24 @@ func (r *Registry) validateDecisionLocked(name string, dec *Decision) error {
 	for _, mRef := range dec.Spec.Models {
 		if m := r.findDeclaredModelLocked(mRef); m != nil && !m.Capabilities.SupportsDecision() {
 			return fmt.Errorf("decision %s: model %q does not support decision capability", name, mRef)
+		}
+	}
+	return nil
+}
+
+func (r *Registry) validateRuleLocked(name string, rule *Rule) error {
+	ns := rule.GetNamespace()
+	if dec := rule.Spec.Triggers.Decision; dec != "" {
+		if !r.hasKindLocked(ns, KindDecision, dec) {
+			return fmt.Errorf("rule %s: trigger references missing decision: %s", name, dec)
+		}
+	}
+	for _, tRef := range rule.Spec.Triggers.Tools {
+		if hasGlobMeta(tRef) || tRef == "*" {
+			continue
+		}
+		if !r.hasKindLocked(ns, KindTool, tRef) && !r.hasKindLocked(ns, KindToolkit, tRef) {
+			return fmt.Errorf("rule %s: trigger references missing tool or toolkit: %s", name, tRef)
 		}
 	}
 	return nil
@@ -953,6 +1005,15 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 			*parent.Spec.Subagents = append(*parent.Spec.Subagents, *ag.Spec.Subagents...)
 		}
 	}
+	if ag.Spec.Rules != nil {
+		if parent.Spec.Rules == nil {
+			r := make([]string, len(*ag.Spec.Rules))
+			copy(r, *ag.Spec.Rules)
+			parent.Spec.Rules = &r
+		} else {
+			*parent.Spec.Rules = append(*parent.Spec.Rules, *ag.Spec.Rules...)
+		}
+	}
 	switch {
 	case parent.Spec.Instructions != "" && ag.Spec.Instructions != "":
 		parent.Spec.Instructions = parent.Spec.Instructions + "\n\n" + ag.Spec.Instructions
@@ -994,6 +1055,31 @@ func (r *Registry) ResolveModels(role ModelRole, explicit ...string) []string {
 // ResolveModels resolves models for the given role within this project scope.
 func (s *ScopedRegistry) ResolveModels(role ModelRole, explicit ...string) []string {
 	return resolveModels(s.base, s, role, explicit)
+}
+
+// ResolveRulesForPath returns all rules applicable to the given path within this registry scope,
+// sorted by Rule priority descending, then by name ascending.
+func (r *Registry) ResolveRulesForPath(targetPath string) []Rule {
+	return resolveRulesForPath(r, targetPath)
+}
+
+// ResolveRulesForPath returns all rules applicable to the given path within this scoped registry,
+// sorted by Rule priority descending, then by name ascending.
+func (s *ScopedRegistry) ResolveRulesForPath(targetPath string) []Rule {
+	return resolveRulesForPath(s, targetPath)
+}
+
+func resolveRulesForPath(resolver Resolver, targetPath string) []Rule {
+	candidates := resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: true})
+	var matched []Rule
+	for _, res := range candidates {
+		if rl, ok := res.(*Rule); ok {
+			if rl.Spec.Triggers.MatchesPath(targetPath) {
+				matched = append(matched, *rl)
+			}
+		}
+	}
+	return deduplicateRules(matched)
 }
 
 func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit []string) []string {
@@ -1242,12 +1328,47 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		subagents = deduplicateAgents(subagents)
 	}
 
+	// 5. Resolve Rules
+	var rules []Rule
+	if ag.Spec.Rules == nil || containsWildcard(ag.Spec.Rules) {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: true})
+		for _, r := range all {
+			if rl, ok := r.(*Rule); ok {
+				rules = append(rules, *rl)
+			}
+		}
+	} else {
+		var allRules []Resource
+		for _, rRef := range *ag.Spec.Rules {
+			if hasGlobMeta(rRef) {
+				if allRules == nil {
+					allRules = resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: false})
+				}
+				for _, r := range allRules {
+					if rl, ok := r.(*Rule); ok && matchRefPattern(resolver, rRef, r) {
+						rules = append(rules, *rl)
+					}
+				}
+				continue
+			}
+			r, ok := resolver.ResolveResource(rRef)
+			if !ok {
+				continue
+			}
+			if rl, ok := r.(*Rule); ok {
+				rules = append(rules, *rl)
+			}
+		}
+	}
+	rules = deduplicateRules(rules)
+
 	return &ResolvedAgent{
 		Agent:     ag,
 		Tools:     tools,
 		Skills:    skills,
 		Commands:  commands,
 		Subagents: subagents,
+		Rules:     rules,
 	}, nil
 }
 
@@ -1440,6 +1561,25 @@ func deduplicateAgents(in []*Agent) []*Agent {
 			out = append(out, a)
 		}
 	}
+	return out
+}
+
+func deduplicateRules(in []Rule) []Rule {
+	seen := make(map[string]bool)
+	var out []Rule
+	for _, r := range in {
+		qn := r.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			out = append(out, r)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Spec.Priority != out[j].Spec.Priority {
+			return out[i].Spec.Priority > out[j].Spec.Priority
+		}
+		return out[i].QualifiedName() < out[j].QualifiedName()
+	})
 	return out
 }
 

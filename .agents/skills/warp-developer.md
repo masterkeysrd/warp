@@ -35,6 +35,7 @@ Each resource has specific fields in its `spec` block:
 | **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `policies` (Policies) |
 | **Command** | `models` (string[]), `tools` (string[]), `hints` (string[]) |
 | **Decision** | `models` (string[]), `hints` (string[]), `questions` (DecisionQuestion[]) |
+| **Rule** | `triggers` (RuleTriggers: `always`, `globs`, `useWhen`, `keywords`, `decision`, `tools`), `priority` (int) |
 | **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
 | **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `outputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
 | **MCP** | `type` (string: `stdio`, `sse`, `http`, `streamable-http`), `command` (string[]), `endpoint` (string), `env` (map), `auth` (ProviderAuth), `headers` (map), `annotations` (ToolAnnotation), `policies` (MCPPolicies), `overrides` (map) |
@@ -46,6 +47,7 @@ Each resource has specific fields in its `spec` block:
   - `skills/`: Markdown files for Skills.
   - `commands/`: Markdown files for Commands.
   - `decisions/`: Markdown files for Decisions.
+  - `rules/`: Markdown files for Rules.
   - `tools/`, `mcps/`, `providers/`: YAML files for technical configurations.
 
 ### 4. Resource Resolution

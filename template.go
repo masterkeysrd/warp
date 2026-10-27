@@ -48,6 +48,16 @@ type TemplateAgent struct {
 	Tools       []TemplateTool
 	Commands    []TemplateCommand
 	Subagents   []TemplateAgent
+	Rules       []TemplateRule
+}
+
+// TemplateRule represents the rule view model for templates.
+type TemplateRule struct {
+	Name        string
+	Description string
+	Dir         string
+	Path        string
+	Priority    int
 }
 
 // TemplateSkill represents the skill view model for templates.
@@ -296,6 +306,19 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 				}
 			}
 		}
+	case *Rule:
+		if _, ok := data["Rule"]; !ok {
+			tr := TemplateRule{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Dir:         v.Directory,
+				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Priority:    v.Spec.Priority,
+			}
+			data["Rule"] = tr
+			data["RuleDir"] = tr.Dir
+			data["RulePath"] = tr.Path
+		}
 	}
 
 	return data
@@ -314,6 +337,8 @@ func getInstructions(res Resource) string {
 	case *Command:
 		return v.Spec.Instructions
 	case *Decision:
+		return v.Spec.Instructions
+	case *Rule:
 		return v.Spec.Instructions
 	default:
 		return ""

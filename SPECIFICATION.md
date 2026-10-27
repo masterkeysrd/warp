@@ -29,6 +29,7 @@ execute Warp resources without modification.
    - [3.9 MCP](#39-mcp)
    - [3.10 Toolkit](#310-toolkit)
    - [3.11 Plugin](#311-plugin)
+   - [3.12 Rule](#312-rule)
 4. [Cross-References](#4-cross-references)
 5. [Discovery and Loading](#5-discovery-and-loading)
    - [5.1 Phase 1: Workspace Discovery](#51-phase-1-workspace-discovery)
@@ -872,6 +873,61 @@ This repository provides standard financial analysis skills.
 
 ---
 
+### 3.12 Rule
+
+A `Rule` resource defines ambient constraints, coding standards, security guardrails, or architectural invariants that agents must adhere to within a project or workspace scope. Unlike `Skill` resources (which represent active, opt-in capabilities), rules represent passive governance and boundaries that are evaluated and injected based on multi-modal triggers.
+
+#### `spec` fields
+
+| Field      | Type         | Required | Default | Description                                                                                   |
+|------------|--------------|:--------:|---------|-----------------------------------------------------------------------------------------------|
+| `triggers` | `RuleTriggers`|          | —       | Activation conditions that determine when this rule applies.                                 |
+| `priority` | integer      |          | `0`     | Ordering priority when multiple rules are resolved (higher numbers take precedence).        |
+
+#### `RuleTriggers` fields
+
+| Field      | Type     | Required | Default | Description                                                                                             |
+|------------|----------|:--------:|---------|---------------------------------------------------------------------------------------------------------|
+| `always`   | boolean  |          | `false` | When `true`, this rule applies unconditionally within its scope.                                       |
+| `globs`    | string[] |          | —       | Path patterns (e.g. `["**/*.go", "!**/vendor/**"]`) that activate this rule when matching files are edited. |
+| `useWhen`  | string   |          | —       | Semantic instructions to an LLM or router model describing when this rule should be active.             |
+| `keywords` | string[] |          | —       | Array of semantic tags used for discovery and prompting.                                               |
+| `decision` | string   |          | —       | Qualified or Short Name of a `Decision` resource evaluated to determine whether to activate this rule.  |
+| `tools`    | string[] |          | —       | List of Tool or Toolkit names that activate this rule when invoked by the agent.                        |
+
+#### Full example (`.agents/rules/go-concurrency.md`)
+
+```markdown
+---
+apiVersion: warp/v1alpha1
+kind: Rule
+metadata:
+  name: go-concurrency
+  description: Concurrency standards and mutex guidelines for Go
+spec:
+  priority: 80
+  triggers:
+    globs:
+      - "**/*.go"
+      - "!**/vendor/**"
+    useWhen: "When writing concurrent Go code, spawning goroutines, or managing shared state"
+    keywords: ["goroutine", "mutex", "channel", "sync"]
+    tools: ["bash"]
+---
+
+# Go Concurrency Guidelines
+
+1. Always acquire mutex locks with defer immediately following the lock call:
+   ```go
+   mu.Lock()
+   defer mu.Unlock()
+   ```
+2. Never spawn unmonitored goroutines; always pass a `context.Context` and handle cancellation.
+3. Use `sync/atomic` for single-variable counters instead of mutexes where appropriate.
+```
+
+---
+
 ## 4. Cross-References
 
 An `Agent` resource may declare lists of skill, command, and subagent references under `spec.skills`,
@@ -1003,6 +1059,8 @@ WORKSPACE.md              # Root Authority — defines projects
 │   │   └── analyst.md
 │   ├── skills/
 │   │   └── coding.md
+│   ├── rules/
+│   │   └── style.md
 │   └── commands/
 │       └── review.md
 services/
@@ -1044,7 +1102,7 @@ loaded Workspace.
 | `apiVersion` is present      | Field is empty or absent.                                          |
 | `kind` is present            | Field is empty or absent.                                          |
 | `metadata.name` is present   | Field is empty or absent.                                          |
-| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`, `Plugin`. |
+| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `Rule`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`, `Plugin`. |
 
 ### 7.2 Agent-specific
 
@@ -1053,6 +1111,7 @@ loaded Workspace.
 | All `spec.skills` paths resolve   | A listed path does not match any loaded `Skill` in the resolution hierarchy. |
 | All `spec.commands` paths resolve | A listed path does not match any loaded `Command` in the resolution hierarchy. |
 | All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
+| All `spec.rules` paths resolve    | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
 | Declared `spec.models` support completion | A listed model resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
 
 ### 7.3 Workspace-specific
@@ -1078,6 +1137,13 @@ loaded Workspace.
 | Choice options                      | A `choice` question has fewer than 2 `options` or an option with an empty `value`. |
 | Score levels                        | A `score` question has fewer than 2 `levels` or a level with an empty `label`. |
 | Declared `spec.models` support decision | A listed model resolves to a `ProviderModel` whose `capabilities.decision` is `false`. |
+
+### 7.6 Rule-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Valid `triggers.decision` reference | A declared decision reference does not match any loaded `Decision` in the resolution hierarchy. |
+| Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` or `Toolkit` in the resolution hierarchy. |
 
 ---
 

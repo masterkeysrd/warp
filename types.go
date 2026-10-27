@@ -1,5 +1,7 @@
 package warp
 
+import "maps"
+
 import "fmt"
 
 const (
@@ -60,9 +62,7 @@ func (in *Metadata) DeepCopy() *Metadata {
 	*out = *in
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
-		for k, v := range in.Labels {
-			out.Labels[k] = v
-		}
+		maps.Copy(out.Labels, in.Labels)
 	}
 	return out
 }

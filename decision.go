@@ -1,5 +1,7 @@
 package warp
 
+import "maps"
+
 import "path/filepath"
 
 // DecisionQuestionType identifies the evaluation mode of a DecisionQuestion.
@@ -33,9 +35,7 @@ func (d *Decision) Render(opts *DecisionRenderOptions) (string, error) {
 	}
 
 	mergedGlobals := make(map[string]any)
-	for k, v := range opts.Globals {
-		mergedGlobals[k] = v
-	}
+	maps.Copy(mergedGlobals, opts.Globals)
 
 	// Inject Workspace derived from arguments
 	if opts.Workspace != nil {

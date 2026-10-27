@@ -23,8 +23,8 @@ func GlobalCacheDir() (string, error) {
 // It returns the absolute path to the cached directory.
 func Fetch(source, version string) (string, error) {
 	// If it starts with file://, strip it
-	if strings.HasPrefix(source, "file://") {
-		source = strings.TrimPrefix(source, "file://")
+	if after, ok := strings.CutPrefix(source, "file://"); ok {
+		source = after
 	}
 
 	// If it's a local absolute or relative path, resolve and return it directly without caching
@@ -45,12 +45,12 @@ func Fetch(source, version string) (string, error) {
 
 	// Strip http:// or https:// or git:// for the cache directory name
 	safeSource := source
-	if strings.HasPrefix(safeSource, "http://") {
-		safeSource = strings.TrimPrefix(safeSource, "http://")
-	} else if strings.HasPrefix(safeSource, "https://") {
-		safeSource = strings.TrimPrefix(safeSource, "https://")
-	} else if strings.HasPrefix(safeSource, "git://") {
-		safeSource = strings.TrimPrefix(safeSource, "git://")
+	if after, ok := strings.CutPrefix(safeSource, "http://"); ok {
+		safeSource = after
+	} else if after, ok := strings.CutPrefix(safeSource, "https://"); ok {
+		safeSource = after
+	} else if after, ok := strings.CutPrefix(safeSource, "git://"); ok {
+		safeSource = after
 	}
 
 	// Format: ~/.warp/pkg/mod/github.com/org/repo@v1.2.0

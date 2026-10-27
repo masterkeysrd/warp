@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -426,8 +427,8 @@ func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) 
 			return nil
 		}
 		if hasProviders {
-			if idx := strings.IndexByte(ref, '/'); idx != -1 {
-				prov := ref[:idx]
+			if before, _, ok := strings.Cut(ref, "/"); ok {
+				prov := before
 				if !r.hasProviderLocked(prov) {
 					return fmt.Errorf("%s defaultModels.%s references missing provider: %s", scope, role, prov)
 				}
@@ -490,8 +491,8 @@ func (r *Registry) findDeclaredModelLocked(ref string) *ProviderModel {
 	if len(providers) == 0 {
 		return nil
 	}
-	if idx := strings.IndexByte(ref, '/'); idx != -1 {
-		prov, modelID := ref[:idx], ref[idx+1:]
+	if before, after, ok := strings.Cut(ref, "/"); ok {
+		prov, modelID := before, after
 		for _, mp := range providers {
 			if mp.Metadata.Name == prov || mp.Spec.Type == prov {
 				for i := range mp.Spec.Models {
@@ -1603,10 +1604,5 @@ func containsWildcard(slice *[]string) bool {
 	if slice == nil {
 		return false
 	}
-	for _, v := range *slice {
-		if v == "*" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(*slice, "*")
 }

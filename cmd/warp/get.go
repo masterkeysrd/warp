@@ -60,7 +60,7 @@ func runGet(args []string) {
 
 	if *includeFlag != "" {
 		mode = "specific"
-		for _, part := range strings.Split(*includeFlag, ",") {
+		for part := range strings.SplitSeq(*includeFlag, ",") {
 			if trimmed := strings.TrimSpace(part); trimmed != "" {
 				selectedResources = append(selectedResources, trimmed)
 			}
@@ -118,10 +118,7 @@ func runGet(args []string) {
 			var selected []string
 			results[kind] = &selected
 
-			fieldHeight := len(options) + 2
-			if fieldHeight > 12 {
-				fieldHeight = 12
-			}
+			fieldHeight := min(len(options)+2, 12)
 
 			group := huh.NewGroup(
 				huh.NewMultiSelect[string]().

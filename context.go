@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"maps"
 	"path/filepath"
 )
 
@@ -22,9 +23,7 @@ func (c *Context) Render(opts *ContextRenderOptions) (string, error) {
 	}
 
 	mergedGlobals := make(map[string]any)
-	for k, v := range opts.Globals {
-		mergedGlobals[k] = v
-	}
+	maps.Copy(mergedGlobals, opts.Globals)
 
 	// Inject Workspace derived from arguments
 	if opts.Workspace != nil {

@@ -204,8 +204,8 @@ func parseLockFile(lockPath string) (map[string]string, []string) {
 	var keysOrder []string
 
 	if err == nil {
-		lines := strings.Split(string(existing), "\n")
-		for _, line := range lines {
+		lines := strings.SplitSeq(string(existing), "\n")
+		for line := range lines {
 			line = strings.TrimSpace(line)
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue

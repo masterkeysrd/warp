@@ -190,8 +190,8 @@ func (t *RuleTriggers) MatchesPath(targetPath string) bool {
 
 	var hasPositive bool
 	for _, pat := range t.Globs {
-		if strings.HasPrefix(pat, "!") {
-			negPat := strings.TrimPrefix(pat, "!")
+		if after, ok := strings.CutPrefix(pat, "!"); ok {
+			negPat := after
 			if matchGlobPath(negPat, targetPath) {
 				return false
 			}

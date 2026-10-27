@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -694,10 +695,8 @@ func TestRegistry_ListResources_Filter(t *testing.T) {
 		Kinds: []Kind{KindAgent},
 		Filter: func(res Resource) bool {
 			if a, ok := res.(*Agent); ok {
-				for _, trg := range a.Spec.Triggers {
-					if trg == "human" {
-						return true
-					}
+				if slices.Contains(a.Spec.Triggers, "human") {
+					return true
 				}
 			}
 			return false

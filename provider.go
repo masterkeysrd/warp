@@ -1,5 +1,7 @@
 package warp
 
+import "maps"
+
 // ModelProvider is a warp resource that describes an LLM provider configuration.
 type ModelProvider struct {
 	BaseResource `yaml:",inline"`
@@ -45,15 +47,11 @@ func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	}
 	if in.Headers != nil {
 		out.Headers = make(map[string]string, len(in.Headers))
-		for k, v := range in.Headers {
-			out.Headers[k] = v
-		}
+		maps.Copy(out.Headers, in.Headers)
 	}
 	if in.Config != nil {
 		out.Config = make(map[string]any, len(in.Config))
-		for k, v := range in.Config {
-			out.Config[k] = v
-		}
+		maps.Copy(out.Config, in.Config)
 	}
 	if in.Models != nil {
 		out.Models = make([]ProviderModel, len(in.Models))

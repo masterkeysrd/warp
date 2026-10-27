@@ -1,5 +1,7 @@
 package warp
 
+import "maps"
+
 import "path/filepath"
 
 // SkillRenderOptions holds options for rendering skill instructions.
@@ -22,9 +24,7 @@ func (s *Skill) Render(opts *SkillRenderOptions) (string, error) {
 	}
 
 	mergedGlobals := make(map[string]any)
-	for k, v := range opts.Globals {
-		mergedGlobals[k] = v
-	}
+	maps.Copy(mergedGlobals, opts.Globals)
 
 	// Inject Workspace derived from arguments
 	if opts.Workspace != nil {

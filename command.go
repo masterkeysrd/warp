@@ -1,5 +1,7 @@
 package warp
 
+import "maps"
+
 import "path/filepath"
 
 // CommandRenderOptions holds options for rendering command instructions.
@@ -21,9 +23,7 @@ func (c *Command) Render(opts *CommandRenderOptions) (string, error) {
 	}
 
 	mergedGlobals := make(map[string]any)
-	for k, v := range opts.Globals {
-		mergedGlobals[k] = v
-	}
+	maps.Copy(mergedGlobals, opts.Globals)
 
 	// Inject Workspace derived from arguments
 	if opts.Workspace != nil {

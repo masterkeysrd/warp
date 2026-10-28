@@ -1,8 +1,9 @@
 package warp
 
-import "maps"
-
-import "path/filepath"
+import (
+	"maps"
+	"path/filepath"
+)
 
 // DecisionQuestionType identifies the evaluation mode of a DecisionQuestion.
 type DecisionQuestionType string
@@ -101,13 +102,13 @@ type Decision struct {
 }
 
 // DeepCopy returns a deep copy of the Decision.
-func (in *Decision) DeepCopy() *Decision {
-	if in == nil {
+func (d *Decision) DeepCopy() *Decision {
+	if d == nil {
 		return nil
 	}
 	out := new(Decision)
-	out.BaseResource = *in.BaseResource.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
+	out.BaseResource = *d.BaseResource.DeepCopy()
+	out.Spec = *d.Spec.DeepCopy()
 	return out
 }
 

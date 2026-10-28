@@ -104,13 +104,13 @@ type Rule struct {
 }
 
 // DeepCopy returns a deep copy of the Rule.
-func (in *Rule) DeepCopy() *Rule {
-	if in == nil {
+func (r *Rule) DeepCopy() *Rule {
+	if r == nil {
 		return nil
 	}
 	out := new(Rule)
-	out.BaseResource = *in.BaseResource.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
+	out.BaseResource = *r.BaseResource.DeepCopy()
+	out.Spec = *r.Spec.DeepCopy()
 	return out
 }
 
@@ -155,41 +155,41 @@ type RuleTriggers struct {
 }
 
 // DeepCopy returns a deep copy of the RuleTriggers.
-func (in *RuleTriggers) DeepCopy() *RuleTriggers {
-	if in == nil {
+func (r *RuleTriggers) DeepCopy() *RuleTriggers {
+	if r == nil {
 		return nil
 	}
 	out := new(RuleTriggers)
-	*out = *in
-	if in.Globs != nil {
-		out.Globs = make([]string, len(in.Globs))
-		copy(out.Globs, in.Globs)
+	*out = *r
+	if r.Globs != nil {
+		out.Globs = make([]string, len(r.Globs))
+		copy(out.Globs, r.Globs)
 	}
-	if in.Keywords != nil {
-		out.Keywords = make([]string, len(in.Keywords))
-		copy(out.Keywords, in.Keywords)
+	if r.Keywords != nil {
+		out.Keywords = make([]string, len(r.Keywords))
+		copy(out.Keywords, r.Keywords)
 	}
-	if in.Tools != nil {
-		out.Tools = make([]string, len(in.Tools))
-		copy(out.Tools, in.Tools)
+	if r.Tools != nil {
+		out.Tools = make([]string, len(r.Tools))
+		copy(out.Tools, r.Tools)
 	}
 	return out
 }
 
 // MatchesPath reports whether the trigger conditions match the target file path.
-func (t *RuleTriggers) MatchesPath(targetPath string) bool {
-	if t == nil {
+func (r *RuleTriggers) MatchesPath(targetPath string) bool {
+	if r == nil {
 		return false
 	}
-	if t.Always {
+	if r.Always {
 		return true
 	}
-	if len(t.Globs) == 0 {
+	if len(r.Globs) == 0 {
 		return false
 	}
 
 	var hasPositive bool
-	for _, pat := range t.Globs {
+	for _, pat := range r.Globs {
 		if after, ok := strings.CutPrefix(pat, "!"); ok {
 			negPat := after
 			if matchGlobPath(negPat, targetPath) {
@@ -204,7 +204,7 @@ func (t *RuleTriggers) MatchesPath(targetPath string) bool {
 		return true
 	}
 
-	for _, pat := range t.Globs {
+	for _, pat := range r.Globs {
 		if !strings.HasPrefix(pat, "!") {
 			if matchGlobPath(pat, targetPath) {
 				return true
@@ -216,11 +216,11 @@ func (t *RuleTriggers) MatchesPath(targetPath string) bool {
 }
 
 // MatchesTool reports whether the trigger conditions match the given tool or toolkit name.
-func (t *RuleTriggers) MatchesTool(toolName string) bool {
-	if t == nil || len(t.Tools) == 0 {
+func (r *RuleTriggers) MatchesTool(toolName string) bool {
+	if r == nil || len(r.Tools) == 0 {
 		return false
 	}
-	for _, tool := range t.Tools {
+	for _, tool := range r.Tools {
 		if tool == "*" || tool == toolName {
 			return true
 		}

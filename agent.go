@@ -174,13 +174,13 @@ type Agent struct {
 }
 
 // DeepCopy returns a deep copy of the Agent.
-func (in *Agent) DeepCopy() *Agent {
-	if in == nil {
+func (a *Agent) DeepCopy() *Agent {
+	if a == nil {
 		return nil
 	}
 	out := new(Agent)
-	out.BaseResource = *in.BaseResource.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
+	out.BaseResource = *a.BaseResource.DeepCopy()
+	out.Spec = *a.Spec.DeepCopy()
 	return out
 }
 

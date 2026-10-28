@@ -78,13 +78,13 @@ type Context struct {
 }
 
 // DeepCopy returns a deep copy of the Context.
-func (in *Context) DeepCopy() *Context {
-	if in == nil {
+func (c *Context) DeepCopy() *Context {
+	if c == nil {
 		return nil
 	}
 	out := new(Context)
-	out.BaseResource = *in.BaseResource.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
+	out.BaseResource = *c.BaseResource.DeepCopy()
+	out.Spec = *c.Spec.DeepCopy()
 	return out
 }
 

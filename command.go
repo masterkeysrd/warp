@@ -1,8 +1,9 @@
 package warp
 
-import "maps"
-
-import "path/filepath"
+import (
+	"maps"
+	"path/filepath"
+)
 
 // CommandRenderOptions holds options for rendering command instructions.
 type CommandRenderOptions struct {
@@ -88,13 +89,13 @@ type Command struct {
 }
 
 // DeepCopy returns a deep copy of the Command.
-func (in *Command) DeepCopy() *Command {
-	if in == nil {
+func (c *Command) DeepCopy() *Command {
+	if c == nil {
 		return nil
 	}
 	out := new(Command)
-	out.BaseResource = *in.BaseResource.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
+	out.BaseResource = *c.BaseResource.DeepCopy()
+	out.Spec = *c.Spec.DeepCopy()
 	return out
 }
 

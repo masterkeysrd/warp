@@ -103,6 +103,14 @@
           "type": "string",
           "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
         },
+        "agent": {
+          "type": "string",
+          "description": "Agent specifies the preferred or required Agent resource to execute this command.\nIf omitted, the invoking agent or workspace defaultAgent is used."
+        },
+        "context": {
+          "type": "string",
+          "description": "Context specifies the conversational execution lifecycle mode: \"inline\", \"fork\", or \"clean\".\nDefaults to \"inline\"."
+        },
         "models": {
           "items": {
             "type": "string"
@@ -1514,6 +1522,14 @@
                   "instructions": {
                     "type": "string",
                     "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
+                  },
+                  "agent": {
+                    "type": "string",
+                    "description": "Agent specifies the preferred or required Agent resource to execute this command.\nIf omitted, the invoking agent or workspace defaultAgent is used."
+                  },
+                  "context": {
+                    "type": "string",
+                    "description": "Context specifies the conversational execution lifecycle mode: \"inline\", \"fork\", or \"clean\".\nDefaults to \"inline\"."
                   },
                   "models": {
                     "items": {

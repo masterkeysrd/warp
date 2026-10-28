@@ -366,7 +366,7 @@ func TestSkillRender_RequiredArgumentMissing(t *testing.T) {
 					Required: true,
 				},
 			},
-			Instructions: "Review $file",
+			Instructions: "Review: '$file'",
 		},
 	}
 
@@ -378,6 +378,30 @@ func TestSkillRender_RequiredArgumentMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `required argument "file" is missing for skill "code-review"`) {
 		t.Errorf("Unexpected error message: %v", err)
+	}
+}
+
+func TestCommandRender_AgentAndContext(t *testing.T) {
+	cmd := &Command{
+		BaseResource: BaseResource{
+			Metadata: Metadata{
+				Name: "audit",
+			},
+		},
+		Spec: CommandSpec{
+			Agent:        "security-analyst",
+			Context:      CommandContextFork,
+			Instructions: "Agent: {{.Command.Agent}} | Context: {{.Command.Context}}",
+		},
+	}
+
+	res, err := cmd.Render(nil)
+	if err != nil {
+		t.Fatalf("Command.Render failed: %v", err)
+	}
+	expected := "Agent: security-analyst | Context: fork"
+	if res != expected {
+		t.Errorf("Expected %q, got %q", expected, res)
 	}
 }
 

@@ -76,6 +76,8 @@ type TemplateSkill struct {
 type TemplateCommand struct {
 	Name         string
 	Description  string
+	Agent        string
+	Context      CommandContextMode
 	ArgumentHint string
 	Arguments    []Argument
 	Dir          string
@@ -281,6 +283,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			} else if _, ok := data[arg.Name]; !ok || data[arg.Name] == "" {
 				if arg.Default != "" {
 					data[arg.Name] = arg.Default
+				} else {
+					data[arg.Name] = ""
 				}
 			}
 
@@ -292,10 +296,16 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			}
 		}
 	case *Command:
+		ctxMode := v.Spec.Context
+		if ctxMode == "" {
+			ctxMode = CommandContextInline
+		}
 		if _, ok := data["Command"]; !ok {
 			tc := TemplateCommand{
 				Name:         v.Metadata.Name,
 				Description:  v.Metadata.Description,
+				Agent:        v.Spec.Agent,
+				Context:      ctxMode,
 				ArgumentHint: v.Spec.ArgumentHint,
 				Arguments:    v.Spec.Arguments,
 				Dir:          v.Directory,
@@ -307,6 +317,10 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 		data["Tools"] = v.Spec.Tools
 		data["ArgumentHint"] = v.Spec.ArgumentHint
 		data["Arguments"] = v.Spec.Arguments
+		if v.Spec.Agent != "" {
+			data["CommandAgent"] = v.Spec.Agent
+		}
+		data["CommandContext"] = string(ctxMode)
 
 		// Map arguments
 		if len(opts.Args) > 0 {
@@ -322,6 +336,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			} else if _, ok := data[arg.Name]; !ok || data[arg.Name] == "" {
 				if arg.Default != "" {
 					data[arg.Name] = arg.Default
+				} else {
+					data[arg.Name] = ""
 				}
 			}
 
@@ -363,6 +379,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			} else if _, ok := data[arg.Name]; !ok || data[arg.Name] == "" {
 				if arg.Default != "" {
 					data[arg.Name] = arg.Default
+				} else {
+					data[arg.Name] = ""
 				}
 			}
 

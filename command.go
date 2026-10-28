@@ -5,6 +5,18 @@ import (
 	"path/filepath"
 )
 
+// CommandContextMode defines how conversational memory is handled when executing a command.
+type CommandContextMode string
+
+const (
+	// CommandContextInline executes directly inside the current conversation thread (shared history).
+	CommandContextInline CommandContextMode = "inline"
+	// CommandContextFork branches a sub-session with a snapshot of the current history.
+	CommandContextFork CommandContextMode = "fork"
+	// CommandContextClean starts a sub-session with a clean slate (zero conversation history).
+	CommandContextClean CommandContextMode = "clean"
+)
+
 // CommandRenderOptions holds options for rendering command instructions.
 type CommandRenderOptions struct {
 	Workspace *Workspace
@@ -104,6 +116,13 @@ type CommandSpec struct {
 	// Instructions is the expertise prompt populated from the Markdown body
 	// of the file (below the closing front-matter delimiter).
 	Instructions string `yaml:"instructions,omitempty"`
+
+	// Agent specifies the preferred or required Agent resource to execute this command.
+	// If omitted, the invoking agent or workspace defaultAgent is used.
+	Agent string `yaml:"agent,omitempty"`
+	// Context specifies the conversational execution lifecycle mode: "inline", "fork", or "clean".
+	// Defaults to "inline".
+	Context CommandContextMode `yaml:"context,omitempty"`
 
 	// Models is a prioritized list of LLM model identifiers to use for this
 	// command (e.g., ["gpt-4o-mini", "claude-3-haiku"]). Overrides agent defaults.

@@ -403,6 +403,8 @@ Markdown body.
 
 | Field          | Type         | Required | Description                                                         |
 |----------------|--------------|:--------:|---------------------------------------------------------------------|
+| `agent`        | string       |          | Preferred or required Agent ref to execute this command.            |
+| `context`      | string       |          | Conversational context mode: `inline` (default), `fork`, or `clean`.|
 | `models`       | string[]     |          | Preferred models for this command. Overrides agent defaults.        |
 | `tools`        | string[]     |          | Tools allowed during this command execution.                        |
 | `argumentHint` | string       |          | Single-line hint indicating expected argument format upon invocation. |
@@ -1364,7 +1366,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
 | `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`) for the agent. |
 | `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, argument definitions, directory, and file path. |
-| `{{.Command}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, argument definitions, directory, file path, and tools. |
+| `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, executing agent, context mode, argument definitions, directory, file path, and tools. |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |
 
 ### Advanced Templating

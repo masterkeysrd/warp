@@ -189,6 +189,8 @@ Represents the command being rendered.
 | :--- | :--- | :--- |
 | `{{.Command.Name}}` | The name of the command. | `test` |
 | `{{.Command.Description}}` | The description of the command. | `Runs the test suite.` |
+| `{{.Command.Agent}}` | The target agent configured to execute this command. | `code-reviewer` |
+| `{{.Command.Context}}` | The conversational context execution mode (`inline`, `fork`, `clean`). | `inline` |
 | `{{.Command.Dir}}` | The absolute path to the directory containing the command. | `/Users/user/code/warp/commands` |
 | `{{.Command.Path}}` | The absolute path to the command definition file. | `/Users/user/code/warp/commands/test.md` |
 | `{{.Command.Tools}}` | A list of tool objects this command explicitly uses. | `{{range .Command.Tools}}...{{end}}` |

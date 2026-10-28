@@ -300,6 +300,19 @@ func (r *Registry) Validate() error {
 					return fmt.Errorf("command %s references missing tool: %s", name, toolRef)
 				}
 			}
+			if cmd.Spec.Agent != "" {
+				if !hasGlobMeta(cmd.Spec.Agent) && !r.hasKindLocked(ns, KindAgent, cmd.Spec.Agent) {
+					return fmt.Errorf("command %s references missing agent: %s", name, cmd.Spec.Agent)
+				}
+			}
+			if cmd.Spec.Context != "" {
+				switch cmd.Spec.Context {
+				case CommandContextInline, CommandContextFork, CommandContextClean:
+					// valid
+				default:
+					return fmt.Errorf("command %s has invalid context %q: must be one of inline, fork, clean", name, cmd.Spec.Context)
+				}
+			}
 		}
 		if tk, ok := res.(*Toolkit); ok {
 			for i, item := range tk.Spec.Tools {

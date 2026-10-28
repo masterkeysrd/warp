@@ -1043,6 +1043,65 @@ func TestValidate_Decision_And_ModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestValidate_CommandAgentAndContext(t *testing.T) {
+	// 1. Missing agent reference
+	reg1 := NewRegistry(nil)
+	cmdBadAgent := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-cmd"},
+		},
+		Spec: CommandSpec{
+			Agent: "missing-agent",
+		},
+	}
+	reg1.Set(cmdBadAgent.QualifiedName(), cmdBadAgent)
+	if err := reg1.Validate(); err == nil || !strings.Contains(err.Error(), "missing agent") {
+		t.Errorf("expected missing agent error, got: %v", err)
+	}
+
+	// 2. Invalid context mode
+	reg2 := NewRegistry(nil)
+	cmdBadCtx := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-ctx-cmd"},
+		},
+		Spec: CommandSpec{
+			Context: "invalid-mode",
+		},
+	}
+	reg2.Set(cmdBadCtx.QualifiedName(), cmdBadCtx)
+	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "invalid context") {
+		t.Errorf("expected invalid context error, got: %v", err)
+	}
+
+	// 3. Valid command with agent and context
+	reg3 := NewRegistry(nil)
+	ag := agentWithSpec(NamespaceWorkspace, "my-agent", AgentSpec{})
+	cmdGood := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "good-cmd"},
+		},
+		Spec: CommandSpec{
+			Agent:   "my-agent",
+			Context: CommandContextClean,
+		},
+	}
+	reg3.Set(ag.QualifiedName(), ag)
+	reg3.Set(cmdGood.QualifiedName(), cmdGood)
+	if err := reg3.Validate(); err != nil {
+		t.Errorf("expected Validate() to pass for valid command, got: %v", err)
+	}
+}
+
 func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 	reg := NewRegistry(nil)
 	parentTemp := 0.7

@@ -100,9 +100,15 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			})
 		}
 		for _, cmd := range opts.Resolved.Commands {
+			ctxMode := cmd.Spec.Context
+			if ctxMode == "" {
+				ctxMode = CommandContextInline
+			}
 			ta.Commands = append(ta.Commands, TemplateCommand{
 				Name:         cmd.Metadata.Name,
 				Description:  cmd.Metadata.Description,
+				Agent:        cmd.Spec.Agent,
+				Context:      ctxMode,
 				ArgumentHint: cmd.Spec.ArgumentHint,
 				Arguments:    cmd.Spec.Arguments,
 				Dir:          cmd.Directory,

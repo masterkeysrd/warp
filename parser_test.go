@@ -633,6 +633,9 @@ metadata:
   description: Review code files
 spec:
   useWhen: Use when reviewing a file
+  tools:
+    - git_diff
+    - git_status
   argumentHint: Provide the file path to review
   arguments:
     - name: file
@@ -655,6 +658,9 @@ Review file $file focusing on $focus.
 		t.Fatalf("Expected *Skill, got %T", res.Resource)
 	}
 
+	if len(skill.Spec.Tools) != 2 || skill.Spec.Tools[0] != "git_diff" || skill.Spec.Tools[1] != "git_status" {
+		t.Errorf("Unexpected tools: %v", skill.Spec.Tools)
+	}
 	if skill.Spec.ArgumentHint != "Provide the file path to review" {
 		t.Errorf("Unexpected argumentHint: %s", skill.Spec.ArgumentHint)
 	}

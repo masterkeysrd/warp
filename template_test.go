@@ -270,7 +270,8 @@ func TestSkillRender(t *testing.T) {
 			},
 		},
 		Spec: SkillSpec{
-			Instructions: "Skill: {{.Skill.Name}} | Dir: {{.Skill.Dir}} | Project: {{.Project.Name}} | Invoker: {{.Agent.Name}} | InvokerDesc: {{.Agent.Description}}",
+			Tools:        []string{"go_test", "go_build"},
+			Instructions: "Skill: {{.Skill.Name}} | Dir: {{.Skill.Dir}} | Project: {{.Project.Name}} | Invoker: {{.Agent.Name}} | InvokerDesc: {{.Agent.Description}} | Tools: {{range .Skill.Tools}}{{.}} {{end}}",
 		},
 	}
 
@@ -285,7 +286,7 @@ func TestSkillRender(t *testing.T) {
 		t.Fatalf("Skill.Render failed: %v", err)
 	}
 
-	expected := "Skill: go-expert | Dir: /Users/user/code/warp/skills | Project: cli | Invoker: researcher | InvokerDesc: Code researcher"
+	expected := "Skill: go-expert | Dir: /Users/user/code/warp/skills | Project: cli | Invoker: researcher | InvokerDesc: Code researcher | Tools: go_test go_build "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}

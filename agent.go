@@ -87,6 +87,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				Description:  s.Metadata.Description,
 				UseWhen:      s.Spec.UseWhen,
 				Keywords:     s.Spec.Keywords,
+				Tools:        s.Spec.Tools,
 				ArgumentHint: s.Spec.ArgumentHint,
 				Arguments:    s.Spec.Arguments,
 				Dir:          s.Directory,

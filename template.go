@@ -66,6 +66,7 @@ type TemplateSkill struct {
 	Description  string
 	UseWhen      string
 	Keywords     []string
+	Tools        []string
 	ArgumentHint string
 	Arguments    []Argument
 	Dir          string
@@ -257,6 +258,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				Description:  v.Metadata.Description,
 				UseWhen:      v.Spec.UseWhen,
 				Keywords:     v.Spec.Keywords,
+				Tools:        v.Spec.Tools,
 				ArgumentHint: v.Spec.ArgumentHint,
 				Arguments:    v.Spec.Arguments,
 				Dir:          v.Directory,
@@ -266,6 +268,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 		}
 		data["UseWhen"] = v.Spec.UseWhen
 		data["Keywords"] = v.Spec.Keywords
+		data["Tools"] = v.Spec.Tools
 		data["ArgumentHint"] = v.Spec.ArgumentHint
 		data["Arguments"] = v.Spec.Arguments
 

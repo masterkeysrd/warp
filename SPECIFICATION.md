@@ -353,6 +353,7 @@ shared metadata header.
 |----------------|--------------|------------------------------------------------------------------------------------------|
 | `useWhen`      | string       | Explicit routing instructions to the LLM on when to trigger this skill (e.g. "Use this when..."). |
 | `keywords`     | string[]     | Array of semantic tags used for discovery and prompting.                                 |
+| `tools`        | string[]     | List of Tool or Toolkit references required or used by this skill.                       |
 | `argumentHint` | string       | Single-line hint indicating expected argument format upon invocation.                    |
 | `arguments`    | Argument[]   | Structured parameters accepted by the skill.                                             |
 
@@ -1365,7 +1366,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Project}}` | `.Name`, `.DisplayName`, `.Dir` | Active project slug, display name, and absolute directory path (also available as `$ProjectDir`). |
 | `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
 | `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`) for the agent. |
-| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, argument definitions, directory, and file path. |
+| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path. |
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, executing agent, context mode, argument definitions, directory, file path, and tools. |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |
 

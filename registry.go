@@ -437,6 +437,16 @@ func (r *Registry) Validate() error {
 				}
 			}
 		}
+		if skill, ok := res.(*Skill); ok {
+			for _, toolRef := range skill.Spec.Tools {
+				if hasGlobMeta(toolRef) || toolRef == "*" {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindTool, toolRef) && !r.hasKindLocked(ns, KindToolkit, toolRef) {
+					return fmt.Errorf("skill %s references missing tool or toolkit: %s", name, toolRef)
+				}
+			}
+		}
 		if cmd, ok := res.(*Command); ok {
 			for _, toolRef := range cmd.Spec.Tools {
 				if hasGlobMeta(toolRef) {
@@ -1085,6 +1095,12 @@ func (s *ScopedRegistry) ToolsForAgent(agentName string) ([]*Tool, error) {
 	return rag.Tools, nil
 }
 
+// ToolsForSkill returns the Tool resources required or declared by the named skill within
+// this project scope. It expands any referenced Toolkits into their constituent tools.
+func (s *ScopedRegistry) ToolsForSkill(skillRef string) ([]*Tool, error) {
+	return resolveToolsForSkill(s, skillRef)
+}
+
 // ─── Agent Inheritance ─────────────────────────────────────────────────────────
 
 // resolveAgentChain resolves an agent by ref using the given Resolver and
@@ -1221,6 +1237,12 @@ func (s *ScopedRegistry) ResolveModels(role ModelRole, explicit ...string) []str
 // sorted by Rule priority descending, then by name ascending.
 func (r *Registry) ResolveRulesForPath(targetPath string) []Rule {
 	return resolveRulesForPath(r, targetPath)
+}
+
+// ToolsForSkill returns the Tool resources required or declared by the named skill within
+// this registry scope. It expands any referenced Toolkits into their constituent tools.
+func (r *Registry) ToolsForSkill(skillRef string) ([]*Tool, error) {
+	return resolveToolsForSkill(r, skillRef)
 }
 
 // ResolveRulesForPath returns all rules applicable to the given path within this scoped registry,
@@ -1569,39 +1591,8 @@ func resolveToolsAndToolkits(resolver Resolver) []*Tool {
 
 	allToolkits := resolver.ListResources(QueryOptions{Kinds: []Kind{KindToolkit}, Effective: true})
 	for _, r := range allToolkits {
-		tk, ok := r.(*Toolkit)
-		if !ok {
-			continue
-		}
-		for _, item := range tk.Spec.Tools {
-			if item.Ref != "" {
-				if refRes, ok := resolver.ResolveResource(item.Ref); ok {
-					if t, ok := refRes.(*Tool); ok {
-						addTool(t)
-					}
-				}
-				continue
-			}
-			if item.Name != "" {
-				desc := item.Description
-				if desc == "" {
-					desc = item.Instructions
-				}
-				inlineTool := &Tool{
-					BaseResource: BaseResource{
-						APIVersion: tk.APIVersion,
-						Kind:       KindTool,
-						Namespace:  tk.Namespace,
-						Directory:  tk.Directory,
-						Metadata: Metadata{
-							Name:        item.Name,
-							Description: desc,
-						},
-					},
-					Spec: *item.ToolSpec.DeepCopy(),
-				}
-				addTool(inlineTool)
-			}
+		if tk, ok := r.(*Toolkit); ok {
+			expandToolkit(tk, resolver, addTool)
 		}
 	}
 
@@ -1609,6 +1600,89 @@ func resolveToolsAndToolkits(resolver Resolver) []*Tool {
 		return tools[i].QualifiedName() < tools[j].QualifiedName()
 	})
 	return tools
+}
+
+func expandToolkit(tk *Toolkit, resolver Resolver, addTool func(*Tool)) {
+	if tk == nil {
+		return
+	}
+	for _, item := range tk.Spec.Tools {
+		if item.Ref != "" {
+			if refRes, ok := resolver.ResolveResource(item.Ref); ok {
+				if t, ok := refRes.(*Tool); ok {
+					addTool(t)
+				}
+			}
+			continue
+		}
+		if item.Name != "" {
+			desc := item.Description
+			if desc == "" {
+				desc = item.Instructions
+			}
+			inlineTool := &Tool{
+				BaseResource: BaseResource{
+					APIVersion: tk.APIVersion,
+					Kind:       KindTool,
+					Namespace:  tk.Namespace,
+					Directory:  tk.Directory,
+					Metadata: Metadata{
+						Name:        item.Name,
+						Description: desc,
+					},
+				},
+				Spec: *item.ToolSpec.DeepCopy(),
+			}
+			addTool(inlineTool)
+		}
+	}
+}
+
+func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
+	res, ok := resolver.ResolveResource(skillRef)
+	if !ok {
+		return nil, fmt.Errorf("skill %q not found", skillRef)
+	}
+	skill, ok := res.(*Skill)
+	if !ok {
+		return nil, fmt.Errorf("resource %q is a %s, not a Skill", skillRef, res.GetKind())
+	}
+
+	var tools []*Tool
+	seen := make(map[string]bool)
+	addTool := func(t *Tool) {
+		if t == nil {
+			return
+		}
+		if t.Metadata.Description == "" && t.Spec.Description != "" {
+			cp := t.DeepCopy()
+			cp.Metadata.Description = cp.Spec.Description
+			t = cp
+		}
+		qn := t.QualifiedName()
+		if !seen[qn] {
+			seen[qn] = true
+			tools = append(tools, t)
+		}
+	}
+
+	for _, tRef := range skill.Spec.Tools {
+		tRes, ok := resolver.ResolveResource(tRef)
+		if !ok {
+			continue
+		}
+		switch val := tRes.(type) {
+		case *Tool:
+			addTool(val)
+		case *Toolkit:
+			expandToolkit(val, resolver, addTool)
+		}
+	}
+
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].QualifiedName() < tools[j].QualifiedName()
+	})
+	return tools, nil
 }
 
 func matchRefPattern(resolver Resolver, pat string, res Resource) bool {

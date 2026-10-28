@@ -1782,3 +1782,158 @@ func TestRegistry_Providers(t *testing.T) {
 		t.Errorf("unexpected providers: %v", providers)
 	}
 }
+
+func TestSkillValidation(t *testing.T) {
+	// Missing tool in skill
+	badSkill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"missing-tool"},
+		},
+	}
+	reg := NewRegistry(nil)
+	reg.Set(badSkill.QualifiedName(), badSkill)
+	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool or toolkit") {
+		t.Errorf("expected missing tool error, got %v", err)
+	}
+
+	// Valid tool in skill
+	tool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "valid-tool"},
+		},
+	}
+	goodSkill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "good-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"valid-tool"},
+		},
+	}
+	reg2 := NewRegistry(nil)
+	reg2.Set(tool.QualifiedName(), tool)
+	reg2.Set(goodSkill.QualifiedName(), goodSkill)
+	if err := reg2.Validate(); err != nil {
+		t.Errorf("expected valid skill validation, got error: %v", err)
+	}
+
+	// Valid toolkit in skill
+	toolkit := &Toolkit{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindToolkit,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "my-toolkit"},
+		},
+		Spec: ToolkitSpec{
+			Tools: []ToolkitTool{
+				{
+					ToolSpec: ToolSpec{
+						Name:        "inline-tool",
+						Description: "inline tool description",
+						Command:     []string{"echo"},
+					},
+				},
+			},
+		},
+	}
+	skillWithToolkit := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "toolkit-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"my-toolkit"},
+		},
+	}
+	reg3 := NewRegistry(nil)
+	reg3.Set(toolkit.QualifiedName(), toolkit)
+	reg3.Set(skillWithToolkit.QualifiedName(), skillWithToolkit)
+	if err := reg3.Validate(); err != nil {
+		t.Errorf("expected valid toolkit reference in skill, got error: %v", err)
+	}
+}
+
+func TestToolsForSkill(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	toolA := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "tool-a", Description: "Tool A"},
+		},
+	}
+	toolkit := &Toolkit{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindToolkit,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "toolkit-b"},
+		},
+		Spec: ToolkitSpec{
+			Tools: []ToolkitTool{
+				{
+					ToolSpec: ToolSpec{
+						Name:        "tool-b1",
+						Description: "Tool B1",
+						Command:     []string{"b1"},
+					},
+				},
+			},
+		},
+	}
+	skill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "my-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"tool-a", "toolkit-b"},
+		},
+	}
+
+	reg.Set(toolA.QualifiedName(), toolA)
+	reg.Set(toolkit.QualifiedName(), toolkit)
+	reg.Set(skill.QualifiedName(), skill)
+
+	tools, err := reg.ToolsForSkill("my-skill")
+	if err != nil {
+		t.Fatalf("ToolsForSkill failed: %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(tools))
+	}
+	if tools[0].Metadata.Name != "tool-a" && tools[1].Metadata.Name != "tool-a" {
+		t.Errorf("expected tool-a to be resolved")
+	}
+
+	// Scoped registry test
+	proj := &Project{Name: "test-proj", Path: "test", RootPath: "/tmp"}
+	reg.AddProject(proj)
+	scoped := reg.Project("test-proj")
+	scopedTools, err := scoped.ToolsForSkill("my-skill")
+	if err != nil {
+		t.Fatalf("scoped ToolsForSkill failed: %v", err)
+	}
+	if len(scopedTools) != 2 {
+		t.Fatalf("expected 2 scoped tools, got %d", len(scopedTools))
+	}
+}

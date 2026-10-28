@@ -891,6 +891,13 @@
           "type": "array",
           "description": "Keywords is an array of semantic tags used for discovery and prompting."
         },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Tools is a list of resource refs (names, qualified refs, or toolkits)\nrequired or used by this skill."
+        },
         "argumentHint": {
           "type": "string",
           "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
@@ -1880,6 +1887,13 @@
                     },
                     "type": "array",
                     "description": "Keywords is an array of semantic tags used for discovery and prompting."
+                  },
+                  "tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Tools is a list of resource refs (names, qualified refs, or toolkits)\nrequired or used by this skill."
                   },
                   "argumentHint": {
                     "type": "string",

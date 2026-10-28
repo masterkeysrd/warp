@@ -9,6 +9,7 @@ type SkillRenderOptions struct {
 	Workspace *Workspace
 	Project   *Project
 	Agent     *Agent // The invoking agent
+	Args      []string
 	Globals   map[string]any
 }
 
@@ -85,6 +86,7 @@ func (s *Skill) Render(opts *SkillRenderOptions) (string, error) {
 	}
 
 	renderOpts := &RenderOptions{
+		Args:    opts.Args,
 		Globals: mergedGlobals,
 	}
 
@@ -118,6 +120,11 @@ type SkillSpec struct {
 	UseWhen string `yaml:"useWhen,omitempty"`
 	// Keywords is an array of semantic tags used for discovery and prompting.
 	Keywords []string `yaml:"keywords,omitempty,flow"`
+	// ArgumentHint is a single-line text hint telling the agent or user what
+	// input format or example to provide upon invocation.
+	ArgumentHint string `yaml:"argumentHint,omitempty"`
+	// Arguments is the list of structured parameters accepted by the skill.
+	Arguments []Argument `yaml:"arguments,omitempty"`
 	// Instructions is the expertise prompt populated from the Markdown body
 	// of the file (below the closing front-matter delimiter).
 	Instructions string `yaml:"instructions,omitempty"`
@@ -133,6 +140,10 @@ func (s *SkillSpec) DeepCopy() *SkillSpec {
 	if s.Keywords != nil {
 		out.Keywords = make([]string, len(s.Keywords))
 		copy(out.Keywords, s.Keywords)
+	}
+	if s.Arguments != nil {
+		out.Arguments = make([]Argument, len(s.Arguments))
+		copy(out.Arguments, s.Arguments)
 	}
 	return out
 }

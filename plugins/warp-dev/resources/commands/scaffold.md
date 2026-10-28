@@ -7,9 +7,11 @@ metadata:
 spec:
   tools:
     - "warp-dev/Tool/validate"
-  hints:
-    - "kind"
-    - "name"
+  arguments:
+    - name: "kind"
+      description: "Resource kind to scaffold"
+    - name: "name"
+      description: "Name of the resource"
 ---
 
 # Scaffold Command

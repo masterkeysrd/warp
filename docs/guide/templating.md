@@ -111,10 +111,34 @@ Represents the skill being rendered.
 | `{{.Skill.Description}}` | The description of the skill. | `Guidelines for writing Go code.` |
 | `{{.Skill.UseWhen}}` | The explicit condition for using the skill. | `Use this when writing tests.` |
 | `{{.Skill.Keywords}}` | A list of semantic keywords. | `["go", "testing"]` |
+| `{{.Skill.ArgumentHint}}` | Single-line hint indicating expected invocation arguments. | `Provide the file path to review` |
+| `{{.Skill.Arguments}}` | A list of structured parameter definitions accepted by the skill. | `[{{Name: "file", ...}}]` |
 | `{{.Skill.Dir}}` | The absolute path to the directory containing the skill. | `/Users/user/code/warp/skills/go` |
 | `{{.Skill.Path}}` | The absolute path to the skill definition file. | `/Users/user/code/warp/skills/go/SKILL.md` |
 
-#### 2. The `Agent` Object (Invoker)
+#### 2. Skill Arguments & Argument Hints
+
+Skills can accept invocation arguments. When invoking a skill (e.g. via CLI or agent invocation), arguments are bound positionally (`$1`, `$2`) and mapped to declared parameter names (`$file`, `$focus`):
+
+```yaml
+spec:
+  argumentHint: Provide the file path to review and optional focus area
+  arguments:
+    - name: file
+      description: Path to the file to review
+      required: true
+    - name: focus
+      description: What to focus on (security, performance, style)
+      required: false
+      default: all
+```
+
+*   `$file` (or `{{.file}}`) maps to the first argument.
+*   `$focus` (or `{{.focus}}`) maps to the second argument, falling back to its `default` if omitted.
+*   `$1`, `$2`, and `{{.Args}}` are also available.
+*   If a `required: true` argument is omitted, template rendering returns a descriptive error.
+
+#### 3. The `Agent` Object (Invoker)
 When a skill is loaded by an agent, the skill template can access the metadata of the agent that invoked it. This allows the skill to tailor its instructions to the specific persona of the agent.
 
 | Variable | Description | Example |
@@ -169,7 +193,7 @@ Represents the command being rendered.
 | `{{.Command.Path}}` | The absolute path to the command definition file. | `/Users/user/code/warp/commands/test.md` |
 | `{{.Command.Tools}}` | A list of tool objects this command explicitly uses. | `{{range .Command.Tools}}...{{end}}` |
 
-#### 2. Arguments and Hints
+#### 2. Arguments
 When a user invokes a command with arguments (e.g., `warp run my-command arg1 arg2`), Warp automatically injects these arguments into the template. You can access them using Go template syntax or the convenient Shell shorthand.
 
 | Variable | Shorthand | Description | Example |
@@ -178,12 +202,21 @@ When a user invokes a command with arguments (e.g., `warp run my-command arg1 ar
 | `{{index . "1"}}` | `$1` | The first positional argument (1-indexed). | `arg1` |
 | `{{index . "2"}}` | `$2` | The second positional argument. | `arg2` |
 
-**Hints**
-If your `Command` spec defines a list of `hints`, Warp will automatically map the positional arguments to those hint names. 
+**Structured Arguments**
+If your `Command` spec defines `arguments`, Warp will automatically map the positional arguments to those parameter names, inject default values if omitted, and validate required parameters.
 
-For example, if your command spec defines `hints: ["ticket", "env"]`:
+For example, if your command spec defines:
+```yaml
+spec:
+  argumentHint: "Provide ticket ID and environment"
+  arguments:
+    - name: ticket
+      required: true
+    - name: env
+      default: staging
+```
 *   `$ticket` (or `{{.ticket}}`) will map to the first argument (`$1`).
-*   `$env` (or `{{.env}}`) will map to the second argument (`$2`).
+*   `$env` (or `{{.env}}`) will map to the second argument (`$2`), falling back to `staging` if not provided.
 
 ### Example: A Parameterized Command
 
@@ -194,7 +227,11 @@ metadata:
   name: generate-docs
   description: Generates markdown documentation for a given package.
 spec:
-  hints: ["package_name"]
+  argumentHint: "Provide the package name to generate docs for"
+  arguments:
+    - name: package_name
+      description: Package to document
+      required: true
   tools: ["write_file", "view_file"]
 ---
 Generate comprehensive markdown documentation for the `$package_name` package.

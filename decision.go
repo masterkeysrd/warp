@@ -120,9 +120,11 @@ type DecisionSpec struct {
 	// Models is a prioritized list of decision model identifiers to use
 	// (e.g., ["typesafe/jev-latest", "ollama/nimble"]). Overrides workspace/provider defaults.
 	Models []string `yaml:"models,omitempty,flow"`
-	// Hints is an ordered list of argument hints that UIs and runtimes can use
-	// for positional template substitution in Instructions.
-	Hints []string `yaml:"hints,omitempty"`
+	// ArgumentHint is a single-line text hint telling the agent or user what
+	// input format or example to provide upon invocation.
+	ArgumentHint string `yaml:"argumentHint,omitempty"`
+	// Arguments is the list of structured parameters accepted by the decision.
+	Arguments []Argument `yaml:"arguments,omitempty"`
 	// Questions is the list of structured questions (predicates, choices, scores)
 	// evaluated by this Decision. Optional when questions are supplied dynamically at runtime.
 	Questions []DecisionQuestion `yaml:"questions,omitempty"`
@@ -139,9 +141,9 @@ func (in *DecisionSpec) DeepCopy() *DecisionSpec {
 		out.Models = make([]string, len(in.Models))
 		copy(out.Models, in.Models)
 	}
-	if in.Hints != nil {
-		out.Hints = make([]string, len(in.Hints))
-		copy(out.Hints, in.Hints)
+	if in.Arguments != nil {
+		out.Arguments = make([]Argument, len(in.Arguments))
+		copy(out.Arguments, in.Arguments)
 	}
 	if in.Questions != nil {
 		out.Questions = make([]DecisionQuestion, len(in.Questions))

@@ -83,12 +83,14 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 		}
 		for _, s := range opts.Resolved.Skills {
 			ta.Skills = append(ta.Skills, TemplateSkill{
-				Name:        s.Metadata.Name,
-				Description: s.Metadata.Description,
-				UseWhen:     s.Spec.UseWhen,
-				Keywords:    s.Spec.Keywords,
-				Dir:         s.Directory,
-				Path:        filepath.Join(s.Directory, s.Metadata.Name+".md"),
+				Name:         s.Metadata.Name,
+				Description:  s.Metadata.Description,
+				UseWhen:      s.Spec.UseWhen,
+				Keywords:     s.Spec.Keywords,
+				ArgumentHint: s.Spec.ArgumentHint,
+				Arguments:    s.Spec.Arguments,
+				Dir:          s.Directory,
+				Path:         filepath.Join(s.Directory, s.Metadata.Name+".md"),
 			})
 		}
 		for _, t := range opts.Resolved.Tools {
@@ -99,10 +101,12 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 		}
 		for _, cmd := range opts.Resolved.Commands {
 			ta.Commands = append(ta.Commands, TemplateCommand{
-				Name:        cmd.Metadata.Name,
-				Description: cmd.Metadata.Description,
-				Dir:         cmd.Directory,
-				Path:        filepath.Join(cmd.Directory, cmd.Metadata.Name+".md"),
+				Name:         cmd.Metadata.Name,
+				Description:  cmd.Metadata.Description,
+				ArgumentHint: cmd.Spec.ArgumentHint,
+				Arguments:    cmd.Spec.Arguments,
+				Dir:          cmd.Directory,
+				Path:         filepath.Join(cmd.Directory, cmd.Metadata.Name+".md"),
 			})
 		}
 		for _, sa := range opts.Resolved.Subagents {

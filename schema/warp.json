@@ -71,6 +71,32 @@
       "type": "object",
       "description": "AgentSpec contains the configuration details for an Agent resource."
     },
+    "Argument": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name is the identifier for the argument, used in templating (e.g. $name)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Description provides human and LLM guidance on the purpose of this argument."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Required indicates whether the argument must be supplied when invoked."
+        },
+        "default": {
+          "type": "string",
+          "description": "Default is the fallback value used when the argument is not provided."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Argument defines a structured parameter accepted by a resource."
+    },
     "CommandSpec": {
       "properties": {
         "instructions": {
@@ -91,12 +117,16 @@
           "type": "array",
           "description": "Tools is a list of resource refs (names or paths) restricting which\nTool resources can be used while executing this command."
         },
-        "hints": {
+        "argumentHint": {
+          "type": "string",
+          "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
+        },
+        "arguments": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/Argument"
           },
           "type": "array",
-          "description": "Hints is an ordered list of argument hints (e.g., [\"ticker\", \"year\"])\nthat UIs can use for autocompletion and runtimes can use for positional\ntemplate substitution."
+          "description": "Arguments is the list of structured parameters accepted by the command."
         }
       },
       "additionalProperties": false,
@@ -244,12 +274,16 @@
           "type": "array",
           "description": "Models is a prioritized list of decision model identifiers to use\n(e.g., [\"typesafe/jev-latest\", \"ollama/nimble\"]). Overrides workspace/provider defaults."
         },
-        "hints": {
+        "argumentHint": {
+          "type": "string",
+          "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
+        },
+        "arguments": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/Argument"
           },
           "type": "array",
-          "description": "Hints is an ordered list of argument hints that UIs and runtimes can use\nfor positional template substitution in Instructions."
+          "description": "Arguments is the list of structured parameters accepted by the decision."
         },
         "questions": {
           "items": {
@@ -849,6 +883,17 @@
           "type": "array",
           "description": "Keywords is an array of semantic tags used for discovery and prompting."
         },
+        "argumentHint": {
+          "type": "string",
+          "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
+        },
+        "arguments": {
+          "items": {
+            "$ref": "#/$defs/Argument"
+          },
+          "type": "array",
+          "description": "Arguments is the list of structured parameters accepted by the skill."
+        },
         "instructions": {
           "type": "string",
           "description": "Instructions is the expertise prompt populated from the Markdown body\nof the file (below the closing front-matter delimiter)."
@@ -1438,6 +1483,32 @@
             "$id": "https://github.com/masterkeysrd/warp/command-spec",
             "$ref": "#/$defs/CommandSpec",
             "$defs": {
+              "Argument": {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Name is the identifier for the argument, used in templating (e.g. $name)."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Description provides human and LLM guidance on the purpose of this argument."
+                  },
+                  "required": {
+                    "type": "boolean",
+                    "description": "Required indicates whether the argument must be supplied when invoked."
+                  },
+                  "default": {
+                    "type": "string",
+                    "description": "Default is the fallback value used when the argument is not provided."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "description": "Argument defines a structured parameter accepted by a resource."
+              },
               "CommandSpec": {
                 "properties": {
                   "instructions": {
@@ -1458,12 +1529,16 @@
                     "type": "array",
                     "description": "Tools is a list of resource refs (names or paths) restricting which\nTool resources can be used while executing this command."
                   },
-                  "hints": {
+                  "argumentHint": {
+                    "type": "string",
+                    "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
+                  },
+                  "arguments": {
                     "items": {
-                      "type": "string"
+                      "$ref": "#/$defs/Argument"
                     },
                     "type": "array",
-                    "description": "Hints is an ordered list of argument hints (e.g., [\"ticker\", \"year\"])\nthat UIs can use for autocompletion and runtimes can use for positional\ntemplate substitution."
+                    "description": "Arguments is the list of structured parameters accepted by the command."
                   }
                 },
                 "additionalProperties": false,
@@ -1490,6 +1565,32 @@
             "$id": "https://github.com/masterkeysrd/warp/decision-spec",
             "$ref": "#/$defs/DecisionSpec",
             "$defs": {
+              "Argument": {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Name is the identifier for the argument, used in templating (e.g. $name)."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Description provides human and LLM guidance on the purpose of this argument."
+                  },
+                  "required": {
+                    "type": "boolean",
+                    "description": "Required indicates whether the argument must be supplied when invoked."
+                  },
+                  "default": {
+                    "type": "string",
+                    "description": "Default is the fallback value used when the argument is not provided."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "description": "Argument defines a structured parameter accepted by a resource."
+              },
               "DecisionCriteria": {
                 "properties": {
                   "true": {
@@ -1603,12 +1704,16 @@
                     "type": "array",
                     "description": "Models is a prioritized list of decision model identifiers to use\n(e.g., [\"typesafe/jev-latest\", \"ollama/nimble\"]). Overrides workspace/provider defaults."
                   },
-                  "hints": {
+                  "argumentHint": {
+                    "type": "string",
+                    "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
+                  },
+                  "arguments": {
                     "items": {
-                      "type": "string"
+                      "$ref": "#/$defs/Argument"
                     },
                     "type": "array",
-                    "description": "Hints is an ordered list of argument hints that UIs and runtimes can use\nfor positional template substitution in Instructions."
+                    "description": "Arguments is the list of structured parameters accepted by the decision."
                   },
                   "questions": {
                     "items": {
@@ -1721,6 +1826,32 @@
             "$id": "https://github.com/masterkeysrd/warp/skill-spec",
             "$ref": "#/$defs/SkillSpec",
             "$defs": {
+              "Argument": {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Name is the identifier for the argument, used in templating (e.g. $name)."
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Description provides human and LLM guidance on the purpose of this argument."
+                  },
+                  "required": {
+                    "type": "boolean",
+                    "description": "Required indicates whether the argument must be supplied when invoked."
+                  },
+                  "default": {
+                    "type": "string",
+                    "description": "Default is the fallback value used when the argument is not provided."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "description": "Argument defines a structured parameter accepted by a resource."
+              },
               "SkillSpec": {
                 "properties": {
                   "useWhen": {
@@ -1733,6 +1864,17 @@
                     },
                     "type": "array",
                     "description": "Keywords is an array of semantic tags used for discovery and prompting."
+                  },
+                  "argumentHint": {
+                    "type": "string",
+                    "description": "ArgumentHint is a single-line text hint telling the agent or user what\ninput format or example to provide upon invocation."
+                  },
+                  "arguments": {
+                    "items": {
+                      "$ref": "#/$defs/Argument"
+                    },
+                    "type": "array",
+                    "description": "Arguments is the list of structured parameters accepted by the skill."
                   },
                   "instructions": {
                     "type": "string",

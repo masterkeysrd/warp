@@ -275,7 +275,8 @@ metadata:
   description: Triage pull requests
 spec:
   models: ["typesafe/jev-latest", "ollama/nimble"]
-  hints: ["repo"]
+  arguments:
+    - name: repo
   questions:
     - name: is_security_sensitive
       type: predicate
@@ -620,5 +621,50 @@ Always wrap errors using fmt.Errorf with %w.
 	}
 	if strings.TrimSpace(rule2.Spec.Instructions) != strings.TrimSpace(rule.Spec.Instructions) {
 		t.Errorf("Instructions mismatch after format: %q vs %q", rule2.Spec.Instructions, rule.Spec.Instructions)
+	}
+}
+
+func TestParseSkillWithArguments(t *testing.T) {
+	content := `---
+apiVersion: warp/v1alpha1
+kind: Skill
+metadata:
+  name: code-review
+  description: Review code files
+spec:
+  useWhen: Use when reviewing a file
+  argumentHint: Provide the file path to review
+  arguments:
+    - name: file
+      description: Path to the file to review
+      required: true
+    - name: focus
+      description: What to focus on
+      required: false
+      default: all
+---
+Review file $file focusing on $focus.
+`
+	res, err := Parse("code-review.md", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	skill, ok := res.Resource.(*Skill)
+	if !ok {
+		t.Fatalf("Expected *Skill, got %T", res.Resource)
+	}
+
+	if skill.Spec.ArgumentHint != "Provide the file path to review" {
+		t.Errorf("Unexpected argumentHint: %s", skill.Spec.ArgumentHint)
+	}
+	if len(skill.Spec.Arguments) != 2 {
+		t.Fatalf("Expected 2 arguments, got %d", len(skill.Spec.Arguments))
+	}
+	if skill.Spec.Arguments[0].Name != "file" || !skill.Spec.Arguments[0].Required {
+		t.Errorf("Unexpected first argument: %+v", skill.Spec.Arguments[0])
+	}
+	if skill.Spec.Arguments[1].Name != "focus" || skill.Spec.Arguments[1].Default != "all" {
+		t.Errorf("Unexpected second argument: %+v", skill.Spec.Arguments[1])
 	}
 }

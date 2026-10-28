@@ -62,29 +62,35 @@ type TemplateRule struct {
 
 // TemplateSkill represents the skill view model for templates.
 type TemplateSkill struct {
-	Name        string
-	Description string
-	UseWhen     string
-	Keywords    []string
-	Dir         string
-	Path        string
+	Name         string
+	Description  string
+	UseWhen      string
+	Keywords     []string
+	ArgumentHint string
+	Arguments    []Argument
+	Dir          string
+	Path         string
 }
 
 // TemplateCommand represents the command view model for templates.
 type TemplateCommand struct {
-	Name        string
-	Description string
-	Dir         string
-	Path        string
-	Tools       []TemplateTool
+	Name         string
+	Description  string
+	ArgumentHint string
+	Arguments    []Argument
+	Dir          string
+	Path         string
+	Tools        []TemplateTool
 }
 
 // TemplateDecision represents the decision view model for templates.
 type TemplateDecision struct {
-	Name        string
-	Description string
-	Dir         string
-	Path        string
+	Name         string
+	Description  string
+	ArgumentHint string
+	Arguments    []Argument
+	Dir          string
+	Path         string
 }
 
 // TemplateTool represents the tool view model for templates.
@@ -101,7 +107,10 @@ func Render(res Resource, opts *RenderOptions) (string, error) {
 		opts = &RenderOptions{}
 	}
 
-	data := buildTemplateData(res, opts)
+	data, err := buildTemplateData(res, opts)
+	if err != nil {
+		return "", err
+	}
 	return renderTemplate(res.GetName(), getInstructions(res), data)
 }
 
@@ -155,7 +164,7 @@ func preprocessShorthand(input string) string {
 }
 
 // buildTemplateData lifts fields from the resource to the top level.
-func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
+func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error) {
 	data := make(map[string]any)
 
 	// Initialize built-in shorthands to empty string to avoid <no value> outputs
@@ -242,57 +251,103 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 	case *Skill:
 		if _, ok := data["Skill"]; !ok {
 			ts := TemplateSkill{
-				Name:        v.Metadata.Name,
-				Description: v.Metadata.Description,
-				Dir:         v.Directory,
-				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Name:         v.Metadata.Name,
+				Description:  v.Metadata.Description,
+				UseWhen:      v.Spec.UseWhen,
+				Keywords:     v.Spec.Keywords,
+				ArgumentHint: v.Spec.ArgumentHint,
+				Arguments:    v.Spec.Arguments,
+				Dir:          v.Directory,
+				Path:         filepath.Join(v.Directory, v.Metadata.Name+".md"),
 			}
 			data["Skill"] = ts
+		}
+		data["UseWhen"] = v.Spec.UseWhen
+		data["Keywords"] = v.Spec.Keywords
+		data["ArgumentHint"] = v.Spec.ArgumentHint
+		data["Arguments"] = v.Spec.Arguments
+
+		// Map arguments
+		if len(opts.Args) > 0 {
+			data["Args"] = opts.Args
+			for i, arg := range opts.Args {
+				data[fmt.Sprintf("%d", i+1)] = arg
+			}
+		}
+
+		for i, arg := range v.Spec.Arguments {
+			if i < len(opts.Args) && opts.Args[i] != "" {
+				data[arg.Name] = opts.Args[i]
+			} else if _, ok := data[arg.Name]; !ok || data[arg.Name] == "" {
+				if arg.Default != "" {
+					data[arg.Name] = arg.Default
+				}
+			}
+
+			if arg.Required {
+				val, ok := data[arg.Name]
+				if !ok || val == "" || val == nil {
+					return nil, fmt.Errorf("required argument %q is missing for skill %q", arg.Name, v.Metadata.Name)
+				}
+			}
 		}
 	case *Command:
 		if _, ok := data["Command"]; !ok {
 			tc := TemplateCommand{
-				Name:        v.Metadata.Name,
-				Description: v.Metadata.Description,
-				Dir:         v.Directory,
-				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Name:         v.Metadata.Name,
+				Description:  v.Metadata.Description,
+				ArgumentHint: v.Spec.ArgumentHint,
+				Arguments:    v.Spec.Arguments,
+				Dir:          v.Directory,
+				Path:         filepath.Join(v.Directory, v.Metadata.Name+".md"),
 			}
 			data["Command"] = tc
 		}
 		data["Models"] = v.Spec.Models
 		data["Tools"] = v.Spec.Tools
-		data["Hints"] = v.Spec.Hints
+		data["ArgumentHint"] = v.Spec.ArgumentHint
+		data["Arguments"] = v.Spec.Arguments
 
 		// Map arguments
 		if len(opts.Args) > 0 {
-			// Provide `.Args` as a slice for complex usage
 			data["Args"] = opts.Args
-
-			// Positional mappings: $1, $2 (note: 1-indexed for templates to match bash style)
 			for i, arg := range opts.Args {
 				data[fmt.Sprintf("%d", i+1)] = arg
 			}
+		}
 
-			// Hint mappings
-			for i, hint := range v.Spec.Hints {
-				if i < len(opts.Args) {
-					data[hint] = opts.Args[i]
+		for i, arg := range v.Spec.Arguments {
+			if i < len(opts.Args) && opts.Args[i] != "" {
+				data[arg.Name] = opts.Args[i]
+			} else if _, ok := data[arg.Name]; !ok || data[arg.Name] == "" {
+				if arg.Default != "" {
+					data[arg.Name] = arg.Default
+				}
+			}
+
+			if arg.Required {
+				val, ok := data[arg.Name]
+				if !ok || val == "" || val == nil {
+					return nil, fmt.Errorf("required argument %q is missing for command %q", arg.Name, v.Metadata.Name)
 				}
 			}
 		}
 	case *Decision:
 		if _, ok := data["Decision"]; !ok {
 			td := TemplateDecision{
-				Name:        v.Metadata.Name,
-				Description: v.Metadata.Description,
-				Dir:         v.Directory,
-				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Name:         v.Metadata.Name,
+				Description:  v.Metadata.Description,
+				ArgumentHint: v.Spec.ArgumentHint,
+				Arguments:    v.Spec.Arguments,
+				Dir:          v.Directory,
+				Path:         filepath.Join(v.Directory, v.Metadata.Name+".md"),
 			}
 			data["Decision"] = td
 		}
 		data["Models"] = v.Spec.Models
-		data["Hints"] = v.Spec.Hints
 		data["Questions"] = v.Spec.Questions
+		data["ArgumentHint"] = v.Spec.ArgumentHint
+		data["Arguments"] = v.Spec.Arguments
 
 		// Map arguments
 		if len(opts.Args) > 0 {
@@ -300,9 +355,21 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 			for i, arg := range opts.Args {
 				data[fmt.Sprintf("%d", i+1)] = arg
 			}
-			for i, hint := range v.Spec.Hints {
-				if i < len(opts.Args) {
-					data[hint] = opts.Args[i]
+		}
+
+		for i, arg := range v.Spec.Arguments {
+			if i < len(opts.Args) && opts.Args[i] != "" {
+				data[arg.Name] = opts.Args[i]
+			} else if _, ok := data[arg.Name]; !ok || data[arg.Name] == "" {
+				if arg.Default != "" {
+					data[arg.Name] = arg.Default
+				}
+			}
+
+			if arg.Required {
+				val, ok := data[arg.Name]
+				if !ok || val == "" || val == nil {
+					return nil, fmt.Errorf("required argument %q is missing for decision %q", arg.Name, v.Metadata.Name)
 				}
 			}
 		}
@@ -321,7 +388,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) map[string]any {
 		}
 	}
 
-	return data
+	return data, nil
 }
 
 func getInstructions(res Resource) string {

@@ -111,10 +111,11 @@ type CommandSpec struct {
 	// Tools is a list of resource refs (names or paths) restricting which
 	// Tool resources can be used while executing this command.
 	Tools []string `yaml:"tools,omitempty"`
-	// Hints is an ordered list of argument hints (e.g., ["ticker", "year"])
-	// that UIs can use for autocompletion and runtimes can use for positional
-	// template substitution.
-	Hints []string `yaml:"hints,omitempty"`
+	// ArgumentHint is a single-line text hint telling the agent or user what
+	// input format or example to provide upon invocation.
+	ArgumentHint string `yaml:"argumentHint,omitempty"`
+	// Arguments is the list of structured parameters accepted by the command.
+	Arguments []Argument `yaml:"arguments,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the CommandSpec.
@@ -132,9 +133,9 @@ func (in *CommandSpec) DeepCopy() *CommandSpec {
 		out.Tools = make([]string, len(in.Tools))
 		copy(out.Tools, in.Tools)
 	}
-	if in.Hints != nil {
-		out.Hints = make([]string, len(in.Hints))
-		copy(out.Hints, in.Hints)
+	if in.Arguments != nil {
+		out.Arguments = make([]Argument, len(in.Arguments))
+		copy(out.Arguments, in.Arguments)
 	}
 	return out
 }

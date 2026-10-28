@@ -225,6 +225,7 @@ func executeRender(out io.Writer, args []string) error {
 		rendered, err = v.Render(&warp.SkillRenderOptions{
 			Workspace: reg.WorkspaceSpec(),
 			Project:   proj,
+			Args:      posArgs,
 		})
 	case *warp.Context:
 		rendered, err = v.Render(&warp.ContextRenderOptions{

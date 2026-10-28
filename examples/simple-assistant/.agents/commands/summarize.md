@@ -6,7 +6,12 @@ metadata:
   description: Create a concise summary of a topic.
 spec:
   models: ["gpt-4o-mini"]
-  hints: ["topic", "length"]
+  arguments:
+    - name: topic
+      description: Topic to summarize
+    - name: length
+      description: Length of summary
+      default: brief
 ---
 # Summarize Command
 

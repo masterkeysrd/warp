@@ -349,10 +349,21 @@ shared metadata header.
 
 #### `spec` fields
 
-| Field     | Type     | Description                                                                              |
-|-----------|----------|------------------------------------------------------------------------------------------|
-| `useWhen` | string   | Explicit routing instructions to the LLM on when to trigger this skill (e.g. "Use this when..."). |
-| `keywords`| string[] | Array of semantic tags used for discovery and prompting.                                 |
+| Field          | Type         | Description                                                                              |
+|----------------|--------------|------------------------------------------------------------------------------------------|
+| `useWhen`      | string       | Explicit routing instructions to the LLM on when to trigger this skill (e.g. "Use this when..."). |
+| `keywords`     | string[]     | Array of semantic tags used for discovery and prompting.                                 |
+| `argumentHint` | string       | Single-line hint indicating expected argument format upon invocation.                    |
+| `arguments`    | Argument[]   | Structured parameters accepted by the skill.                                             |
+
+##### `Argument` fields
+
+| Field         | Type    | Description                                                                             |
+|---------------|---------|-----------------------------------------------------------------------------------------|
+| `name`        | string  | Parameter identifier, accessible as `$name` or `{{.name}}`.                            |
+| `description` | string  | Guidance describing what this parameter is for.                                         |
+| `required`    | boolean | Whether the argument must be supplied upon invocation.                                  |
+| `default`     | string  | Default fallback value if the argument is omitted.                                      |
 
 _Note: The Markdown body below the closing YAML delimiter automatically becomes the `instructions` field._
 
@@ -390,11 +401,12 @@ Markdown body.
 
 #### `spec` fields
 
-| Field    | Type     | Required | Description                                                         |
-|----------|----------|:--------:|---------------------------------------------------------------------|
-| `models` | string[] |          | Preferred models for this command. Overrides agent defaults.        |
-| `tools`  | string[] |          | Tools allowed during this command execution.                        |
-| `hints`  | string[] |          | Ordered list of argument names for UI and templates.                |
+| Field          | Type         | Required | Description                                                         |
+|----------------|--------------|:--------:|---------------------------------------------------------------------|
+| `models`       | string[]     |          | Preferred models for this command. Overrides agent defaults.        |
+| `tools`        | string[]     |          | Tools allowed during this command execution.                        |
+| `argumentHint` | string       |          | Single-line hint indicating expected argument format upon invocation. |
+| `arguments`    | Argument[]   |          | Structured parameters accepted by this command.                     |
 
 #### Full example
 
@@ -409,7 +421,13 @@ metadata:
 spec:
   models: ["gpt-4o-mini"]
   tools: ["local/Tool/read-file"]
-  hints: ["ticker", "year"]
+  arguments:
+    - name: ticker
+      description: Stock ticker symbol
+      required: true
+    - name: year
+      description: Target year
+      default: "2026"
 ---
 
 # Generate Report
@@ -447,11 +465,12 @@ authored in the Markdown body of the file, while structured questions and criter
 
 #### `spec` fields
 
-| Field       | Type     | Required | Description                                                                                              |
-|-------------|----------|:--------:|----------------------------------------------------------------------------------------------------------|
-| `models`    | string[] |          | Prioritized list of decision model identifiers (e.g., `["typesafe/jev-latest", "ollama/nimble"]`). Overrides workspace/provider defaults. |
-| `hints`     | string[] |          | Ordered list of argument names for UI and positional template substitution in `instructions`.            |
-| `questions` | object[] |          | List of structured questions (`predicate`, `choice`, `score`) evaluated by this decision.                |
+| Field          | Type         | Required | Description                                                                                              |
+|----------------|--------------|:--------:|----------------------------------------------------------------------------------------------------------|
+| `models`       | string[]     |          | Prioritized list of decision model identifiers (e.g., `["typesafe/jev-latest", "ollama/nimble"]`). Overrides workspace/provider defaults. |
+| `argumentHint` | string       |          | Single-line hint indicating expected argument format upon invocation.                                    |
+| `arguments`    | Argument[]   |          | Structured parameters accepted by this decision.                                                         |
+| `questions`    | object[]     |          | List of structured questions (`predicate`, `choice`, `score`) evaluated by this decision.                |
 
 > `instructions` is **not** written in the YAML front-matter when using Markdown format. It is populated
 > automatically from the Markdown body below the closing `---`.
@@ -1318,8 +1337,8 @@ You can use shell-style variables directly in your Markdown instructions:
 
 - **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
 - **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`
-- **Positional Arguments:** `$1`, `$2` (used in `Command` and `Decision` resources)
-- **Argument Hints:** If a `Command` or `Decision` defines `hints: ["ticker"]`, you can use `$ticker` to refer to the first positional argument.
+- **Positional Arguments:** `$1`, `$2` (used in `Command`, `Decision`, and `Skill` resources)
+- **Argument References:** When a resource defines arguments (e.g. `arguments: [{name: "ticker"}]`), you can use `$ticker` (or `{{.ticker}}`) to refer to the argument.
 - **Escaping:** Use `$$` to output a literal `$`.
 
 _Under the hood, the runtime translates `$Var` into Go template syntax `{{.Var}}` and `$1` into `{{index . "1"}}`._
@@ -1332,7 +1351,7 @@ To minimize boilerplate, the template context lifts common metadata and spec fie
 * `DisplayName` (from `metadata.displayName`, falls back to `Name`)
 * `Description` (from `metadata.description`)
 * `Labels` (from `metadata.labels`)
-* `Models`, `Skills`, `Tools`, `Commands`, `Subagents`, `Triggers`, `Hints`, `Questions`, `Temperature`, `Args` (lifted from the respective `spec` fields and render arguments)
+* `Models`, `Skills`, `Tools`, `Commands`, `Subagents`, `Triggers`, `Questions`, `Temperature`, `Args`, `ArgumentHint`, `Arguments` (lifted from the respective `spec` fields and render arguments)
 
 ### Scoped Template Objects
 
@@ -1344,9 +1363,9 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Project}}` | `.Name`, `.DisplayName`, `.Dir` | Active project slug, display name, and absolute directory path (also available as `$ProjectDir`). |
 | `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
 | `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`) for the agent. |
-| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path` | Skill metadata, routing hints, directory, and file path. |
-| `{{.Command}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Tools` | Command metadata, directory, file path, and tools. |
-| `{{.Decision}}` | `.Name`, `.Description`, `.Dir`, `.Path` | Decision metadata, directory, and file path. |
+| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, argument definitions, directory, and file path. |
+| `{{.Command}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, argument definitions, directory, file path, and tools. |
+| `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |
 
 ### Advanced Templating
 

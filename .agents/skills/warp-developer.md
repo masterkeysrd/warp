@@ -33,8 +33,9 @@ Each resource has specific fields in its `spec` block:
 |------|----------------|
 | **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
 | **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `policies` (Policies) |
-| **Command** | `models` (string[]), `tools` (string[]), `hints` (string[]) |
-| **Decision** | `models` (string[]), `hints` (string[]), `questions` (DecisionQuestion[]) |
+| **Skill** | `useWhen` (string), `keywords` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
+| **Command** | `models` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
+| **Decision** | `models` (string[]), `argumentHint` (string), `arguments` (Argument[]), `questions` (DecisionQuestion[]) |
 | **Rule** | `triggers` (RuleTriggers: `always`, `globs`, `useWhen`, `keywords`, `decision`, `tools`), `priority` (int) |
 | **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
 | **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `outputSchema` (JSON Schema), `annotations` (ToolAnnotation) |

@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -11,7 +12,10 @@ func TestTemplateRender_Shorthand(t *testing.T) {
 		},
 		Spec: CommandSpec{
 			Instructions: "Hello $1, this is $hint1 and ${hint2}.",
-			Hints:        []string{"hint1", "hint2"},
+			Arguments: []Argument{
+				{Name: "hint1"},
+				{Name: "hint2"},
+			},
 		},
 	}
 
@@ -201,8 +205,11 @@ func TestCommandRender(t *testing.T) {
 			},
 		},
 		Spec: CommandSpec{
-			Hints:        []string{"ticket", "env"},
-			Instructions: "Command: {{.Command.Name}} | Dir: {{.Command.Dir}} | Project: {{.Project.Name}} | Args: $1, $2 | Hints: $ticket, $env",
+			Arguments: []Argument{
+				{Name: "ticket"},
+				{Name: "env"},
+			},
+			Instructions: "Command: {{.Command.Name}} | Dir: {{.Command.Dir}} | Project: {{.Project.Name}} | Args: $1, $2 | Arguments: $ticket, $env",
 		},
 	}
 
@@ -217,7 +224,7 @@ func TestCommandRender(t *testing.T) {
 		t.Fatalf("Command.Render failed: %v", err)
 	}
 
-	expected := "Command: test-cmd | Dir: /Users/user/code/warp/commands | Project: cli | Args: TICKET-123, prod | Hints: TICKET-123, prod"
+	expected := "Command: test-cmd | Dir: /Users/user/code/warp/commands | Project: cli | Args: TICKET-123, prod | Arguments: TICKET-123, prod"
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}
@@ -291,6 +298,86 @@ func TestSkillRender(t *testing.T) {
 	}
 	if resNil != "" {
 		t.Errorf("nil Skill should render empty string, got %q", resNil)
+	}
+}
+
+func TestSkillRender_Arguments(t *testing.T) {
+	skill := &Skill{
+		BaseResource: BaseResource{
+			Metadata: Metadata{
+				Name: "code-review",
+			},
+		},
+		Spec: SkillSpec{
+			ArgumentHint: "Provide the file path to review and optional focus",
+			Arguments: []Argument{
+				{
+					Name:        "file",
+					Description: "Path to file",
+					Required:    true,
+				},
+				{
+					Name:        "focus",
+					Description: "Focus area",
+					Required:    false,
+					Default:     "all",
+				},
+			},
+			Instructions: "Review $file with focus $focus (Hint: $ArgumentHint)",
+		},
+	}
+
+	// 1. With both arguments supplied
+	res, err := skill.Render(&SkillRenderOptions{
+		Args: []string{"main.go", "security"},
+	})
+	if err != nil {
+		t.Fatalf("Skill.Render failed: %v", err)
+	}
+	expected := "Review main.go with focus security (Hint: Provide the file path to review and optional focus)"
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+
+	// 2. With only the required argument supplied (default applies for focus)
+	resDefault, err := skill.Render(&SkillRenderOptions{
+		Args: []string{"main.go"},
+	})
+	if err != nil {
+		t.Fatalf("Skill.Render failed: %v", err)
+	}
+	expectedDefault := "Review main.go with focus all (Hint: Provide the file path to review and optional focus)"
+	if resDefault != expectedDefault {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expectedDefault, resDefault)
+	}
+}
+
+func TestSkillRender_RequiredArgumentMissing(t *testing.T) {
+	skill := &Skill{
+		BaseResource: BaseResource{
+			Metadata: Metadata{
+				Name: "code-review",
+			},
+		},
+		Spec: SkillSpec{
+			Arguments: []Argument{
+				{
+					Name:     "file",
+					Required: true,
+				},
+			},
+			Instructions: "Review $file",
+		},
+	}
+
+	_, err := skill.Render(&SkillRenderOptions{
+		Args: []string{},
+	})
+	if err == nil {
+		t.Fatalf("Expected error for missing required argument, got nil")
+	}
+	if !strings.Contains(err.Error(), `required argument "file" is missing for skill "code-review"`) {
+		t.Errorf("Unexpected error message: %v", err)
 	}
 }
 
@@ -397,7 +484,9 @@ func TestDecisionRender(t *testing.T) {
 			},
 		},
 		Spec: DecisionSpec{
-			Hints: []string{"branch"},
+			Arguments: []Argument{
+				{Name: "branch"},
+			},
 			Questions: []DecisionQuestion{
 				{Name: "is_safe", Type: DecisionQuestionPredicate},
 			},

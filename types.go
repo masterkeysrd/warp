@@ -90,6 +90,28 @@ func (in *ResourceFilter) DeepCopy() *ResourceFilter {
 	return out
 }
 
+// Argument defines a structured parameter accepted by a resource.
+type Argument struct {
+	// Name is the identifier for the argument, used in templating (e.g. $name).
+	Name string `yaml:"name" json:"name"`
+	// Description provides human and LLM guidance on the purpose of this argument.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Required indicates whether the argument must be supplied when invoked.
+	Required bool `yaml:"required,omitempty" json:"required,omitempty"`
+	// Default is the fallback value used when the argument is not provided.
+	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+}
+
+// DeepCopy returns a deep copy of the Argument.
+func (in *Argument) DeepCopy() *Argument {
+	if in == nil {
+		return nil
+	}
+	out := new(Argument)
+	*out = *in
+	return out
+}
+
 // BaseResource contains the fields that every resource kind shares.
 // Embed it with `yaml:",inline"` so the top-level YAML keys are promoted
 // into the enclosing struct.

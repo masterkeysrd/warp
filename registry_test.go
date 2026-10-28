@@ -1,6 +1,8 @@
 package warp
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1505,5 +1507,278 @@ func TestRuleValidation(t *testing.T) {
 	reg3.Set(agBadRule.QualifiedName(), agBadRule)
 	if err := reg3.Validate(); err == nil || !strings.Contains(err.Error(), "references missing rule") {
 		t.Errorf("expected missing rule error in agent, got %v", err)
+	}
+}
+
+func TestRegistry_Delete(t *testing.T) {
+	reg := NewRegistry(nil)
+	skill := makeSkillResource(NamespaceWorkspace, "my-skill")
+	reg.Set(skill.QualifiedName(), skill)
+
+	if _, ok := reg.get(skill.QualifiedName()); !ok {
+		t.Fatalf("expected skill to exist")
+	}
+
+	if !reg.Delete(skill.QualifiedName()) {
+		t.Errorf("expected Delete to return true for existing resource")
+	}
+
+	if _, ok := reg.get(skill.QualifiedName()); ok {
+		t.Errorf("expected skill to be deleted")
+	}
+
+	if reg.Delete(skill.QualifiedName()) {
+		t.Errorf("expected Delete to return false for already deleted resource")
+	}
+}
+
+func TestComputeReloadStats(t *testing.T) {
+	s1 := makeSkillResource(NamespaceWorkspace, "s1")
+	s2 := makeSkillResource(NamespaceWorkspace, "s2")
+	c1 := makeCommandResource(NamespaceWorkspace, "c1")
+
+	// Old: s1, c1
+	oldRes := map[string]Resource{
+		s1.QualifiedName(): s1,
+		c1.QualifiedName(): c1,
+	}
+
+	// New: s1 (modified description), s2 (added), (c1 removed)
+	s1Mod := makeSkillResource(NamespaceWorkspace, "s1")
+	s1Mod.Metadata.Description = "updated description"
+	newRes := map[string]Resource{
+		s1Mod.QualifiedName(): s1Mod,
+		s2.QualifiedName():    s2,
+	}
+
+	stats := computeReloadStats(oldRes, newRes)
+	if stats.Total.Added != 1 {
+		t.Errorf("expected Total.Added=1, got %d", stats.Total.Added)
+	}
+	if stats.Total.Updated != 1 {
+		t.Errorf("expected Total.Updated=1, got %d", stats.Total.Updated)
+	}
+	if stats.Total.Removed != 1 {
+		t.Errorf("expected Total.Removed=1, got %d", stats.Total.Removed)
+	}
+	if stats.Total.Unchanged != 0 {
+		t.Errorf("expected Total.Unchanged=0, got %d", stats.Total.Unchanged)
+	}
+	if !stats.HasChanges() {
+		t.Errorf("expected HasChanges=true")
+	}
+
+	skillStats := stats.ForKind(KindSkill)
+	if skillStats.Added != 1 || skillStats.Updated != 1 || skillStats.Removed != 0 {
+		t.Errorf("unexpected Skill stats: %+v", skillStats)
+	}
+	if !skillStats.HasChanges() {
+		t.Errorf("expected Skill HasChanges=true")
+	}
+
+	cmdStats := stats.ForKind(KindCommand)
+	if cmdStats.Added != 0 || cmdStats.Updated != 0 || cmdStats.Removed != 1 {
+		t.Errorf("unexpected Command stats: %+v", cmdStats)
+	}
+
+	ruleStats := stats.ForKind(KindRule)
+	if ruleStats.HasChanges() {
+		t.Errorf("expected Rule HasChanges=false")
+	}
+
+	var nilStats *ReloadStats
+	if nilStats.HasChanges() {
+		t.Errorf("expected nil ReloadStats HasChanges to return false")
+	}
+	if nilStats.ForKind(KindSkill).HasChanges() {
+		t.Errorf("expected nil ReloadStats ForKind to return empty stats")
+	}
+}
+
+func TestRegistry_Reload_UnsetWorkspace(t *testing.T) {
+	reg := NewRegistry(nil)
+	if _, err := reg.Reload(); err == nil {
+		t.Errorf("expected error when reloading registry with unset workspace root")
+	}
+}
+
+func TestRegistry_Reload_WorkspaceLifecycle(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "warp-reload-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	wsMd := `---
+apiVersion: warp/v1alpha1
+kind: Workspace
+metadata:
+  name: test-ws
+spec:
+  projects: ["."]
+---
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(tmpDir, ".agents")
+	if err := os.Mkdir(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	agentPath := filepath.Join(agentsDir, "agent.md")
+	agentMd := `---
+apiVersion: warp/v1alpha1
+kind: Agent
+metadata:
+  name: dev-agent
+spec:
+  description: initial agent
+---
+Initial instructions.
+`
+	if err := os.WriteFile(agentPath, []byte(agentMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmdPath := filepath.Join(agentsDir, "build.md")
+	cmdMd := `---
+apiVersion: warp/v1alpha1
+kind: Command
+metadata:
+  name: build
+spec:
+  description: build command
+---
+`
+	if err := os.WriteFile(cmdPath, []byte(cmdMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	// 1. Reload with no changes
+	stats, err := reg.Reload()
+	if err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+	if stats.HasChanges() {
+		t.Errorf("expected no changes on identical reload, got %+v", stats)
+	}
+	if stats.Total.Unchanged == 0 {
+		t.Errorf("expected unchanged resources, got 0")
+	}
+
+	// 2. Perform changes on disk:
+	// - Add skill
+	skillPath := filepath.Join(agentsDir, "test-skill.md")
+	skillMd := `---
+apiVersion: warp/v1alpha1
+kind: Skill
+metadata:
+  name: test-skill
+spec:
+  description: testing skill
+---
+`
+	if err := os.WriteFile(skillPath, []byte(skillMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// - Update agent
+	updatedAgentMd := `---
+apiVersion: warp/v1alpha1
+kind: Agent
+metadata:
+  name: dev-agent
+spec:
+  description: updated agent
+---
+Updated instructions.
+`
+	if err := os.WriteFile(agentPath, []byte(updatedAgentMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// - Delete command
+	if err := os.Remove(cmdPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload
+	stats, err = reg.Reload()
+	if err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+	if !stats.HasChanges() {
+		t.Errorf("expected changes on reload, got none")
+	}
+	if stats.Total.Added != 1 {
+		t.Errorf("expected 1 added, got %d", stats.Total.Added)
+	}
+	if stats.Total.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", stats.Total.Updated)
+	}
+	if stats.Total.Removed != 1 {
+		t.Errorf("expected 1 removed, got %d", stats.Total.Removed)
+	}
+
+	if stats.ForKind(KindSkill).Added != 1 {
+		t.Errorf("expected 1 added Skill, got %d", stats.ForKind(KindSkill).Added)
+	}
+	if stats.ForKind(KindAgent).Updated != 1 {
+		t.Errorf("expected 1 updated Agent, got %d", stats.ForKind(KindAgent).Updated)
+	}
+	if stats.ForKind(KindCommand).Removed != 1 {
+		t.Errorf("expected 1 removed Command, got %d", stats.ForKind(KindCommand).Removed)
+	}
+
+	// Check registry state
+	projects := reg.ListProjects()
+	if len(projects) == 0 {
+		t.Fatalf("expected at least 1 project")
+	}
+	scoped := reg.Project(projects[0].Name)
+
+	if _, ok := scoped.ResolveResource("test-skill"); !ok {
+		t.Errorf("expected test-skill to be resolvable after reload")
+	}
+	if _, ok := scoped.ResolveResource("build"); ok {
+		t.Errorf("expected deleted build command not to be resolvable")
+	}
+	resAgent, ok := scoped.ResolveResource("dev-agent")
+	if !ok {
+		t.Fatalf("expected dev-agent to be resolvable")
+	}
+	ag, ok := resAgent.(*Agent)
+	if !ok || ag.Spec.Instructions != "Updated instructions." {
+		t.Errorf("expected updated instructions, got %v", ag)
+	}
+
+	// 3. ScopedRegistry Reload
+	scopedStats, err := scoped.Reload()
+	if err != nil {
+		t.Fatalf("ScopedRegistry.Reload failed: %v", err)
+	}
+	if scopedStats.HasChanges() {
+		t.Errorf("expected no changes on consecutive scoped reload, got %+v", scopedStats)
+	}
+}
+
+func TestRegistry_Providers(t *testing.T) {
+	reg := NewRegistry(nil)
+	if len(reg.Providers()) != 0 {
+		t.Errorf("expected 0 providers, got %d", len(reg.Providers()))
+	}
+
+	p := &FSResourceProvider{}
+	reg.SetProviders(p)
+	providers := reg.Providers()
+	if len(providers) != 1 || providers[0] != p {
+		t.Errorf("unexpected providers: %v", providers)
 	}
 }

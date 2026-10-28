@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/masterkeysrd/warp/internal/fetcher"
@@ -263,6 +264,8 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		// Update registry workspace pointer now that Def is set.
 		reg.workspace = ws
 	}
+
+	reg.providers = slices.Clone(providers)
 
 	return reg, nil
 }

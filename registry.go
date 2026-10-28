@@ -5,6 +5,7 @@ import (
 	"maps"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -48,6 +49,7 @@ type Registry struct {
 	workspace *Workspace
 	projects  map[string]*Project
 	warnings  []string
+	providers []ResourceProvider
 }
 
 // NewRegistry returns an empty Registry bound to the given workspace spec.
@@ -113,11 +115,155 @@ func (r *Registry) ProjectFromPath(absPath string) (*Project, bool) {
 	return best, best != nil
 }
 
-// WorkspaceSpec returns the immutable workspace specification.
-func (r *Registry) WorkspaceSpec() *Workspace { return r.workspace }
+// ResourceStats records the number of added, updated, removed, and unchanged resources.
+type ResourceStats struct {
+	Added     int `json:"added"`
+	Updated   int `json:"updated"`
+	Removed   int `json:"removed"`
+	Unchanged int `json:"unchanged"`
+}
 
-// Warnings returns non-fatal issues collected during loading.
-func (r *Registry) Warnings() []string { return r.warnings }
+// HasChanges reports whether any resources were added, updated, or removed.
+func (s ResourceStats) HasChanges() bool {
+	return s.Added > 0 || s.Updated > 0 || s.Removed > 0
+}
+
+// ReloadStats contains total resource counts and a breakdown by resource Kind.
+type ReloadStats struct {
+	Total  ResourceStats          `json:"total"`
+	ByKind map[Kind]ResourceStats `json:"byKind"`
+}
+
+// ForKind returns the resource change stats for a specific kind.
+func (s *ReloadStats) ForKind(kind Kind) ResourceStats {
+	if s == nil || s.ByKind == nil {
+		return ResourceStats{}
+	}
+	return s.ByKind[kind]
+}
+
+// HasChanges reports whether any resources were added, updated, or removed across all kinds.
+func (s *ReloadStats) HasChanges() bool {
+	if s == nil {
+		return false
+	}
+	return s.Total.HasChanges()
+}
+
+// WorkspaceSpec returns the workspace specification. Thread-safe.
+func (r *Registry) WorkspaceSpec() *Workspace {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.workspace
+}
+
+// Warnings returns non-fatal issues collected during loading. Thread-safe.
+func (r *Registry) Warnings() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return slices.Clone(r.warnings)
+}
+
+// Providers returns a copy of the resource providers configured on this registry. Thread-safe.
+func (r *Registry) Providers() []ResourceProvider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return slices.Clone(r.providers)
+}
+
+// SetProviders updates the resource providers for this registry. Thread-safe.
+func (r *Registry) SetProviders(providers ...ResourceProvider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.providers = slices.Clone(providers)
+}
+
+// Delete removes a resource by its qualified name. Returns true if the resource
+// existed and was removed, false otherwise. Thread-safe.
+func (r *Registry) Delete(qualifiedName string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.resources[qualifiedName]; ok {
+		delete(r.resources, qualifiedName)
+		return true
+	}
+	return false
+}
+
+// Reload re-reads the workspace from disk and updates the registry in-place.
+// It returns ReloadStats detailing added, updated, removed, and unchanged resources,
+// both in total and broken down by Kind.
+func (r *Registry) Reload() (*ReloadStats, error) {
+	if r == nil {
+		return nil, fmt.Errorf("registry is nil")
+	}
+
+	r.mu.RLock()
+	if r.workspace == nil || r.workspace.RootPath == "" {
+		r.mu.RUnlock()
+		return nil, fmt.Errorf("cannot reload registry: workspace root path is not set")
+	}
+	rootPath := r.workspace.RootPath
+	providers := slices.Clone(r.providers)
+	r.mu.RUnlock()
+
+	newReg, err := LoadWorkspace(rootPath, providers...)
+	if err != nil {
+		return nil, fmt.Errorf("reload workspace: %w", err)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	stats := computeReloadStats(r.resources, newReg.resources)
+
+	r.resources = newReg.resources
+	r.workspace = newReg.workspace
+	r.projects = newReg.projects
+	r.warnings = newReg.warnings
+	r.providers = newReg.providers
+
+	return stats, nil
+}
+
+// computeReloadStats compares the old and new resource maps and computes the changes.
+func computeReloadStats(oldResources, newResources map[string]Resource) *ReloadStats {
+	stats := &ReloadStats{
+		ByKind: make(map[Kind]ResourceStats),
+	}
+
+	for k, newR := range newResources {
+		kind := newR.GetKind()
+		kStats := stats.ByKind[kind]
+
+		oldR, exists := oldResources[k]
+		if !exists {
+			stats.Total.Added++
+			kStats.Added++
+		} else if !reflect.DeepEqual(oldR, newR) {
+			stats.Total.Updated++
+			kStats.Updated++
+		} else {
+			stats.Total.Unchanged++
+			kStats.Unchanged++
+		}
+		stats.ByKind[kind] = kStats
+	}
+
+	for k, oldR := range oldResources {
+		if _, exists := newResources[k]; !exists {
+			kind := oldR.GetKind()
+			kStats := stats.ByKind[kind]
+
+			stats.Total.Removed++
+			kStats.Removed++
+
+			stats.ByKind[kind] = kStats
+		}
+	}
+
+	return stats
+}
 
 // Project returns a ScopedRegistry scoped to slug. Resolution methods on the
 // returned value treat slug as the highest-priority "local" namespace, and a
@@ -1081,6 +1227,14 @@ func (r *Registry) ResolveRulesForPath(targetPath string) []Rule {
 // sorted by Rule priority descending, then by name ascending.
 func (s *ScopedRegistry) ResolveRulesForPath(targetPath string) []Rule {
 	return resolveRulesForPath(s, targetPath)
+}
+
+// Reload re-reads the workspace from disk and updates the underlying registry in-place.
+func (s *ScopedRegistry) Reload() (*ReloadStats, error) {
+	if s == nil || s.base == nil {
+		return nil, fmt.Errorf("registry is nil")
+	}
+	return s.base.Reload()
 }
 
 func resolveRulesForPath(resolver Resolver, targetPath string) []Rule {

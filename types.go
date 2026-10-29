@@ -290,3 +290,20 @@ type ResolvedAgent struct {
 	Subagents []*Agent
 	Rules     []Rule
 }
+
+// ResolvedModel represents a resolved model reference paired with its owning
+// ModelProvider and declared ProviderModel metadata (when present in spec.models).
+type ResolvedModel struct {
+	// Provider is the owning ModelProvider resource in the registry, or nil for
+	// unregistered pass-through references.
+	Provider *ModelProvider
+	// Model is the matched model entry from Provider.Spec.Models, or nil when
+	// the model is ad-hoc / not listed in spec.models.
+	Model *ProviderModel
+	// ModelID is the model identifier stripped of its provider prefix
+	// (e.g., "ddalcu/Qwen3.8-27B-MLX-Serve-4bit").
+	ModelID string
+	// QualifiedID is the canonical "<provider>/<model-id>" identifier
+	// (e.g., "mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit").
+	QualifiedID string
+}

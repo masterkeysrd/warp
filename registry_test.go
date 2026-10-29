@@ -1182,6 +1182,17 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 	}
 }
 
+func resolvedQualifiedIDs(models []ResolvedModel) []string {
+	if models == nil {
+		return nil
+	}
+	out := make([]string, len(models))
+	for i, m := range models {
+		out[i] = m.QualifiedID
+	}
+	return out
+}
+
 func TestResolveModels(t *testing.T) {
 	provider := &ModelProvider{
 		BaseResource: BaseResource{
@@ -1222,24 +1233,24 @@ func TestResolveModels(t *testing.T) {
 	reg1.Set(provider.QualifiedName(), provider)
 
 	// 1a. Explicit models win; unqualified models get <defaultProvider>/ prefix
-	gotExplicit := reg1.ResolveModels(ModelRoleCompletion, "", "qwen2.5", "anthropic/claude-3-7-sonnet")
+	gotExplicit := resolvedQualifiedIDs(reg1.ResolveModels(ModelRoleCompletion, "", "qwen2.5", "anthropic/claude-3-7-sonnet"))
 	wantExplicit := []string{"local-ai/qwen2.5", "anthropic/claude-3-7-sonnet"}
 	if !slicesEqual(gotExplicit, wantExplicit) {
 		t.Errorf("explicit ResolveModels = %v, want %v", gotExplicit, wantExplicit)
 	}
 
 	// 1b. Workspace defaultModels.<role> wins when explicit is empty
-	gotWsComp := reg1.ResolveModels(ModelRoleCompletion)
+	gotWsComp := resolvedQualifiedIDs(reg1.ResolveModels(ModelRoleCompletion))
 	if !slicesEqual(gotWsComp, []string{"local-ai/ws-comp-model"}) {
 		t.Errorf("workspace completion ResolveModels = %v, want [local-ai/ws-comp-model]", gotWsComp)
 	}
-	gotWsDec := reg1.ResolveModels(ModelRoleDecision)
+	gotWsDec := resolvedQualifiedIDs(reg1.ResolveModels(ModelRoleDecision))
 	if !slicesEqual(gotWsDec, []string{"typesafe/jev-latest"}) {
 		t.Errorf("workspace decision ResolveModels = %v, want [typesafe/jev-latest]", gotWsDec)
 	}
 
 	// 1c. Falls through to DefaultProvider's defaultModels.embedding when workspace omits embedding default
-	gotProvEmb := reg1.ResolveModels(ModelRoleEmbedding)
+	gotProvEmb := resolvedQualifiedIDs(reg1.ResolveModels(ModelRoleEmbedding))
 	if !slicesEqual(gotProvEmb, []string{"local-ai/nomic-embed-text"}) {
 		t.Errorf("provider embedding ResolveModels = %v, want [local-ai/nomic-embed-text]", gotProvEmb)
 	}
@@ -1259,7 +1270,7 @@ func TestResolveModels(t *testing.T) {
 		},
 	})
 	reg2.Set(provider.QualifiedName(), provider)
-	if got := reg2.ResolveModels(ModelRoleCompletion); !slicesEqual(got, []string{"local-ai/scalar-ws-model"}) {
+	if got := resolvedQualifiedIDs(reg2.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, []string{"local-ai/scalar-ws-model"}) {
 		t.Errorf("workspace DefaultModel fallback = %v, want [local-ai/scalar-ws-model]", got)
 	}
 
@@ -1291,11 +1302,153 @@ func TestResolveModels(t *testing.T) {
 	})
 	reg3.Set(provScalar.QualifiedName(), provScalar)
 	scoped3 := reg3.Project("app")
-	if got := scoped3.ResolveModels(ModelRoleCompletion); !slicesEqual(got, []string{"simple-prov/gpt-4o"}) {
+	if got := resolvedQualifiedIDs(scoped3.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, []string{"simple-prov/gpt-4o"}) {
 		t.Errorf("scoped provider DefaultModel fallback = %v, want [simple-prov/gpt-4o]", got)
 	}
 	if got := scoped3.ResolveModels(ModelRoleDecision); got != nil {
 		t.Errorf("expected nil when no decision model is configured, got %v", got)
+	}
+}
+
+func TestResolveModels_SlashModelIDsAndCatalogLookup(t *testing.T) {
+	mlxProvider := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "mlx-serve"},
+		},
+		Spec: ModelProviderSpec{
+			Type:         "openai",
+			Endpoint:     "http://localhost:8080/v1",
+			DefaultModel: "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+			Models: []ProviderModel{
+				{
+					ID:    "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+					Name:  "qwen3.8-27b-mlx-serve-4bit",
+					Label: "Qwen 3.8 27B MLX 4-bit",
+					Limits: ProviderModelLimits{
+						Context: 32768,
+						Output:  8192,
+					},
+				},
+			},
+		},
+	}
+
+	// Workspace without DefaultProvider set
+	reg := NewRegistry(&Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "ws-mlx"},
+			},
+		},
+	})
+	reg.Set(mlxProvider.QualifiedName(), mlxProvider)
+
+	want := []string{"mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"}
+
+	// 1a. Slash-containing model ID resolves to owning provider
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "ddalcu/Qwen3.8-27B-MLX-Serve-4bit")); !slicesEqual(got, want) {
+		t.Errorf("ResolveModels(slash ID) = %v, want %v", got, want)
+	}
+
+	// 1b. Model name alias resolves to canonical <provider>/<model.id>
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "qwen3.8-27b-mlx-serve-4bit")); !slicesEqual(got, want) {
+		t.Errorf("ResolveModels(name alias) = %v, want %v", got, want)
+	}
+
+	// 1c. Already-qualified <provider>/<slash-id> is preserved
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit")); !slicesEqual(got, want) {
+		t.Errorf("ResolveModels(qualified slash ID) = %v, want %v", got, want)
+	}
+
+	// 1d. Qualified <provider>/<name-alias> canonicalizes to <provider>/<model.id>
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "mlx-serve/qwen3.8-27b-mlx-serve-4bit")); !slicesEqual(got, want) {
+		t.Errorf("ResolveModels(qualified name alias) = %v, want %v", got, want)
+	}
+
+	// 2. Provider defaultModel containing slash resolves when workspace has no defaultProvider
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, want) {
+		t.Errorf("ResolveModels(provider defaultModel with slash) = %v, want %v", got, want)
+	}
+
+	// 3. ResolveModel catalog lookup returns *ResolvedModel with Provider, Model, ModelID, and QualifiedID
+	for _, ref := range []string{
+		"",
+		"ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+		"qwen3.8-27b-mlx-serve-4bit",
+		"mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+		"mlx-serve/qwen3.8-27b-mlx-serve-4bit",
+	} {
+		var explicit []string
+		if ref != "" {
+			explicit = []string{ref}
+		}
+		rm, ok := reg.ResolveModel(ModelRoleCompletion, explicit...)
+		if !ok || rm == nil {
+			t.Fatalf("ResolveModel(%q) returned ok=%v, rm=%v", ref, ok, rm)
+		}
+		if rm.Provider == nil || rm.Provider.Metadata.Name != "mlx-serve" {
+			t.Errorf("ResolveModel(%q) provider = %v, want mlx-serve", ref, rm.Provider)
+		}
+		if rm.Model == nil {
+			t.Fatalf("ResolveModel(%q) returned nil Model", ref)
+		}
+		if rm.Model.ID != "ddalcu/Qwen3.8-27B-MLX-Serve-4bit" || rm.Model.Label != "Qwen 3.8 27B MLX 4-bit" || rm.Model.Limits.Context != 32768 {
+			t.Errorf("ResolveModel(%q) model = %+v", ref, rm.Model)
+		}
+		if rm.ModelID != "ddalcu/Qwen3.8-27B-MLX-Serve-4bit" {
+			t.Errorf("ResolveModel(%q) ModelID = %q, want %q", ref, rm.ModelID, "ddalcu/Qwen3.8-27B-MLX-Serve-4bit")
+		}
+		if rm.QualifiedID != "mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit" {
+			t.Errorf("ResolveModel(%q) QualifiedID = %q, want %q", ref, rm.QualifiedID, "mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit")
+		}
+	}
+
+	// ScopedRegistry ResolveModel also works
+	scoped := reg.Project("app")
+	if rm, ok := scoped.ResolveModel(ModelRoleCompletion, "qwen3.8-27b-mlx-serve-4bit"); !ok || rm == nil || rm.Provider == nil || rm.Model == nil || rm.QualifiedID != "mlx-serve/ddalcu/Qwen3.8-27B-MLX-Serve-4bit" {
+		t.Errorf("ScopedRegistry.ResolveModel unexpected result: rm=%+v ok=%v", rm, ok)
+	}
+
+	// 4. Unregistered pass-through reference is preserved by ResolveModels and returns ok=false on ResolveModel
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "anthropic/claude-3-7-sonnet")); !slicesEqual(got, []string{"anthropic/claude-3-7-sonnet"}) {
+		t.Errorf("ResolveModels(unregistered pass-through) = %v, want [anthropic/claude-3-7-sonnet]", got)
+	}
+	if rm, ok := reg.ResolveModel(ModelRoleCompletion, "anthropic/claude-3-7-sonnet"); ok || rm != nil {
+		t.Errorf("ResolveModel(unregistered) = (%+v, %v), want (nil, false)", rm, ok)
+	}
+
+	// 5. Fallback to capability-matching models when neither workspace nor provider sets defaultModel/defaultModels
+	capProvider := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "mlx-cap"},
+		},
+		Spec: ModelProviderSpec{
+			Type:     "openai",
+			Endpoint: "http://localhost:8080/v1",
+			Models: []ProviderModel{
+				{
+					ID:    "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+					Name:  "qwen3.8-27b-mlx-serve-4bit",
+					Label: "Qwen 3.8 27B",
+					Limits: ProviderModelLimits{
+						Context: 32768,
+					},
+				},
+			},
+		},
+	}
+	regCap := NewRegistry(nil)
+	regCap.Set(capProvider.QualifiedName(), capProvider)
+	if got := resolvedQualifiedIDs(regCap.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, []string{"mlx-cap/ddalcu/Qwen3.8-27B-MLX-Serve-4bit"}) {
+		t.Errorf("ResolveModels(capability fallback) = %v, want [mlx-cap/ddalcu/Qwen3.8-27B-MLX-Serve-4bit]", got)
 	}
 }
 

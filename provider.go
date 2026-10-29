@@ -20,6 +20,35 @@ func (in *ModelProvider) DeepCopy() *ModelProvider {
 	return out
 }
 
+func (in *ModelProvider) matchesRef(ref string) bool {
+	return in != nil && ref != "" && (in.Metadata.Name == ref || in.Spec.Type == ref || in.QualifiedName() == ref)
+}
+
+func (in *ModelProvider) findModel(ref string) *ProviderModel {
+	if in == nil || ref == "" {
+		return nil
+	}
+	for i := range in.Spec.Models {
+		if m := &in.Spec.Models[i]; m.ID == ref || (m.Name != "" && m.Name == ref) {
+			return m
+		}
+	}
+	return nil
+}
+
+func (in *ModelProvider) defaultForRole(role ModelRole) string {
+	if in == nil {
+		return ""
+	}
+	if m := in.Spec.DefaultModels.ForRole(role); m != "" {
+		return m
+	}
+	if role == ModelRoleCompletion {
+		return in.Spec.DefaultModel
+	}
+	return ""
+}
+
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
 	Type          string            `yaml:"type"`                                                   // e.g., "ollama", "openai", "anthropic", "typesafe"
@@ -150,6 +179,19 @@ func (in *ProviderModelCapabilities) SupportsEmbedding() bool {
 		return false
 	}
 	return *in.Embedding
+}
+
+func (in *ProviderModelCapabilities) supportsRole(role ModelRole) bool {
+	switch role {
+	case ModelRoleCompletion:
+		return in.SupportsCompletion()
+	case ModelRoleDecision:
+		return in.SupportsDecision()
+	case ModelRoleEmbedding:
+		return in.SupportsEmbedding()
+	default:
+		return false
+	}
 }
 
 func (in *ProviderModelCapabilities) DeepCopy() *ProviderModelCapabilities {

@@ -17,7 +17,8 @@ import (
 type Resolver interface {
 	ResolveResource(ref string) (Resource, bool)
 	ListResources(opts QueryOptions) []Resource
-	ResolveModels(role ModelRole, explicit ...string) []string
+	ResolveModels(role ModelRole, explicit ...string) []ResolvedModel
+	ResolveModel(role ModelRole, explicit ...string) (*ResolvedModel, bool)
 	ResolveRulesForPath(targetPath string) []Rule
 }
 
@@ -595,7 +596,8 @@ func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) 
 		if ref == "" {
 			return nil
 		}
-		if hasProviders {
+		m := r.findDeclaredModelLocked(ref)
+		if hasProviders && m == nil {
 			if before, _, ok := strings.Cut(ref, "/"); ok {
 				prov := before
 				if !r.hasProviderLocked(prov) {
@@ -603,7 +605,7 @@ func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) 
 				}
 			}
 		}
-		if m := r.findDeclaredModelLocked(ref); m != nil && !checkCap(m.Capabilities) {
+		if m != nil && !checkCap(m.Capabilities) {
 			return fmt.Errorf("%s defaultModels.%s %q does not support %s capability", scope, role, ref, role)
 		}
 		return nil
@@ -625,27 +627,18 @@ func validateProviderDefaultModels(name string, mp *ModelProvider) error {
 	if dm == nil || len(mp.Spec.Models) == 0 {
 		return nil
 	}
-	findModel := func(ref string) *ProviderModel {
-		for i := range mp.Spec.Models {
-			m := &mp.Spec.Models[i]
-			if m.ID == ref || m.Name == ref {
-				return m
-			}
-		}
-		return nil
-	}
 	if dm.Completion != "" {
-		if m := findModel(dm.Completion); m != nil && !m.Capabilities.SupportsCompletion() {
+		if m := mp.findModel(dm.Completion); m != nil && !m.Capabilities.SupportsCompletion() {
 			return fmt.Errorf("provider %s: defaultModels.completion %q does not support completion capability", name, dm.Completion)
 		}
 	}
 	if dm.Decision != "" {
-		if m := findModel(dm.Decision); m != nil && !m.Capabilities.SupportsDecision() {
+		if m := mp.findModel(dm.Decision); m != nil && !m.Capabilities.SupportsDecision() {
 			return fmt.Errorf("provider %s: defaultModels.decision %q does not support decision capability", name, dm.Decision)
 		}
 	}
 	if dm.Embedding != "" {
-		if m := findModel(dm.Embedding); m != nil && !m.Capabilities.SupportsEmbedding() {
+		if m := mp.findModel(dm.Embedding); m != nil && !m.Capabilities.SupportsEmbedding() {
 			return fmt.Errorf("provider %s: defaultModels.embedding %q does not support embedding capability", name, dm.Embedding)
 		}
 	}
@@ -657,29 +650,16 @@ func (r *Registry) findDeclaredModelLocked(ref string) *ProviderModel {
 		return nil
 	}
 	providers := r.findProvidersLocked()
-	if len(providers) == 0 {
-		return nil
-	}
 	if before, after, ok := strings.Cut(ref, "/"); ok {
-		prov, modelID := before, after
 		for _, mp := range providers {
-			if mp.Metadata.Name == prov || mp.Spec.Type == prov {
-				for i := range mp.Spec.Models {
-					m := &mp.Spec.Models[i]
-					if m.ID == modelID || m.Name == modelID {
-						return m
-					}
-				}
+			if mp.matchesRef(before) {
+				return mp.findModel(after)
 			}
 		}
-		return nil
 	}
 	for _, mp := range providers {
-		for i := range mp.Spec.Models {
-			m := &mp.Spec.Models[i]
-			if m.ID == ref || m.Name == ref {
-				return m
-			}
+		if m := mp.findModel(ref); m != nil {
+			return m
 		}
 	}
 	return nil
@@ -697,7 +677,7 @@ func (r *Registry) findProvidersLocked() []*ModelProvider {
 
 func (r *Registry) hasProviderLocked(ref string) bool {
 	for _, mp := range r.findProvidersLocked() {
-		if mp.Metadata.Name == ref || mp.Spec.Type == ref || mp.QualifiedName() == ref {
+		if mp.matchesRef(ref) {
 			return true
 		}
 	}
@@ -1214,23 +1194,38 @@ func (s *ScopedRegistry) ResolveAgent(ref string) (*ResolvedAgent, error) {
 	return resolveExecutableAgent(s, ref)
 }
 
-// ResolveModels returns the prioritized list of model identifiers for the given
+// ResolveModels returns the prioritized list of resolved models for the given
 // capability role, following the WARP model resolution hierarchy:
 //  1. Non-empty explicit model overrides (e.g., from Agent, Command, or Decision).
 //  2. Workspace role-specific default (spec.defaultModels.<role>), falling back
 //     to spec.defaultModel when role is ModelRoleCompletion.
-//  3. Default Provider role-specific default (spec.defaultModels.<role>), falling
-//     back to spec.defaultModel when role is ModelRoleCompletion.
+//  3. Default Provider (or effective providers') role-specific default
+//     (spec.defaultModels.<role>), falling back to spec.defaultModel when role
+//     is ModelRoleCompletion, and then capability-matching models in spec.models.
 //
-// Any resolved model lacking a "<provider>/" prefix is automatically qualified
-// with the workspace's defaultProvider when set.
-func (r *Registry) ResolveModels(role ModelRole, explicit ...string) []string {
+// Model references (including IDs containing "/" and model name aliases) are
+// matched against effective ModelProvider catalogs and canonicalized to
+// "<provider>/<model-id>".
+func (r *Registry) ResolveModels(role ModelRole, explicit ...string) []ResolvedModel {
 	return resolveModels(r, r, role, explicit)
 }
 
 // ResolveModels resolves models for the given role within this project scope.
-func (s *ScopedRegistry) ResolveModels(role ModelRole, explicit ...string) []string {
+func (s *ScopedRegistry) ResolveModels(role ModelRole, explicit ...string) []ResolvedModel {
 	return resolveModels(s.base, s, role, explicit)
+}
+
+// ResolveModel resolves a model reference (or role default when explicit is empty)
+// against effective ModelProvider resources, returning the first *ResolvedModel
+// backed by a registered provider.
+func (r *Registry) ResolveModel(role ModelRole, explicit ...string) (*ResolvedModel, bool) {
+	return resolveModel(r, r, role, explicit)
+}
+
+// ResolveModel resolves a model reference (or role default when explicit is empty)
+// within this project scope against effective ModelProvider resources.
+func (s *ScopedRegistry) ResolveModel(role ModelRole, explicit ...string) (*ResolvedModel, bool) {
+	return resolveModel(s.base, s, role, explicit)
 }
 
 // ResolveRulesForPath returns all rules applicable to the given path within this registry scope,
@@ -1272,7 +1267,16 @@ func resolveRulesForPath(resolver Resolver, targetPath string) []Rule {
 	return deduplicateRules(matched)
 }
 
-func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit []string) []string {
+func resolveModel(base *Registry, resolver Resolver, role ModelRole, explicit []string) (*ResolvedModel, bool) {
+	for _, rm := range resolveModels(base, resolver, role, explicit) {
+		if rm.Provider != nil {
+			return &rm, true
+		}
+	}
+	return nil, false
+}
+
+func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit []string) []ResolvedModel {
 	base.mu.RLock()
 	var wsSpec WorkspaceDefSpec
 	if base.workspace != nil && base.workspace.Def != nil {
@@ -1281,21 +1285,42 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 	base.mu.RUnlock()
 
 	defaultProv := wsSpec.DefaultProvider
-	qualify := func(model, prov string) string {
-		if model == "" {
-			return ""
+	providers := effectiveProviders(base, resolver, defaultProv)
+	findProvider := func(ref string) *ModelProvider {
+		for _, mp := range providers {
+			if mp.matchesRef(ref) {
+				return mp
+			}
 		}
-		if !strings.Contains(model, "/") && prov != "" && !strings.Contains(prov, "/") {
-			return prov + "/" + model
+		return nil
+	}
+	defaultMP := findProvider(defaultProv)
+
+	qualify := func(ref string, owner *ModelProvider) ResolvedModel {
+		if before, after, ok := strings.Cut(ref, "/"); ok {
+			if mp := findProvider(before); mp != nil {
+				return newResolvedModel(mp, after, before)
+			}
 		}
-		return model
+		if owner != nil {
+			return newResolvedModel(owner, ref, defaultProv)
+		}
+		for _, mp := range providers {
+			if mp.findModel(ref) != nil {
+				return newResolvedModel(mp, ref, defaultProv)
+			}
+		}
+		if defaultProv != "" && !strings.Contains(ref, "/") && !strings.Contains(defaultProv, "/") {
+			return newResolvedModel(defaultMP, ref, defaultProv)
+		}
+		return newResolvedModel(nil, ref, "")
 	}
 
 	// 1. Explicit model overrides
-	var out []string
+	var out []ResolvedModel
 	for _, m := range explicit {
 		if m != "" {
-			out = append(out, qualify(m, defaultProv))
+			out = append(out, qualify(m, nil))
 		}
 	}
 	if len(out) > 0 {
@@ -1308,51 +1333,74 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 		wsModel = wsSpec.DefaultModel
 	}
 	if wsModel != "" {
-		return []string{qualify(wsModel, defaultProv)}
+		return []ResolvedModel{qualify(wsModel, nil)}
 	}
 
-	// 3. Default Provider defaults
-	if defaultProv != "" {
-		mp := findProviderForResolution(base, resolver, defaultProv)
-		if mp != nil {
-			provModel := mp.Spec.DefaultModels.ForRole(role)
-			if provModel == "" && role == ModelRoleCompletion {
-				provModel = mp.Spec.DefaultModel
-			}
-			if provModel != "" {
-				provPrefix := mp.Metadata.Name
-				if provPrefix == "" {
-					provPrefix = defaultProv
-				}
-				return []string{qualify(provModel, provPrefix)}
+	// 3. Provider defaults, then capability-matching models in spec.models
+	for _, mp := range providers {
+		if provModel := mp.defaultForRole(role); provModel != "" {
+			return []ResolvedModel{qualify(provModel, mp)}
+		}
+	}
+	for _, mp := range providers {
+		for i := range mp.Spec.Models {
+			if m := &mp.Spec.Models[i]; m.ID != "" && m.Capabilities.supportsRole(role) {
+				out = append(out, newResolvedModel(mp, m.ID, defaultProv))
 			}
 		}
 	}
-
-	return nil
+	return out
 }
 
-func findProviderForResolution(base *Registry, resolver Resolver, ref string) *ModelProvider {
-	if res, ok := resolver.ResolveResource(ref); ok {
-		if mp, ok := res.(*ModelProvider); ok {
-			return mp
+func newResolvedModel(mp *ModelProvider, rawID, fallbackProv string) ResolvedModel {
+	m := mp.findModel(rawID)
+	id := rawID
+	if m != nil {
+		id = m.ID
+	}
+	pName := fallbackProv
+	if mp != nil {
+		if mp.Metadata.Name != "" {
+			pName = mp.Metadata.Name
+		} else if mp.Spec.Type != "" {
+			pName = mp.Spec.Type
 		}
 	}
+	if pName != "" {
+		return ResolvedModel{Provider: mp, Model: m, ModelID: id, QualifiedID: pName + "/" + id}
+	}
+	if _, after, ok := strings.Cut(id, "/"); ok {
+		return ResolvedModel{ModelID: after, QualifiedID: id}
+	}
+	return ResolvedModel{ModelID: id, QualifiedID: id}
+}
+
+func effectiveProviders(base *Registry, resolver Resolver, defaultProv string) []*ModelProvider {
+	var list []*ModelProvider
 	for _, res := range resolver.ListResources(QueryOptions{Kinds: []Kind{KindModelProvider}, Effective: true}) {
 		if mp, ok := res.(*ModelProvider); ok {
-			if mp.Metadata.Name == ref || mp.Spec.Type == ref || mp.QualifiedName() == ref {
-				return mp
+			list = append(list, mp)
+		}
+	}
+	if len(list) == 0 {
+		base.mu.RLock()
+		list = base.findProvidersLocked()
+		base.mu.RUnlock()
+		sort.Slice(list, func(i, j int) bool {
+			return list[i].QualifiedName() < list[j].QualifiedName()
+		})
+	}
+	if defaultProv != "" {
+		for i, mp := range list {
+			if mp.matchesRef(defaultProv) {
+				if i > 0 {
+					list = append([]*ModelProvider{mp}, append(list[:i], list[i+1:]...)...)
+				}
+				break
 			}
 		}
 	}
-	base.mu.RLock()
-	defer base.mu.RUnlock()
-	for _, mp := range base.findProvidersLocked() {
-		if mp.Metadata.Name == ref || mp.Spec.Type == ref || mp.QualifiedName() == ref {
-			return mp
-		}
-	}
-	return nil
+	return list
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────

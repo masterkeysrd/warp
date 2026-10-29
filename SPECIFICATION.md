@@ -124,15 +124,18 @@ created automatically with its root set to `$CWD`.
 | `decision`   | string | Default model for probabilistic decision evaluations (e.g., `"typesafe/jev-latest"`).            |
 | `embedding`  | string | Default model for vector embeddings (e.g., `"openai/text-embedding-3-small"`).                   |
 
-#### Model Resolution Precedence (`ResolveModels`)
+#### Model Resolution Precedence (`ResolveModels` & `ResolveModel`)
 
 When resolving the prioritized model list for a capability role (`completion`, `decision`, or `embedding`), a conforming runtime or `ResolveModels(role, explicit...)` evaluates sources in the following order:
 
 1. **Resource-Level Explicit Models**: Non-empty `spec.models` declared directly on the resource (`Agent`, `Command`, or `Decision`).
 2. **Workspace Role Defaults**: `workspace.spec.defaultModels.<role>`, falling back to `workspace.spec.defaultModel` when the role is `completion`.
-3. **Default Provider Role Defaults**: On the `ModelProvider` referenced by `workspace.spec.defaultProvider`, `provider.spec.defaultModels.<role>`, falling back to `provider.spec.defaultModel` when the role is `completion`.
+3. **Provider Role Defaults & Capability Fallback**: On the `ModelProvider` referenced by `workspace.spec.defaultProvider` (followed by all other effective `ModelProvider` resources in priority order when `defaultProvider` is unset or defines no default for the role), `provider.spec.defaultModels.<role>` (falling back to `provider.spec.defaultModel` when the role is `completion`), and finally any models in `provider.spec.models` whose `capabilities` support the requested role.
 
-Any resolved model identifier that omits a `<provider>/` prefix is automatically qualified with `<defaultProvider>/` when `workspace.spec.defaultProvider` is configured.
+**Catalog Qualification & Alias Canonicalization:**
+- A model reference `<prefix>/<rest>` is treated as already provider-qualified when `<prefix>` matches a registered `ModelProvider` (canonicalizing `<rest>` to `<model.id>` if `<rest>` matches a declared model's `id` or `name`), or when `<prefix>` is not a registered provider and the full string does not match any model `id` or `name` in any effective `ModelProvider` (preserving pass-through references).
+- Model references that are not prefixed by a registered provider—including bare model IDs, model `name` aliases (e.g., `qwen3.8-27b-mlx-serve-4bit`), and model IDs containing `/` (e.g., `ddalcu/Qwen3.8-27B-MLX-Serve-4bit`)—are matched against effective `ModelProvider` catalogs (`defaultProvider` first) by `id` or `name` and canonicalized to `<provider>/<model.id>`. Unlisted bare model names fall back to `<defaultProvider>/<model>` when `workspace.spec.defaultProvider` is configured.
+- `ResolveModels(role, explicit...)` returns `[]ResolvedModel` (each carrying `Provider`, `Model`, `ModelID`, and `QualifiedID`), and `ResolveModel(role, explicit...)` returns `(*ResolvedModel, bool)` for the first candidate backed by a registered `ModelProvider`.
 
 #### `WorkspacePlugin` fields
 

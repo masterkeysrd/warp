@@ -21,7 +21,7 @@ func (in *ModelProvider) DeepCopy() *ModelProvider {
 }
 
 func (in *ModelProvider) matchesRef(ref string) bool {
-	return in != nil && ref != "" && (in.Metadata.Name == ref || in.Spec.Type == ref || in.QualifiedName() == ref)
+	return in != nil && ref != "" && (in.Metadata.Name == ref || in.QualifiedName() == ref)
 }
 
 func (in *ModelProvider) findModel(ref string) *ProviderModel {

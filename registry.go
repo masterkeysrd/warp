@@ -1359,12 +1359,8 @@ func newResolvedModel(mp *ModelProvider, rawID, fallbackProv string) ResolvedMod
 		id = m.ID
 	}
 	pName := fallbackProv
-	if mp != nil {
-		if mp.Metadata.Name != "" {
-			pName = mp.Metadata.Name
-		} else if mp.Spec.Type != "" {
-			pName = mp.Spec.Type
-		}
+	if mp != nil && mp.Metadata.Name != "" {
+		pName = mp.Metadata.Name
 	}
 	if pName != "" {
 		return ResolvedModel{Provider: mp, Model: m, ModelID: id, QualifiedID: pName + "/" + id}

@@ -55,6 +55,8 @@ type TemplateAgent struct {
 type TemplateRule struct {
 	Name        string
 	Description string
+	UseWhen     string
+	Keywords    []string
 	Dir         string
 	Path        string
 	Priority    int
@@ -245,6 +247,13 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				data["Subagents"] = []string(nil)
 			}
 		}
+		if _, ok := data["Rules"]; !ok {
+			if v.Spec.Rules != nil {
+				data["Rules"] = *v.Spec.Rules
+			} else {
+				data["Rules"] = []string(nil)
+			}
+		}
 		data["Triggers"] = v.Spec.Triggers
 		if v.Spec.Temperature != nil {
 			data["Temperature"] = *v.Spec.Temperature
@@ -399,6 +408,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			tr := TemplateRule{
 				Name:        v.Metadata.Name,
 				Description: v.Metadata.Description,
+				UseWhen:     v.Spec.Triggers.UseWhen,
+				Keywords:    v.Spec.Triggers.Keywords,
 				Dir:         v.Directory,
 				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
 				Priority:    v.Spec.Priority,
@@ -407,6 +418,10 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			data["RuleDir"] = tr.Dir
 			data["RulePath"] = tr.Path
 		}
+		data["UseWhen"] = v.Spec.Triggers.UseWhen
+		data["Keywords"] = v.Spec.Triggers.Keywords
+		data["Priority"] = v.Spec.Priority
+		data["Triggers"] = v.Spec.Triggers
 	}
 
 	return data, nil

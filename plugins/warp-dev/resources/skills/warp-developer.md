@@ -20,6 +20,7 @@ Every WARP resource is a Markdown file with YAML front-matter or a pure YAML fil
 - **Skill**: Domain-specific expertise guidelines.
 - **Command**: Reusable operations an agent can invoke.
 - **Decision**: Probabilistic decision evaluations (`predicate`, `choice`, `score` questions and evaluation rubrics).
+- **Rule**: Ambient constraints, coding standards, or guardrails with multi-modal activation triggers (`always`, `globs`, `useWhen`, `keywords`, `decision`, `tools`).
 - **ModelProvider**: LLM provider configuration (API endpoints, default models).
 - **Tool**: Definition for an executable tool with parameter schema.
 - **MCP**: Model Context Protocol server integration.
@@ -31,9 +32,10 @@ Each resource has specific fields in its `spec` block:
 
 | Kind | Key Properties |
 |------|----------------|
-| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
-| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `policies` (Policies) |
-| **Skill** | `useWhen` (string), `keywords` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
+| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `rules` (string[]), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
+| **Context** | `resources` (string[]), `rules` (string[]) |
+| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `policies` (Policies) |
+| **Skill** | `useWhen` (string), `keywords` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Command** | `agent` (string), `context` (string: `inline`, `fork`, `clean`), `models` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Decision** | `models` (string[]), `argumentHint` (string), `arguments` (Argument[]), `questions` (DecisionQuestion[]) |
 | **Rule** | `triggers` (RuleTriggers: `always`, `globs`, `useWhen`, `keywords`, `decision`, `tools`), `priority` (int) |
@@ -54,6 +56,17 @@ Each resource has specific fields in its `spec` block:
 ### 4. Resource Resolution
 - **Short Name**: `my-skill` (searches through `local` -> `workspace` -> `user` -> `system` namespaces).
 - **Qualified Name**: `namespace/Kind/name` (e.g., `local/Skill/warp-developer`).
+
+### 5. Instruction Templating
+All Markdown resources render their `instructions` body via Go `text/template` plus shell-style shorthand (`$Name`, `$DisplayName`, `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$1`, `$2`, and named arguments):
+- `{{.Workspace}}`: `.Dir`, `.Path`
+- `{{.Project}}`: `.Name`, `.DisplayName`, `.Dir`
+- `{{.Context}}`: `.Path`, `.Instructions`
+- `{{.Agent}}`: `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules`
+- `{{.Skill}}`: `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`
+- `{{.Rule}}`: `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority`
+- `{{.Command}}`: `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`
+- `{{.Decision}}`: `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`
 
 ## Resource Creation
 

@@ -41,7 +41,7 @@ The `Workspace` object represents the top-level repository or workspace the agen
 | `{{.Workspace.Dir}}` | The absolute filesystem path to the workspace root. | `/Users/user/code/warp` |
 | `{{.Workspace.Path}}` | The absolute filesystem path to the `WORKSPACE.md` file. | `/Users/user/code/warp/WORKSPACE.md` |
 
-#### 3. The `Agent` Object
+#### 4. The `Agent` Object
 The agent has access to its own metadata, which is useful for creating generic, self-aware system prompts.
 
 | Variable | Description | Example |
@@ -50,11 +50,13 @@ The agent has access to its own metadata, which is useful for creating generic, 
 | `{{.Agent.Description}}` | The description of the agent. | `Explores project codebases.` |
 | `{{.Agent.Dir}}` | The absolute filesystem path to the directory containing the agent definition. | `/Users/user/code/warp/.agents` |
 | `{{.Agent.Path}}` | The absolute filesystem path to the agent definition file. | `/Users/user/code/warp/.agents/researcher.md` |
-| `{{.Agent.Skills}}` | A list of skill objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Keywords`, `.UseWhen`, and `.Path`. | `{{range .Agent.Skills}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Skills}}` | A list of skill objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Keywords`, `.UseWhen`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, and `.Path`. | `{{range .Agent.Skills}}{{.Name}}: {{.Description}}{{end}}` |
 | `{{.Agent.Tools}}` | A list of tool objects the agent has access to. Each object exposes `.Name` and `.Description`. | `{{range .Agent.Tools}}{{.Name}}: {{.Description}}{{end}}` |
-| `{{.Agent.Commands}}` | A list of command objects the agent can invoke. Each object exposes `.Name`, `.Description`, and `.Path`. | `{{range .Agent.Commands}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Commands}}` | A list of command objects the agent can invoke. Each object exposes `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, and `.Path`. | `{{range .Agent.Commands}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Subagents}}` | A list of subagent objects the agent can delegate to. Each object exposes `.Name`, `.Description`, `.Dir`, and `.Path`. | `{{range .Agent.Subagents}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Rules}}` | A list of rule objects governing the agent (sorted by priority descending). Each object exposes `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Priority`, `.Dir`, and `.Path`. | `{{range .Agent.Rules}}{{.Name}} (P{{.Priority}}): {{.UseWhen}}{{end}}` |
 
-#### 4. Global Variables (Implementor Scope)
+#### 5. Global Variables (Implementor Scope)
 Implementors of the Warp specification may inject custom runtime variables into the template via the `Globals` configuration. These are typically accessed at the root level of the template or via shorthand syntax.
 
 For example, a specific runtime might inject an environment variable like `{{.Environment}}` or `$OS`. Check the documentation of your specific Warp implementor for custom globals.
@@ -166,6 +168,33 @@ Please adhere to the project rules defined in `{{.Context.Path}}`:
 1. Always put test files in the same directory as the code being tested.
 2. If you need reference examples, check `{{.Skill.Dir}}/examples/`.
 ```
+
+---
+
+## Rule Templating
+
+Rules define ambient constraints, coding standards, or guardrails that govern agents. Like Skills, Rule templates have access to the workspace, project, context, and invoking agent, as well as the `Rule` view model.
+
+### Available Context Objects
+
+*   `{{.Project}}`: The active project scope.
+*   `{{.Context}}`: The active project's `AGENTS.md` context.
+*   `{{.Workspace}}`: The active workspace scope.
+*   `{{.Agent}}`: The optional invoking agent (`.Name`, `.Description`, `.Dir`, `.Path`).
+*   `Globals`: Any implementor-injected global variables.
+
+#### 1. The `Rule` Object
+Represents the rule being rendered (also exposes top-level shorthands `$RuleDir`, `$RulePath`, `$UseWhen`, `$Keywords`, `$Priority`, and `{{.Triggers}}`).
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `{{.Rule.Name}}` | The name of the rule. | `go-style` |
+| `{{.Rule.Description}}` | The description of the rule. | `Style guide for Go.` |
+| `{{.Rule.UseWhen}}` | Semantic trigger condition (`spec.triggers.useWhen`). | `When editing Go files.` |
+| `{{.Rule.Keywords}}` | Semantic tags (`spec.triggers.keywords`). | `["golang", "gofmt"]` |
+| `{{.Rule.Priority}}` | Numeric precedence (`spec.priority`). | `50` |
+| `{{.Rule.Dir}}` | Absolute directory path of the rule (`$RuleDir`). | `/Users/user/code/warp/.agents/rules` |
+| `{{.Rule.Path}}` | Absolute file path of the rule (`$RulePath`). | `/Users/user/code/warp/.agents/rules/go-style.md` |
 
 ---
 

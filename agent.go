@@ -147,6 +147,8 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			ta.Rules = append(ta.Rules, TemplateRule{
 				Name:        rl.Metadata.Name,
 				Description: rl.Metadata.Description,
+				UseWhen:     rl.Spec.Triggers.UseWhen,
+				Keywords:    rl.Spec.Triggers.Keywords,
 				Dir:         rl.Directory,
 				Path:        filepath.Join(rl.Directory, rl.Metadata.Name+".md"),
 				Priority:    rl.Spec.Priority,

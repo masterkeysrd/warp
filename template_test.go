@@ -571,8 +571,12 @@ func TestRuleRender(t *testing.T) {
 			},
 		},
 		Spec: RuleSpec{
-			Priority:     50,
-			Instructions: "Rule: {{.Rule.Name}} | Priority: {{.Rule.Priority}} | Project: {{.Project.Name}} | Agent: {{.Agent.Name}} | Path: {{.Rule.Path}}",
+			Priority: 50,
+			Triggers: RuleTriggers{
+				UseWhen:  "editing Go files",
+				Keywords: []string{"golang", "gofmt"},
+			},
+			Instructions: "Rule: {{.Rule.Name}} | Priority: {{.Rule.Priority}} | UseWhen: {{.Rule.UseWhen}} | Keywords: {{range .Rule.Keywords}}{{.}} {{end}}| Project: {{.Project.Name}} | Agent: {{.Agent.Name}} | Path: {{.Rule.Path}}",
 		},
 	}
 
@@ -587,7 +591,7 @@ func TestRuleRender(t *testing.T) {
 		t.Fatalf("Rule.Render failed: %v", err)
 	}
 
-	expected := "Rule: go-style | Priority: 50 | Project: backend | Agent: senior-dev | Path: /Users/user/code/warp/.agents/rules/go-style.md"
+	expected := "Rule: go-style | Priority: 50 | UseWhen: editing Go files | Keywords: golang gofmt | Project: backend | Agent: senior-dev | Path: /Users/user/code/warp/.agents/rules/go-style.md"
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}
@@ -608,7 +612,7 @@ func TestAgentRender_WithRules(t *testing.T) {
 			Metadata: Metadata{Name: "test-agent"},
 		},
 		Spec: AgentSpec{
-			Instructions: "Agent: {{.Agent.Name}} | Rules: {{range .Rules}}{{.}} {{end}} | DetailedRules: {{range .Agent.Rules}}{{.Name}}(P{{.Priority}}) {{end}}",
+			Instructions: "Agent: {{.Agent.Name}} | Rules: {{range .Rules}}{{.}} {{end}} | DetailedRules: {{range .Agent.Rules}}{{.Name}}(P{{.Priority}},UseWhen={{.UseWhen}},Keywords={{range .Keywords}}{{.}},{{end}}) {{end}}",
 		},
 	}
 
@@ -617,11 +621,23 @@ func TestAgentRender_WithRules(t *testing.T) {
 		Rules: []Rule{
 			{
 				BaseResource: BaseResource{Metadata: Metadata{Name: "sec-check"}},
-				Spec:         RuleSpec{Priority: 100},
+				Spec: RuleSpec{
+					Priority: 100,
+					Triggers: RuleTriggers{
+						UseWhen:  "writing auth code",
+						Keywords: []string{"auth", "jwt"},
+					},
+				},
 			},
 			{
 				BaseResource: BaseResource{Metadata: Metadata{Name: "style-guide"}},
-				Spec:         RuleSpec{Priority: 10},
+				Spec: RuleSpec{
+					Priority: 10,
+					Triggers: RuleTriggers{
+						UseWhen:  "formatting code",
+						Keywords: []string{"lint"},
+					},
+				},
 			},
 		},
 	}
@@ -631,7 +647,7 @@ func TestAgentRender_WithRules(t *testing.T) {
 		t.Fatalf("Agent.Render failed: %v", err)
 	}
 
-	expected := "Agent: test-agent | Rules: sec-check style-guide  | DetailedRules: sec-check(P100) style-guide(P10) "
+	expected := "Agent: test-agent | Rules: sec-check style-guide  | DetailedRules: sec-check(P100,UseWhen=writing auth code,Keywords=auth,jwt,) style-guide(P10,UseWhen=formatting code,Keywords=lint,) "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}

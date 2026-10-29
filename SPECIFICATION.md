@@ -1354,19 +1354,20 @@ To minimize boilerplate, the template context lifts common metadata and spec fie
 * `DisplayName` (from `metadata.displayName`, falls back to `Name`)
 * `Description` (from `metadata.description`)
 * `Labels` (from `metadata.labels`)
-* `Models`, `Skills`, `Tools`, `Commands`, `Subagents`, `Triggers`, `Questions`, `Temperature`, `Args`, `ArgumentHint`, `Arguments` (lifted from the respective `spec` fields and render arguments)
+* `Models`, `Skills`, `Tools`, `Commands`, `Subagents`, `Rules`, `Triggers`, `Questions`, `Temperature`, `Args`, `ArgumentHint`, `Arguments` (lifted from the respective `spec` fields and render arguments)
 
 ### Scoped Template Objects
 
-When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`), structured view models are injected into the template context:
+When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`, `Rule.Render`), structured view models are injected into the template context:
 
 | Object | Fields | Description |
 |--------|--------|-------------|
 | `{{.Workspace}}` | `.Dir`, `.Path` | Workspace root directory and path to `WORKSPACE.md` (also available as `$WorkspaceDir`, `$WorkspacePath`). |
 | `{{.Project}}` | `.Name`, `.DisplayName`, `.Dir` | Active project slug, display name, and absolute directory path (also available as `$ProjectDir`). |
 | `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
-| `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`) for the agent. |
+| `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`, `[]TemplateRule`) for the agent. |
 | `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path. |
+| `{{.Rule}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority` | Rule metadata, routing hints, priority, directory, and file path (also available as `$RuleDir`, `$RulePath`). |
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, executing agent, context mode, argument definitions, directory, file path, and tools. |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |
 

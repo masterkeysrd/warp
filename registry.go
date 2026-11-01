@@ -1047,13 +1047,13 @@ func validateToolPolicies(tp *ToolPolicies, prefix string) error {
 }
 
 func matchResourcePattern(pat, shortName, nsName, qualifiedName string) bool {
-	if m, _ := filepath.Match(pat, shortName); m {
+	if m, _ := path.Match(pat, shortName); m {
 		return true
 	}
-	if m, _ := filepath.Match(pat, nsName); m {
+	if m, _ := path.Match(pat, nsName); m {
 		return true
 	}
-	if m, _ := filepath.Match(pat, qualifiedName); m {
+	if m, _ := path.Match(pat, qualifiedName); m {
 		return true
 	}
 	return false

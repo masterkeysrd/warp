@@ -41,6 +41,12 @@ execute Warp resources without modification.
 9. [Modules and Package Management](#9-modules-and-package-management)
 10. [Standard Namespaces](#10-standard-namespaces)
 11. [Templating](#11-templating)
+12. [Runtime & Implementor Guidelines](#12-runtime--implementor-guidelines)
+   - [12.1 System Prompt Assembly & Context Hierarchy](#121-system-prompt-assembly--context-hierarchy)
+   - [12.2 Eager Injection vs. Progressive Disclosure (Advised Capabilities)](#122-eager-injection-vs-progressive-disclosure-advised-capabilities)
+   - [12.3 Tool Policy & Approval Pipeline (allow < ask < deny)](#123-tool-policy--approval-pipeline-allow--ask--deny)
+   - [12.4 Tool & MCP Execution Contracts](#124-tool--mcp-execution-contracts)
+   - [12.5 Decision Evaluation (System 1 Classifiers & Rule Activation)](#125-decision-evaluation-system-1-classifiers--rule-activation)
 
 ---
 
@@ -1106,25 +1112,66 @@ spec:
 
 ## 4. Cross-References
 
-An `Agent` resource may declare lists of skill, command, and subagent references under `spec.skills`,
-`spec.commands`, and `spec.subagents`. A reference can be either a **Qualified Name** or a **Short Name**.
+Resources within a WARP workspace do not exist in isolation; they reference each other to establish relationships, delegate execution, compose skills, configure policies, and trigger dynamic rules.
 
-- **Qualified Name**: `namespace/kind/name` (e.g. `system/Skill/python`). Directs the loader to exactly one resource in the registry.
-- **Short Name**: `name` (e.g. `python`). The loader will iterate through the standard namespaces in priority order to find the first matching kind and name.
+### 4.1 Cross-Referencing Fields
+
+The following table summarizes all cross-referencing fields supported across WARP resources:
+
+| Resource Kind | Field | Target Kind | Description |
+|---------------|-------|-------------|-------------|
+| `Agent` | `spec.skills` | `Skill` | Skills or wildcard/glob patterns available to this agent. |
+| `Agent` | `spec.commands` | `Command` | Commands or wildcard/glob patterns executable by this agent. |
+| `Agent` | `spec.subagents` | `Agent` | Subagents or wildcard/glob patterns this agent can delegate tasks to. |
+| `Agent` | `spec.rules` | `Rule` | Rules or wildcard/glob patterns evaluated for this agent. |
+| `Agent` | `spec.extends` | `Agent` | Base agent reference from which this agent inherits instructions, skills, commands, rules, and configuration. |
+| `Command` | `spec.agent` | `Agent` | Preferred or required agent reference to execute this command. |
+| `Command` | `spec.skills` | `Skill` | Skills or glob patterns eagerly loaded into context when this command executes. |
+| `Command` | `spec.rules` | `Rule` | Rules or glob patterns eagerly loaded and treated as `triggers.always: true` during command execution. |
+| `Command` | `spec.tools` | `Tool` | Tools or glob patterns explicitly enabled during this command execution. |
+| `Skill` | `spec.tools` | `Tool` | Tools or glob patterns associated with and unlocked when this skill is active. |
+| `Rule` | `spec.triggers.decision` | `Decision` | Decision evaluated to determine whether this rule triggers dynamically. |
+| `Rule` | `spec.triggers.tools` | `Tool` | Tools or glob patterns whose invocation triggers this rule's injection. |
+
+### 4.2 Reference Forms
+
+A resource reference can take one of four canonical forms:
+
+1. **Qualified Name (`namespace/kind/name`)**:
+   Unambiguously directs the loader or resolver to exactly one resource in the registry across all namespaces and kinds (e.g. `system/Skill/python`, `workspace/Tool/bash`, `plugin-git/Tool/git-status`).
+2. **Namespace-Prefixed Name (`namespace/name`)**:
+   Scopes the reference to a specific namespace when the target `Kind` is inferred from the referencing context (e.g. `system/finance` in `spec.skills` targets `system/Skill/finance`; `plugin-git/git-status` in `spec.tools` targets `plugin-git/Tool/git-status`).
+3. **Short Name (`name`)**:
+   Resolves using the standard [Search Path Priority](#54-resource-resolution-hierarchy) (`local` &rarr; `workspace` &rarr; `user` &rarr; `system` &rarr; _(plugins)_) to locate the first matching resource of the expected kind (e.g. `python`, `report`, `analyst`).
+   - **MCP Tool Short Names**: Tools dynamically materialized or exposed from a Model Context Protocol server use the double-underscore convention `<mcp_name>__<tool_name>` (e.g. `postgres__query`, `filesystem__read_file`).
+4. **Glob Patterns (`*`, `?`)**:
+   Wildcard patterns supporting standard shell glob characters (e.g. `*`, `test-*`, `postgres__*`, `plugin-git/*`, `system/*`). Conforming resolvers match glob patterns against a candidate resource's short name, namespace-prefixed name, and qualified name using forward-slash `path.Match` semantics across all loaded resources of the expected kind.
+
+### 4.3 Reference Resolution & Offline Validation
+
+A conforming loader **must** verify that every static referenced resource resolves to a loaded resource of the correct kind, applying the [resolution hierarchy](#54-resource-resolution-hierarchy). A non-glob reference that cannot be satisfied is a validation error.
+
+- **Offline MCP Tool Validation**: In offline validation scenarios (where external MCP processes have not yet connected or dynamically materialized tools into the registry via `SetMCPTools`), any tool reference in `<mcp_name>__<tool_name>` form is validated against loaded `kind: MCP` resources. The reference is valid if `<mcp_name>` matches a loaded `MCP` server in the resolution hierarchy and `<tool_name>` is not excluded by that MCP's policy filters.
+- **Glob Tolerances**: Glob patterns that resolve to zero resources do not cause load-time validation failures unless explicitly required by runtime policy.
+
+### 4.4 Example
 
 ```yaml
 spec:
+  # Agent referencing skills, commands, rules, and subagents using different forms:
   skills:
-    - system/Skill/finance   # Qualified Name: Explicitly targets the system-level finance skill
+    - system/Skill/finance     # 1. Qualified Name: explicitly targets system finance skill
+    - standard-lib/python      # 2. Namespace-Prefixed Name: targets Skill in standard-lib namespace
+    - analysis                 # 3. Short Name: resolves using search path priority
+    - db-*                     # 4. Glob Pattern: matches all skills beginning with "db-"
   commands:
-    - report                 # Short Name: Resolves using Search Path Priority
+    - report                   # Short Name: resolves to Command "report"
+    - plugin-ops/*             # Glob Pattern: matches all commands exported by plugin-ops
   subagents:
-    - analyst                # Short Name: Resolves to an Agent using Search Path Priority
+    - research/analyst         # Namespace-Prefixed Name: resolves to Agent "analyst" in "research"
+  rules:
+    - strict-compliance        # Short Name: resolves to Rule "strict-compliance"
 ```
-
-A conforming loader **must** verify that every referenced path resolves to a loaded resource of the
-correct kind, applying the [resolution hierarchy](#54-resource-resolution-hierarchy). A reference
-that cannot be satisfied is a validation error.
 
 ---
 
@@ -1296,7 +1343,7 @@ loaded Workspace.
 
 | Rule                               | Error condition                                                              |
 |------------------------------------|------------------------------------------------------------------------------|
-| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy. |
+| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy (or, in offline validation for `<mcp_name>__<tool_name>` references, `<mcp_name>` does not match any loaded `MCP` resource or `<tool_name>` is excluded by that MCP's policies). |
 
 ### 7.4 Command-specific
 
@@ -1306,7 +1353,7 @@ loaded Workspace.
 | Valid `spec.context` value          | `spec.context` is set to a value other than `inline`, `fork`, or `clean`. |
 | All `spec.skills` paths resolve     | A listed path does not match any loaded `Skill` in the resolution hierarchy. |
 | All `spec.rules` paths resolve      | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
-| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy. |
+| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy (or, in offline validation for `<mcp_name>__<tool_name>` references, `<mcp_name>` does not match any loaded `MCP` resource or `<tool_name>` is excluded by that MCP's policies). |
 | Declared `spec.models` resolve and support completion | When providers exist, a listed model or alias reference does not resolve or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
 
 ### 7.5 Workspace-specific
@@ -1339,7 +1386,7 @@ loaded Workspace.
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | Valid `triggers.decision` reference | A declared decision reference does not match any loaded `Decision` in the resolution hierarchy. |
-| Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` in the resolution hierarchy. |
+| Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` in the resolution hierarchy (or, in offline validation for `<mcp_name>__<tool_name>` references, `<mcp_name>` does not match any loaded `MCP` resource or `<tool_name>` is excluded by that MCP's policies). |
 
 ### 7.9 ModelProvider-specific
 
@@ -1349,6 +1396,14 @@ loaded Workspace.
 | Unique model `aliases` per provider | A model alias is defined more than once within the same `ModelProvider`. |
 | No alias collision with model IDs or names | A model alias matches the `id` or `name` of a different model in the same `ModelProvider`. |
 | Valid thinking strategies           | Any `spec.models[].capabilities.thinking[].type` is not one of `toggle`, `effort`, `budget`, or `adaptive`. |
+
+### 7.10 MCP-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Valid transport type                | `spec.type` is not one of `stdio`, `sse`, `http`, or `streamable-http`. |
+| Required stdio command              | `spec.type` is `stdio` (or defaulted) and `spec.command` is empty or omitted. |
+| Required remote endpoint            | `spec.type` is `sse`, `http`, or `streamable-http` and `spec.endpoint` is empty or omitted. |
 
 ---
 
@@ -1572,5 +1627,147 @@ My skills are:
 ### Custom Globals
 
 Implementors (runtimes) can pass a custom `Globals` map in the render options (e.g., `RenderOptions`, `AgentRenderOptions`, `ContextRenderOptions`) to expose additional contextual variables (such as `$PWD` or `$CI_ENV`).
+
+---
+
+## 12. Runtime & Implementor Guidelines
+
+This section establishes standard runtime behaviors and execution requirements for conforming WARP implementations, SDK harnesses, and agent host environments.
+
+### 12.1 System Prompt Assembly & Context Hierarchy
+
+A conforming runtime constructs the effective system prompt for an agent invocation through deterministic, layered composition across four contextual tiers:
+
+```
+┌────────────────────────────────────────────────────────┐
+│  1. Workspace Instructions (WORKSPACE.md)              │
+│     - Global organization standards & invariants       │
+└───────────────────────────┬────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────┐
+│  2. Project Context (AGENTS.md)                        │
+│     - Repository architecture, conventions, workflows  │
+└───────────────────────────┬────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────┐
+│  3. Agent Instructions (Agent Markdown body)           │
+│     - Role persona, core goals, advised capabilities   │
+└───────────────────────────┬────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────┐
+│  4. Dynamic & Always-On Rules (Rule Markdown bodies)   │
+│     - Injected in priority order (descending)          │
+└────────────────────────────────────────────────────────┘
+```
+
+1. **Workspace Tier (`Workspace.Render`)**:
+   Rendered from `WORKSPACE.md`. Establishes organization-wide baseline behavior, cross-project policies, security parameters, and shared architectural invariants.
+2. **Project Context Tier (`Context.Render`)**:
+   Rendered from the project-level `AGENTS.md`. Establishes repository layout, testing patterns, style conventions, build commands, and domain-specific knowledge for the active project.
+3. **Agent Tier (`Agent.Render`)**:
+   Rendered from the executing `Agent` resource. Provides the core persona, system instructions, and hydrated capability catalogs. When an agent inherits via `spec.extends`, base agent instructions are prepended or merged according to inheritance rules.
+4. **Rules Tier (`Rule.Render`)**:
+   Rendered instructions from matching rules, sorted in descending order of `priority` (highest integer priority first; equal priorities sorted deterministically by name):
+   - **Always-on Rules**: Rules configured with `spec.triggers.always: true` (or rules explicitly declared in `agent.spec.rules`) are injected directly into the system prompt at initialization.
+   - **Path-triggered Rules**: Dynamically evaluated and injected when the agent targets, reads, or edits file paths matching `spec.triggers.globs`.
+   - **Tool-triggered Rules**: Dynamically evaluated and injected into the immediate turn context when the agent prepares to invoke a tool matching `spec.triggers.tools`.
+   - **Decision-triggered Rules**: Dynamically evaluated and injected when the associated `spec.triggers.decision` condition is satisfied.
+
+Sections **must** be delimited by double newlines (`\n\n`) to maintain distinct Markdown block structures.
+
+### 12.2 Eager Injection vs. Progressive Disclosure (Advised Capabilities)
+
+To avoid saturating the LLM context window while retaining access to large toolsets and skill catalogs, WARP runtimes adhere to the principle of **Progressive Disclosure**:
+
+- **Advised Capabilities (Progressive Disclosure)**:
+  - **Skills (`agent.spec.skills`)**: Rather than inlining full skill bodies into the system prompt, runtimes expose skills as an advised capability catalog (`Name`, `Description`, `ArgumentHint`, and `UseWhen`/`Keywords`). The agent reasons about when a skill is needed; only when a skill is activated are its detailed instructions and associated tools (`skill.spec.tools`) loaded into conversational context.
+  - **Commands (`agent.spec.commands`)**: Declared commands are presented as compact invocation definitions (`Name`, `Description`, `ArgumentHint`, and arguments). Full command instructions are held out until invoked.
+  - **Subagents (`agent.spec.subagents`)**: Declared subagents are presented with their names, descriptions, and delegable scopes. Instead of merging subagent instructions into the primary session, delegation occurs via subagent handoff or structured subagent invocation calls.
+
+- **Eager Injection**:
+  - **Always-on Rules**: Rules with `spec.triggers.always: true` are unconditionally materialized into the system prompt during session bootstrap.
+  - **Command Execution (`ResolveCommand`)**: When an agent or human operator invokes a `Command`, the runtime switches to eager execution mode:
+    1. The executing agent is resolved (verifying that the agent permits the command).
+    2. All skills listed in `command.spec.skills` are eagerly resolved, and their full instructions are incorporated.
+    3. All rules listed in `command.spec.rules` are eagerly resolved with `spec.triggers.always` forced to `true`.
+    4. All declared tools (`command.spec.tools` and skill tools) are immediately resolved, policy-checked, and made active for the command lifecycle.
+
+### 12.3 Tool Policy & Approval Pipeline (`allow < ask < deny`)
+
+Tool safety is enforced through a monotonic three-tier action pipeline:
+
+$$\text{allow} < \text{ask} < \text{deny}$$
+
+- **`allow`**: The tool executes automatically without human intervention.
+- **`ask`**: Execution halts until a human operator explicitly approves the specific tool invocation.
+- **`deny`**: The tool cannot be executed; runtime returns an authorization error if invoked.
+
+When determining the effective policy for a candidate tool call, the runtime cascades through three policy layers where **the most restrictive policy always prevails**:
+
+1. **MCP Tool Exposure & Annotations**:
+   - `MCP` resource declarations apply `spec.policies.tools.include` and `spec.policies.tools.exclude` filters before tools are even registered. Excluded tools are completely inaccessible.
+   - MCP safety annotations (`isReadOnly`, `isDangerous`, `isOpenWorld`) from wire metadata, `spec.annotations`, and `spec.overrides` tag tools with baseline risk profiles.
+2. **Workspace Tool Ceiling**:
+   - `workspace.spec.policies.tools` sets the non-negotiable ceiling for the workspace.
+   - If the workspace policy designates `deny` or `ask` for a tool or pattern (e.g. `workspace.spec.policies.tools.ask: ["bash"]`), no downstream agent or skill can elevate that tool to `allow`.
+3. **Agent Security Policies**:
+   - `agent.spec.policies.tools` applies agent-specific constraints, configuring `allow`, `ask`, `deny`, and boolean restrictions (`readOnly`, `openWorld`, `dangerous`).
+   - If an agent marks `readOnly: true`, any non-read-only tool is denied or demoted to `ask` according to runtime safety defaults.
+
+#### Capability Unlocking (`ToolsForSkill` and `ResolveCommand`)
+
+WARP empowers agents to dynamically acquire tools when executing specific tasks without granting broad, persistent tool access:
+- When an agent activates a `Skill` or executes a `Command`, tools declared on that skill (`skill.spec.tools`) or command (`command.spec.tools`) are unlocked for that operation, even if omitted from the agent's base `policies.tools.include` list.
+- However, security boundaries are immutable: capability unlocking **cannot** override workspace policy ceilings or the agent's explicit `exclude`, `dangerous`, `openWorld`, or `readOnly` rules.
+
+### 12.4 Tool & MCP Execution Contracts
+
+WARP defines standardized execution contracts for executing tools across local processes and Model Context Protocol servers.
+
+#### Custom CLI Tools (`spec.command` present)
+
+CLI tools execute external executables using a structured, non-shell execution contract:
+
+1. **Argument Vector (`argv`)**:
+   - Each element in `spec.command` is individually rendered via `tool.RenderCommand(opts)`.
+   - Variable expressions (`$propertyName`, `$ToolDir`, `$ProjectDir`, `{{.Agent.Name}}`, etc.) are substituted directly.
+   - The resulting vector is passed directly as an `argv` array to `exec.Command` (or OS equivalent) **without invoking a system shell** (`sh -c`). This guarantees immunity from shell injection and metacharacter escaping vulnerabilities.
+2. **Standard Input (`stdin`) & Environment Variables (`env`)**:
+   - The runtime serializes the full tool arguments as formatted JSON and streams them to the subprocess's standard input (`stdin`).
+   - Custom environment variables defined in `spec.env` are rendered (expanding path shorthands such as `$ToolDir` and `$WorkspaceDir`) and merged with the base environment.
+   - Exit code `0` signals success with `stdout` captured as tool output; non-zero exit codes return `stderr` as a structured tool error.
+
+#### Built-in & Host-Native Tools (`spec.command` omitted or empty)
+
+A `Tool` resource may omit `spec.command` to define built-in runtime tools (such as sandboxed file editing, web search, or human interaction). Built-in tools are dispatched internally by the host runtime while continuing to participate in WARP naming conventions, parameter validation (`inputSchema`), dynamic skill unlocking, and policy enforcement.
+
+#### Model Context Protocol (`kind: MCP`)
+
+External tool servers communicate via the Model Context Protocol:
+
+1. **Transport Lifecycle**:
+   - **`stdio`**: The runtime spawns a local subprocess using the rendered `spec.command` and establishes JSON-RPC over stdin/stdout.
+   - **`sse`, `http`, `streamable-http`**: The runtime connects to the rendered remote `spec.endpoint` (expanding `${ENV_VAR}` tokens and path variables) with optional header and timeout configurations.
+2. **Dynamic Tool Materialization**:
+   - Upon connection or reload, the runtime queries `tools/list` from the server.
+   - Discovered tools are materialized as dynamic `Tool` resources namespaced under `<mcp_name>__<tool_name>` (e.g. `postgres__query`).
+   - The runtime registers tools via `SetMCPTools(mcpRef, tools)`, which applies `include`/`exclude` filters, transfers metadata annotations, and retains raw tool definitions to support seamless configuration reloads.
+
+### 12.5 Decision Evaluation (System 1 Classifiers & Rule Activation)
+
+Decisions provide fast, structured semantic classifications ("System 1" evaluations) that run independently of the primary conversational agent loop.
+
+1. **Rubric Rendering**:
+   - A `Decision` resource defines evaluation criteria in its Markdown body.
+   - Runtimes render the rubric using `decision.Render(opts)`, providing context for the invoking agent (`{{.Agent}}`), project directories (`$ProjectDir`), and questions (`{{.Questions}}`).
+2. **Model Selection**:
+   - Evaluated using models configured in `decision.spec.models` or workspace/provider defaults supporting the decision capability (`ModelRoleDecision` / `capabilities.decision: true`).
+3. **Structured Question Typology**:
+   - `predicate`: Evaluates to a boolean (`true`/`false`) against a specified confidence `threshold` (default `0.5`).
+   - `choice`: Selects exactly one discrete option from a predefined list of `options`.
+   - `score`: Computes a granular level selection across ordered `levels` with optional threshold or minimum confidence gating.
+4. **Rule Activation & Routing**:
+   - Rules can trigger based on semantic intent by specifying `triggers.decision: <decision_ref>`.
+   - Runtimes can evaluate decisions ahead of time (e.g. during prompt intake) or dynamically within an agent loop to activate relevant rules, skills, or subagents based on the structured decision outcome.
 
 

@@ -247,12 +247,22 @@ func (in *Policies) DeepCopy() *Policies {
 	return out
 }
 
+// ToolPolicyAction defines the action to take for a tool evaluation.
+type ToolPolicyAction string
+
+const (
+	ToolPolicyAllow ToolPolicyAction = "allow"
+	ToolPolicyAsk   ToolPolicyAction = "ask"
+	ToolPolicyDeny  ToolPolicyAction = "deny"
+)
+
 // ToolPolicies defines restrictions for tool usage.
 type ToolPolicies struct {
-	AllowDangerous *bool    `yaml:"allowDangerous,omitempty"`
-	AllowOpenWorld *bool    `yaml:"allowOpenWorld,omitempty"`
-	Include        []string `yaml:"include,omitempty"`
-	Exclude        []string `yaml:"exclude,omitempty"`
+	Dangerous ToolPolicyAction `yaml:"dangerous,omitempty" json:"dangerous,omitempty"`
+	OpenWorld ToolPolicyAction `yaml:"openWorld,omitempty" json:"openWorld,omitempty"`
+	Include   []string         `yaml:"include,omitempty" json:"include,omitempty"`
+	Exclude   []string         `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	Ask       []string         `yaml:"ask,omitempty" json:"ask,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the ToolPolicies.
@@ -261,14 +271,7 @@ func (in *ToolPolicies) DeepCopy() *ToolPolicies {
 		return nil
 	}
 	out := new(ToolPolicies)
-	if in.AllowDangerous != nil {
-		ad := *in.AllowDangerous
-		out.AllowDangerous = &ad
-	}
-	if in.AllowOpenWorld != nil {
-		aow := *in.AllowOpenWorld
-		out.AllowOpenWorld = &aow
-	}
+	*out = *in
 	if in.Include != nil {
 		out.Include = make([]string, len(in.Include))
 		copy(out.Include, in.Include)
@@ -277,18 +280,124 @@ func (in *ToolPolicies) DeepCopy() *ToolPolicies {
 		out.Exclude = make([]string, len(in.Exclude))
 		copy(out.Exclude, in.Exclude)
 	}
+	if in.Ask != nil {
+		out.Ask = make([]string, len(in.Ask))
+		copy(out.Ask, in.Ask)
+	}
 	return out
+}
+
+// EvaluateTool evaluates a single tool against this policy and returns the resulting action.
+func (p *ToolPolicies) EvaluateTool(tool *Tool) ToolPolicyAction {
+	if tool == nil {
+		return ToolPolicyDeny
+	}
+	isDangerous := tool.Spec.Annotations != nil && tool.Spec.Annotations.IsDangerous
+	isOpenWorld := tool.Spec.Annotations != nil && tool.Spec.Annotations.IsOpenWorld
+
+	if p == nil {
+		if isDangerous {
+			return ToolPolicyAsk
+		}
+		return ToolPolicyAllow
+	}
+
+	dangerous := p.Dangerous
+	if dangerous == "" {
+		dangerous = ToolPolicyAsk
+	}
+	openWorld := p.OpenWorld
+	if openWorld == "" {
+		openWorld = ToolPolicyAllow
+	}
+
+	shortName := tool.Metadata.Name
+	nsName := tool.GetNamespace() + "/" + shortName
+	qualifiedName := tool.QualifiedName()
+
+	if len(p.Include) > 0 {
+		matched := false
+		for _, pat := range p.Include {
+			if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return ToolPolicyDeny
+		}
+	}
+
+	for _, pat := range p.Exclude {
+		if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
+			return ToolPolicyDeny
+		}
+	}
+
+	if isDangerous && dangerous == ToolPolicyDeny {
+		return ToolPolicyDeny
+	}
+	if isOpenWorld && openWorld == ToolPolicyDeny {
+		return ToolPolicyDeny
+	}
+
+	for _, pat := range p.Ask {
+		if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
+			return ToolPolicyAsk
+		}
+	}
+	if isDangerous && dangerous == ToolPolicyAsk {
+		return ToolPolicyAsk
+	}
+	if isOpenWorld && openWorld == ToolPolicyAsk {
+		return ToolPolicyAsk
+	}
+
+	return ToolPolicyAllow
 }
 
 // ResolvedAgent represents a fully hydrated agent, with all inheritance merged
 // and capabilities resolved and filtered by policies.
 type ResolvedAgent struct {
-	Agent     *Agent
-	Tools     []*Tool
-	Skills    []Skill
-	Commands  []*Command
-	Subagents []*Agent
-	Rules     []Rule
+	Agent           *Agent
+	Tools           []*Tool
+	Skills          []Skill
+	Commands        []*Command
+	Subagents       []*Agent
+	Rules           []Rule
+	WorkspacePolicy *ToolPolicies
+}
+
+// StricterToolPolicyAction returns the stricter of two tool policy actions
+// based on the hierarchy: allow < ask < deny.
+func StricterToolPolicyAction(a, b ToolPolicyAction) ToolPolicyAction {
+	if a == ToolPolicyDeny || b == ToolPolicyDeny {
+		return ToolPolicyDeny
+	}
+	if a == ToolPolicyAsk || b == ToolPolicyAsk {
+		return ToolPolicyAsk
+	}
+	return ToolPolicyAllow
+}
+
+// ToolAction returns the effective ToolPolicyAction for a tool under this resolved agent,
+// evaluating both workspace and agent policies and returning the stricter action.
+func (ra *ResolvedAgent) ToolAction(tool *Tool) ToolPolicyAction {
+	if ra == nil || tool == nil {
+		return ToolPolicyDeny
+	}
+	var wsAction ToolPolicyAction = ToolPolicyAllow
+	if ra.WorkspacePolicy != nil {
+		wsAction = ra.WorkspacePolicy.EvaluateTool(tool)
+	}
+	var agAction ToolPolicyAction
+	if ra.Agent != nil && ra.Agent.Spec.Policies != nil && ra.Agent.Spec.Policies.Tools != nil {
+		agAction = ra.Agent.Spec.Policies.Tools.EvaluateTool(tool)
+	} else {
+		var nilPolicy *ToolPolicies
+		agAction = nilPolicy.EvaluateTool(tool)
+	}
+	return StricterToolPolicyAction(wsAction, agAction)
 }
 
 // ResolvedModel represents a resolved model reference paired with its owning

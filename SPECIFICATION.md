@@ -154,17 +154,28 @@ When resolving the prioritized model list for a capability role (`completion`, `
 
 #### `ToolPolicies` fields
 
-| Field            | Type     | Default | Description                                                                                 |
-|------------------|----------|---------|---------------------------------------------------------------------------------------------|
-| `allowDangerous` | bool     | `true`  | If false, rejects any tool with `annotations.isDangerous: true`.                            |
-| `allowOpenWorld` | bool     | `true`  | If false, rejects any tool with `annotations.isOpenWorld: true`.                            |
-| `include`        | string[] | `[]`    | List of patterns for tools explicitly allowed. If set, tools not matching are forbidden.    |
-| `exclude`        | string[] | `[]`    | List of patterns for tools explicitly forbidden.                                            |
+| Field       | Type     | Default   | Description                                                                                             |
+|-------------|----------|-----------|---------------------------------------------------------------------------------------------------------|
+| `dangerous` | string   | `"ask"`   | Policy for tools with `annotations.isDangerous: true` (`"allow"`, `"ask"`, or `"deny"`).              |
+| `openWorld` | string   | `"allow"` | Policy for tools with `annotations.isOpenWorld: true` (`"allow"`, `"ask"`, or `"deny"`).              |
+| `include`   | string[] | `[]`      | Glob patterns for tools explicitly allowed in the catalog. If set, non-matching tools are denied (filtered out). |
+| `exclude`   | string[] | `[]`      | Glob patterns for tools explicitly denied (filtered out).                                              |
+| `ask`       | string[] | `[]`      | Glob patterns for tools that require user confirmation (`"ask"`) before execution.                      |
 
-Patterns in `include` and `exclude` are glob-matched against three target strings:
+Patterns in `include`, `exclude`, and `ask` are glob-matched against three target strings:
 1. The tool's short name (e.g. `git-clone`).
 2. The tool's namespace and name (e.g. `workspace/git-*`), allowing easy scope/namespace limits without specifying the Kind.
 3. The tool's fully qualified name (e.g. `workspace/Tool/git-clone`).
+
+Every tool access evaluation yields one of three policy actions:
+- `allow`: The tool is exposed to the agent and may be executed without manual confirmation.
+- `ask`: The tool is exposed to the agent, but requires interactive user approval before execution.
+- `deny`: The tool is filtered out of the catalog entirely (omitted from `ResolvedAgent.Tools` and prompt rendering).
+
+Workspace tool policies establish an organizational security ceiling. Tool filtering follows a two-stage sequential filtering (intersection / ceiling) model:
+1. **Workspace Policy Filter (Ceiling)**: The complete list of effective tools is first filtered against `workspace.spec.policies.tools` (if defined). Workspace tool policies act as a filter, not a hard registry validation error. Tools evaluating to `deny` are omitted. Tools evaluating to `allow` or `ask` pass through to the agent level.
+2. **Agent Policy Filter (Narrowing)**: The remaining tools are then filtered against the agent's merged `spec.policies.tools` (if defined). Tools evaluating to `deny` are omitted from `ResolvedAgent.Tools`.
+3. **Effective Tool Action**: For any exposed tool, the effective action (`ra.ToolAction(tool)`) is the stricter of the workspace action and the agent action (`stricter(workspace, agent)` where `allow < ask < deny`). An agent can narrow policy (e.g., asking or denying a tool that the workspace allows), but can never bypass or widen a workspace restriction (e.g., if the workspace sets `dangerous: ask`, an agent specifying `dangerous: allow` still results in `ask`). Tools resolved for skills via `ToolsForSkill` are similarly filtered against the workspace tool policy ceiling.
 
 #### Full example
 
@@ -262,15 +273,17 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 3. Scalar and override fields (`models`, `temperature`, `thinking`, and `triggers`) on the child replace the parent's values when specified (non-empty / non-nil).
 4. The child's `skills`, `commands`, and `subagents` lists are **appended** to the parent's lists.
 5. The child's `policies` block is merged with the parent's:
-   - Boolean options (`allowDangerous`, `allowOpenWorld`) in the child override those of the parent if specified.
-   - Slice arrays (`include`, `exclude`) are combined using a set union.
+   - Action settings (`dangerous`, `openWorld`) in the child override those of the parent if specified (non-empty).
+   - Slice arrays (`include`, `exclude`, `ask`) are combined using a set union.
 6. The child's Markdown instructions are **concatenated** after the parent's, separated by a blank line.
 7. Circular inheritance chains (including self-extension) are detected and return an error.
 
 #### Tool Access Resolution and Policy Filtering
 
-To support secure tool execution, the engine performs the following step during agent resolution:
-1. **Policy Filter Check**: The complete list of effective tools is filtered against the agent's merged `spec.policies.tools` policy block. Only tools satisfying the policy are exposed to the agent.
+To support secure tool execution, the engine performs a two-stage sequential filtering (intersection / ceiling) process during agent resolution:
+1. **Workspace Policy Filter (Ceiling)**: The complete list of effective tools is first evaluated against `workspace.spec.policies.tools` (if defined). Tools evaluating to `deny` are filtered out.
+2. **Agent Policy Filter (Narrowing)**: The remaining tools are evaluated against the agent's merged `spec.policies.tools` (if defined). Tools evaluating to `deny` are omitted from `ResolvedAgent.Tools`.
+3. **Effective Tool Action**: For each exposed tool, the runtime inspects `ra.ToolAction(tool)`, which returns the stricter of the workspace evaluation and agent evaluation following the strictness hierarchy `allow < ask < deny`. An agent can narrow access (e.g. requiring confirmation for a tool allowed by workspace policy), but can never widen permissions blocked or guarded by the workspace (e.g., if the workspace sets `dangerous: ask` or excludes `bash`, an agent that declares `dangerous: allow` or includes `bash` still cannot bypass the workspace ceiling).
 
 #### Global Override Example
 

@@ -930,11 +930,11 @@
     },
     "ToolPolicies": {
       "properties": {
-        "allowDangerous": {
-          "type": "boolean"
+        "dangerous": {
+          "type": "string"
         },
-        "allowOpenWorld": {
-          "type": "boolean"
+        "openWorld": {
+          "type": "string"
         },
         "include": {
           "items": {
@@ -943,6 +943,12 @@
           "type": "array"
         },
         "exclude": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ask": {
           "items": {
             "type": "string"
           },
@@ -1195,11 +1201,11 @@
               },
               "ToolPolicies": {
                 "properties": {
-                  "allowDangerous": {
-                    "type": "boolean"
+                  "dangerous": {
+                    "type": "string"
                   },
-                  "allowOpenWorld": {
-                    "type": "boolean"
+                  "openWorld": {
+                    "type": "string"
                   },
                   "include": {
                     "items": {
@@ -1208,6 +1214,12 @@
                     "type": "array"
                   },
                   "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "ask": {
                     "items": {
                       "type": "string"
                     },
@@ -1409,11 +1421,11 @@
               },
               "ToolPolicies": {
                 "properties": {
-                  "allowDangerous": {
-                    "type": "boolean"
+                  "dangerous": {
+                    "type": "string"
                   },
-                  "allowOpenWorld": {
-                    "type": "boolean"
+                  "openWorld": {
+                    "type": "string"
                   },
                   "include": {
                     "items": {
@@ -1422,6 +1434,12 @@
                     "type": "array"
                   },
                   "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "ask": {
                     "items": {
                       "type": "string"
                     },

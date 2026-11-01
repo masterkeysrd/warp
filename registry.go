@@ -306,11 +306,6 @@ func (r *Registry) Validate() error {
 		}
 	}
 
-	var toolPolicy *ToolPolicies
-	if r.workspace != nil && r.workspace.Def != nil && r.workspace.Def.Spec.Policies != nil {
-		toolPolicy = r.workspace.Def.Spec.Policies.Tools
-	}
-
 	type validator interface{ ValidateBase() error }
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -328,6 +323,11 @@ func (r *Registry) Validate() error {
 		}
 		if dm := r.workspace.Def.Spec.DefaultModels; dm != nil {
 			if err := r.validateModelDefaultsLocked("workspace", dm); err != nil {
+				return err
+			}
+		}
+		if r.workspace.Def.Spec.Policies != nil && r.workspace.Def.Spec.Policies.Tools != nil {
+			if err := validateToolPolicies(r.workspace.Def.Spec.Policies.Tools, "workspace policies.tools"); err != nil {
 				return err
 			}
 		}
@@ -349,6 +349,11 @@ func (r *Registry) Validate() error {
 		}
 		ns := res.GetNamespace()
 		if agent, ok := res.(*Agent); ok {
+			if agent.Spec.Policies != nil && agent.Spec.Policies.Tools != nil {
+				if err := validateToolPolicies(agent.Spec.Policies.Tools, fmt.Sprintf("agent %s policies.tools", name)); err != nil {
+					return err
+				}
+			}
 			if agent.Spec.Extends != "" {
 				if !r.hasKindLocked(ns, KindAgent, agent.Spec.Extends) {
 					return fmt.Errorf("agent %s extends missing agent: %s", name, agent.Spec.Extends)
@@ -476,11 +481,6 @@ func (r *Registry) Validate() error {
 					lower == "workspace" || lower == "context" || lower == "plugin" {
 					return fmt.Errorf("plugin %s cannot export structural resource pattern %q", name, exp)
 				}
-			}
-		}
-		if tool, ok := res.(*Tool); ok && toolPolicy != nil {
-			if err := checkToolPolicyLocked(name, tool, toolPolicy); err != nil {
-				return fmt.Errorf("tool %s violates workspace policy: %w", name, err)
 			}
 		}
 		if mcp, ok := res.(*MCP); ok {
@@ -688,36 +688,34 @@ func (r *Registry) checkInheritanceCycleLocked(start *Agent) error {
 	return nil
 }
 
-// checkToolPolicyLocked evaluates a tool against the workspace tool policy.
-func checkToolPolicyLocked(qualifiedName string, tool *Tool, policy *ToolPolicies) error {
-	if policy.AllowDangerous != nil && !*policy.AllowDangerous {
-		if tool.Spec.Annotations != nil && tool.Spec.Annotations.IsDangerous {
-			return fmt.Errorf("dangerous tools are not allowed")
+func validateToolPolicies(tp *ToolPolicies, prefix string) error {
+	if tp == nil {
+		return nil
+	}
+	if tp.Dangerous != "" {
+		switch tp.Dangerous {
+		case ToolPolicyAllow, ToolPolicyAsk, ToolPolicyDeny:
+		default:
+			return fmt.Errorf("%s: invalid dangerous action %q (must be allow, ask, or deny)", prefix, tp.Dangerous)
 		}
 	}
-	if policy.AllowOpenWorld != nil && !*policy.AllowOpenWorld {
-		if tool.Spec.Annotations != nil && tool.Spec.Annotations.IsOpenWorld {
-			return fmt.Errorf("open world tools are not allowed")
+	if tp.OpenWorld != "" {
+		switch tp.OpenWorld {
+		case ToolPolicyAllow, ToolPolicyAsk, ToolPolicyDeny:
+		default:
+			return fmt.Errorf("%s: invalid openWorld action %q (must be allow, ask, or deny)", prefix, tp.OpenWorld)
 		}
 	}
-	shortName := tool.Metadata.Name
-	nsName := tool.GetNamespace() + "/" + shortName
-	if len(policy.Include) > 0 {
-		matched := false
-		for _, pat := range policy.Include {
-			if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return fmt.Errorf("not in include list")
-		}
+	return nil
+}
+
+// checkToolPolicyLocked evaluates a tool against the tool policy.
+func checkToolPolicyLocked(tool *Tool, policy *ToolPolicies) error {
+	if policy == nil {
+		return nil
 	}
-	for _, pat := range policy.Exclude {
-		if matchResourcePattern(pat, shortName, nsName, qualifiedName) {
-			return fmt.Errorf("matches exclude pattern %q", pat)
-		}
+	if policy.EvaluateTool(tool) == ToolPolicyDeny {
+		return fmt.Errorf("tool denied by policy")
 	}
 	return nil
 }
@@ -1468,6 +1466,10 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	tools := resolveToolsAndToolkits(resolver)
 
 	// Apply tool policy filter
+	wsPolicy := workspaceToolPolicy(resolver)
+	if wsPolicy != nil {
+		tools = filterTools(tools, wsPolicy)
+	}
 	if ag.Spec.Policies != nil && ag.Spec.Policies.Tools != nil {
 		tools = filterTools(tools, ag.Spec.Policies.Tools)
 	}
@@ -1579,12 +1581,13 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	rules = deduplicateRules(rules)
 
 	return &ResolvedAgent{
-		Agent:     ag,
-		Tools:     tools,
-		Skills:    skills,
-		Commands:  commands,
-		Subagents: subagents,
-		Rules:     rules,
+		Agent:           ag,
+		Tools:           tools,
+		Skills:          skills,
+		Commands:        commands,
+		Subagents:       subagents,
+		Rules:           rules,
+		WorkspacePolicy: wsPolicy,
 	}, nil
 }
 
@@ -1708,6 +1711,9 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 	sort.Slice(tools, func(i, j int) bool {
 		return tools[i].QualifiedName() < tools[j].QualifiedName()
 	})
+	if wsPolicy := workspaceToolPolicy(resolver); wsPolicy != nil {
+		tools = filterTools(tools, wsPolicy)
+	}
 	return tools, nil
 }
 
@@ -1741,19 +1747,18 @@ func mergePolicies(parent, child *Policies) *Policies {
 		return merged
 	}
 
-	// Merge tool policies: child overrides parent booleans, unions arrays
-	if child.Tools.AllowDangerous != nil {
-		ad := *child.Tools.AllowDangerous
-		merged.Tools.AllowDangerous = &ad
+	// Merge tool policies: child overrides parent actions if non-empty, unions arrays
+	if child.Tools.Dangerous != "" {
+		merged.Tools.Dangerous = child.Tools.Dangerous
 	}
-	if child.Tools.AllowOpenWorld != nil {
-		aow := *child.Tools.AllowOpenWorld
-		merged.Tools.AllowOpenWorld = &aow
+	if child.Tools.OpenWorld != "" {
+		merged.Tools.OpenWorld = child.Tools.OpenWorld
 	}
 
-	// Union parent and child includes/excludes
+	// Union parent and child includes/excludes/ask
 	merged.Tools.Include = unionSlices(merged.Tools.Include, child.Tools.Include)
 	merged.Tools.Exclude = unionSlices(merged.Tools.Exclude, child.Tools.Exclude)
+	merged.Tools.Ask = unionSlices(merged.Tools.Ask, child.Tools.Ask)
 
 	return merged
 }
@@ -1805,14 +1810,34 @@ func deduplicateCommands(in []*Command) []*Command {
 	return out
 }
 
+func workspaceToolPolicy(resolver Resolver) *ToolPolicies {
+	var base *Registry
+	switch r := resolver.(type) {
+	case *Registry:
+		base = r
+	case *ScopedRegistry:
+		if r != nil {
+			base = r.base
+		}
+	}
+	if base == nil {
+		return nil
+	}
+	base.mu.RLock()
+	defer base.mu.RUnlock()
+	if base.workspace != nil && base.workspace.Def != nil && base.workspace.Def.Spec.Policies != nil {
+		return base.workspace.Def.Spec.Policies.Tools
+	}
+	return nil
+}
+
 func filterTools(tools []*Tool, policy *ToolPolicies) []*Tool {
 	if policy == nil {
 		return tools
 	}
 	var filtered []*Tool
 	for _, tool := range tools {
-		qn := tool.QualifiedName()
-		if err := checkToolPolicyLocked(qn, tool, policy); err == nil {
+		if policy.EvaluateTool(tool) != ToolPolicyDeny {
 			filtered = append(filtered, tool)
 		}
 	}

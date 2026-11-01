@@ -304,28 +304,27 @@ func slicesEqual(a, b []string) bool {
 func TestAgent_Policies_Merging(t *testing.T) {
 	reg := NewRegistry(nil)
 
-	allowDangerousParent := false
-	allowOpenWorldParent := true
 	parent := agentWithSpec(NamespaceSystem, "parent", AgentSpec{
 		Policies: &Policies{
 			Tools: &ToolPolicies{
-				AllowDangerous: &allowDangerousParent,
-				AllowOpenWorld: &allowOpenWorldParent,
-				Include:        []string{"git_*"},
-				Exclude:        []string{"*dangerous*"},
+				Dangerous: ToolPolicyDeny,
+				OpenWorld: ToolPolicyAllow,
+				Include:   []string{"git_*"},
+				Exclude:   []string{"*dangerous*"},
+				Ask:       []string{"git_push"},
 			},
 		},
 	})
 	reg.Set(parent.QualifiedName(), parent)
 
-	allowDangerousChild := true
 	child := agentWithSpec(NamespaceWorkspace, "child", AgentSpec{
 		Extends: "system/Agent/parent",
 		Policies: &Policies{
 			Tools: &ToolPolicies{
-				AllowDangerous: &allowDangerousChild,
-				Include:        []string{"ssh_*"},
-				Exclude:        []string{"*evil*"},
+				Dangerous: ToolPolicyAllow,
+				Include:   []string{"ssh_*"},
+				Exclude:   []string{"*evil*"},
+				Ask:       []string{"ssh_connect"},
 			},
 		},
 	})
@@ -341,12 +340,12 @@ func TestAgent_Policies_Merging(t *testing.T) {
 		t.Fatal("expected resolved agent to have tool policies")
 	}
 
-	// Boolean overrides
-	if p.Tools.AllowDangerous == nil || !*p.Tools.AllowDangerous {
-		t.Errorf("expected AllowDangerous to be overridden to true, got %v", p.Tools.AllowDangerous)
+	// Action overrides
+	if p.Tools.Dangerous != ToolPolicyAllow {
+		t.Errorf("expected Dangerous to be overridden to allow, got %v", p.Tools.Dangerous)
 	}
-	if p.Tools.AllowOpenWorld == nil || !*p.Tools.AllowOpenWorld {
-		t.Errorf("expected AllowOpenWorld to be inherited as true, got %v", p.Tools.AllowOpenWorld)
+	if p.Tools.OpenWorld != ToolPolicyAllow {
+		t.Errorf("expected OpenWorld to be inherited as allow, got %v", p.Tools.OpenWorld)
 	}
 
 	// Slice unions (should deduplicate / union)
@@ -358,6 +357,11 @@ func TestAgent_Policies_Merging(t *testing.T) {
 	expectedExcludes := []string{"*dangerous*", "*evil*"}
 	if !slicesEqual(p.Tools.Exclude, expectedExcludes) {
 		t.Errorf("expected Exclude to be %v, got %v", expectedExcludes, p.Tools.Exclude)
+	}
+
+	expectedAsks := []string{"git_push", "ssh_connect"}
+	if !slicesEqual(p.Tools.Ask, expectedAsks) {
+		t.Errorf("expected Ask to be %v, got %v", expectedAsks, p.Tools.Ask)
 	}
 }
 
@@ -376,15 +380,13 @@ func TestAgent_ResolvedAgent_ToolFiltering(t *testing.T) {
 	reg.Set(toolC.QualifiedName(), toolC)
 
 	// Agent policy
-	allowDangerous := false
-	allowOpenWorld := false
 	agent := agentWithSpec(NamespaceWorkspace, "my-agent", AgentSpec{
 		Policies: &Policies{
 			Tools: &ToolPolicies{
-				AllowDangerous: &allowDangerous,
-				AllowOpenWorld: &allowOpenWorld,
-				Include:        []string{"git-*", "http-*"},
-				Exclude:        []string{"*clone*"},
+				Dangerous: ToolPolicyDeny,
+				OpenWorld: ToolPolicyDeny,
+				Include:   []string{"git-*", "http-*"},
+				Exclude:   []string{"*clone*"},
 			},
 		},
 	})
@@ -397,22 +399,20 @@ func TestAgent_ResolvedAgent_ToolFiltering(t *testing.T) {
 
 	// Filter logic:
 	// - git-clone: excluded by "*clone*" pattern.
-	// - rm-rf: annotation IsDangerous=true, which is forbidden (AllowDangerous=false).
-	// - http-get: annotation IsOpenWorld=true, which is forbidden (AllowOpenWorld=false).
+	// - rm-rf: annotation IsDangerous=true, which is denied (Dangerous=deny).
+	// - http-get: annotation IsOpenWorld=true, which is denied (OpenWorld=deny).
 	// None of the tools should be returned!
 	if len(resolved.Tools) != 0 {
 		t.Errorf("expected 0 tools, got %d: %v", len(resolved.Tools), resolved.Tools)
 	}
 
-	// Now allow open world and git-clone (by removing exclude, allowing dangerous)
-	allowDangerous2 := true
-	allowOpenWorld2 := true
+	// Now allow open world and dangerous (by removing exclude, allowing dangerous)
 	agent2 := agentWithSpec(NamespaceWorkspace, "my-agent-2", AgentSpec{
 		Policies: &Policies{
 			Tools: &ToolPolicies{
-				AllowDangerous: &allowDangerous2,
-				AllowOpenWorld: &allowOpenWorld2,
-				Include:        []string{"git-*", "http-*"},
+				Dangerous: ToolPolicyAllow,
+				OpenWorld: ToolPolicyAllow,
+				Include:   []string{"git-*", "http-*"},
 			},
 		},
 	})
@@ -468,6 +468,407 @@ func TestAgent_NamespaceMatching(t *testing.T) {
 		if tool.GetNamespace() != "workspace" {
 			t.Errorf("expected only workspace tools, but got: %s", tool.QualifiedName())
 		}
+	}
+}
+
+func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
+	// Setup workspace with policies
+	ws := &Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "secure-ws"},
+			},
+			Spec: WorkspaceDefSpec{
+				Policies: &Policies{
+					Tools: &ToolPolicies{
+						Dangerous: ToolPolicyDeny,
+						Include:   []string{"git-*", "read-file"},
+						Exclude:   []string{"bash"},
+					},
+				},
+			},
+		},
+	}
+
+	reg := NewRegistry(ws)
+
+	// Add tools:
+	// - git-status (safe, matches ws include)
+	// - git-push (dangerous, matches ws include but blocked by ws dangerous=deny)
+	// - bash (excluded by ws)
+	// - read-file (safe, matches ws include)
+	// - http-get (safe, not in ws include)
+	tGitStatus := makeToolResource(NamespaceWorkspace, "git-status")
+	tGitPush := makeToolResource(NamespaceWorkspace, "git-push")
+	tGitPush.Spec.Annotations = &ToolAnnotation{IsDangerous: true}
+	tBash := makeToolResource(NamespaceWorkspace, "bash")
+	tReadFile := makeToolResource(NamespaceWorkspace, "read-file")
+	tHttpGet := makeToolResource(NamespaceWorkspace, "http-get")
+
+	reg.Set(tGitStatus.QualifiedName(), tGitStatus)
+	reg.Set(tGitPush.QualifiedName(), tGitPush)
+	reg.Set(tBash.QualifiedName(), tBash)
+	reg.Set(tReadFile.QualifiedName(), tReadFile)
+	reg.Set(tHttpGet.QualifiedName(), tHttpGet)
+
+	// 1. Validate() succeeds even though the registry contains tools excluded or disallowed by workspace policy
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("Validate() should succeed with excluded tools, got: %v", err)
+	}
+
+	// 2. Agent with no policies: receives the tools allowed by workspace policy ceiling
+	// Expected: git-status, read-file
+	agentDefault := agentWithSpec(NamespaceWorkspace, "agent-default", AgentSpec{})
+	reg.Set(agentDefault.QualifiedName(), agentDefault)
+
+	resDefault, err := reg.ResolveAgent("workspace/Agent/agent-default")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-default): %v", err)
+	}
+	var defaultNames []string
+	for _, tool := range resDefault.Tools {
+		defaultNames = append(defaultNames, tool.Metadata.Name)
+	}
+	slices.Sort(defaultNames)
+	expectedDefault := []string{"git-status", "read-file"}
+	if !slicesEqual(defaultNames, expectedDefault) {
+		t.Errorf("expected default agent to get %v, got %v", expectedDefault, defaultNames)
+	}
+
+	// 3. Workspace excludes a tool (`exclude: ["bash"]`) and Agent includes it (`include: ["bash", "read-file"]`)
+	// Only `read-file` should be in resolved.Tools.
+	agentBashAndRead := agentWithSpec(NamespaceWorkspace, "agent-bash-read", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Include: []string{"bash", "read-file"},
+			},
+		},
+	})
+	reg.Set(agentBashAndRead.QualifiedName(), agentBashAndRead)
+
+	resBashRead, err := reg.ResolveAgent("workspace/Agent/agent-bash-read")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-bash-read): %v", err)
+	}
+	var bashReadNames []string
+	for _, tool := range resBashRead.Tools {
+		bashReadNames = append(bashReadNames, tool.Metadata.Name)
+	}
+	expectedBashRead := []string{"read-file"}
+	if !slicesEqual(bashReadNames, expectedBashRead) {
+		t.Errorf("expected agent with bash+read-file to get %v, got %v", expectedBashRead, bashReadNames)
+	}
+
+	// 4. Workspace sets `dangerous: deny` and Agent sets `dangerous: allow`
+	// Dangerous tool (git-push) must still be filtered out because workspace is the ceiling.
+	agentWantDangerous := agentWithSpec(NamespaceWorkspace, "agent-dangerous", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Dangerous: ToolPolicyAllow,
+				Include:   []string{"git-*"},
+			},
+		},
+	})
+	reg.Set(agentWantDangerous.QualifiedName(), agentWantDangerous)
+
+	resDangerous, err := reg.ResolveAgent("workspace/Agent/agent-dangerous")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-dangerous): %v", err)
+	}
+	for _, tool := range resDangerous.Tools {
+		if tool.Metadata.Name == "git-push" {
+			t.Errorf("expected dangerous tool git-push to be filtered out by workspace ceiling, but it was present")
+		}
+	}
+	var dangerousNames []string
+	for _, tool := range resDangerous.Tools {
+		dangerousNames = append(dangerousNames, tool.Metadata.Name)
+	}
+	expectedDangerous := []string{"git-status"}
+	if !slicesEqual(dangerousNames, expectedDangerous) {
+		t.Errorf("expected agent with dangerous: allow to get %v, got %v", expectedDangerous, dangerousNames)
+	}
+
+	// 5. Workspace sets `include: ["git-*", "read-file"]` and Agent sets `include: ["git-status", "http-get"]`
+	// Only `git-status` is in resolved.Tools (http-get was blocked by workspace, git-push was blocked by dangerous/not in agent, read-file was not in agent).
+	agentGitAndHttp := agentWithSpec(NamespaceWorkspace, "agent-git-http", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Include: []string{"git-status", "http-get"},
+			},
+		},
+	})
+	reg.Set(agentGitAndHttp.QualifiedName(), agentGitAndHttp)
+
+	resGitHttp, err := reg.ResolveAgent("workspace/Agent/agent-git-http")
+	if err != nil {
+		t.Fatalf("ResolveAgent(agent-git-http): %v", err)
+	}
+	var gitHttpNames []string
+	for _, tool := range resGitHttp.Tools {
+		gitHttpNames = append(gitHttpNames, tool.Metadata.Name)
+	}
+	expectedGitHttp := []string{"git-status"}
+	if !slicesEqual(gitHttpNames, expectedGitHttp) {
+		t.Errorf("expected agent with git-status+http-get to get %v, got %v", expectedGitHttp, gitHttpNames)
+	}
+
+	// 6. Test with ScopedRegistry as well
+	scoped := reg.Project("my-proj")
+	resScoped, err := scoped.ResolveAgent("agent-bash-read")
+	if err != nil {
+		t.Fatalf("scoped.ResolveAgent: %v", err)
+	}
+	var scopedNames []string
+	for _, tool := range resScoped.Tools {
+		scopedNames = append(scopedNames, tool.Metadata.Name)
+	}
+	if !slicesEqual(scopedNames, expectedBashRead) {
+		t.Errorf("expected scoped agent to get %v, got %v", expectedBashRead, scopedNames)
+	}
+
+	// 7. Test ResolveToolsForSkill respects workspace policy
+	skill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "my-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"git-status", "bash", "http-get", "git-push"},
+		},
+	}
+	reg.Set(skill.QualifiedName(), skill)
+
+	skillTools, err := reg.ToolsForSkill("workspace/Skill/my-skill")
+	if err != nil {
+		t.Fatalf("ToolsForSkill: %v", err)
+	}
+	var skillToolNames []string
+	for _, t := range skillTools {
+		skillToolNames = append(skillToolNames, t.Metadata.Name)
+	}
+	expectedSkillTools := []string{"git-status"}
+	if !slicesEqual(skillToolNames, expectedSkillTools) {
+		t.Errorf("expected skill tools to be filtered by workspace policy to %v, got %v", expectedSkillTools, skillToolNames)
+	}
+
+	scopedSkillTools, err := scoped.ToolsForSkill("my-skill")
+	if err != nil {
+		t.Fatalf("scoped.ToolsForSkill: %v", err)
+	}
+	var scopedSkillToolNames []string
+	for _, t := range scopedSkillTools {
+		scopedSkillToolNames = append(scopedSkillToolNames, t.Metadata.Name)
+	}
+	if !slicesEqual(scopedSkillToolNames, expectedSkillTools) {
+		t.Errorf("expected scoped skill tools to be filtered by workspace policy to %v, got %v", expectedSkillTools, scopedSkillToolNames)
+	}
+}
+
+func TestToolPolicies_EvaluateTool(t *testing.T) {
+	safeTool := makeToolResource(NamespaceWorkspace, "safe-tool")
+	dangerousTool := makeToolResource(NamespaceWorkspace, "dangerous-tool")
+	dangerousTool.Spec.Annotations = &ToolAnnotation{IsDangerous: true}
+	openWorldTool := makeToolResource(NamespaceWorkspace, "open-world-tool")
+	openWorldTool.Spec.Annotations = &ToolAnnotation{IsOpenWorld: true}
+
+	// 1. Nil tool -> deny
+	var nilPolicy *ToolPolicies
+	if act := nilPolicy.EvaluateTool(nil); act != ToolPolicyDeny {
+		t.Errorf("expected deny for nil tool, got %v", act)
+	}
+
+	// 2. Nil policy: safe -> allow, dangerous -> ask, openWorld -> allow
+	if act := nilPolicy.EvaluateTool(safeTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for safe tool with nil policy, got %v", act)
+	}
+	if act := nilPolicy.EvaluateTool(dangerousTool); act != ToolPolicyAsk {
+		t.Errorf("expected ask for dangerous tool with nil policy, got %v", act)
+	}
+	if act := nilPolicy.EvaluateTool(openWorldTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for open-world tool with nil policy, got %v", act)
+	}
+
+	// 3. Defaults when policy is empty struct: dangerous -> ask, openWorld -> allow
+	emptyPolicy := &ToolPolicies{}
+	if act := emptyPolicy.EvaluateTool(dangerousTool); act != ToolPolicyAsk {
+		t.Errorf("expected ask for dangerous tool with empty policy, got %v", act)
+	}
+	if act := emptyPolicy.EvaluateTool(openWorldTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for open-world tool with empty policy, got %v", act)
+	}
+
+	// 4. Dangerous: allow / deny
+	allowDangPolicy := &ToolPolicies{Dangerous: ToolPolicyAllow}
+	if act := allowDangPolicy.EvaluateTool(dangerousTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for dangerous tool, got %v", act)
+	}
+	denyDangPolicy := &ToolPolicies{Dangerous: ToolPolicyDeny}
+	if act := denyDangPolicy.EvaluateTool(dangerousTool); act != ToolPolicyDeny {
+		t.Errorf("expected deny for dangerous tool, got %v", act)
+	}
+
+	// 5. OpenWorld: ask / deny
+	askOWPolicy := &ToolPolicies{OpenWorld: ToolPolicyAsk}
+	if act := askOWPolicy.EvaluateTool(openWorldTool); act != ToolPolicyAsk {
+		t.Errorf("expected ask for open-world tool, got %v", act)
+	}
+	denyOWPolicy := &ToolPolicies{OpenWorld: ToolPolicyDeny}
+	if act := denyOWPolicy.EvaluateTool(openWorldTool); act != ToolPolicyDeny {
+		t.Errorf("expected deny for open-world tool, got %v", act)
+	}
+
+	// 6. Ask pattern list
+	askPatternPolicy := &ToolPolicies{
+		Ask: []string{"safe-*"},
+	}
+	if act := askPatternPolicy.EvaluateTool(safeTool); act != ToolPolicyAsk {
+		t.Errorf("expected ask for safeTool matching ask pattern, got %v", act)
+	}
+
+	// 7. Include / Exclude
+	incPolicy := &ToolPolicies{
+		Include: []string{"safe-*"},
+	}
+	if act := incPolicy.EvaluateTool(safeTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for safeTool in include list, got %v", act)
+	}
+	if act := incPolicy.EvaluateTool(openWorldTool); act != ToolPolicyDeny {
+		t.Errorf("expected deny for openWorldTool not in include list, got %v", act)
+	}
+
+	excPolicy := &ToolPolicies{
+		Exclude: []string{"*tool"},
+	}
+	if act := excPolicy.EvaluateTool(safeTool); act != ToolPolicyDeny {
+		t.Errorf("expected deny for safeTool matching exclude list, got %v", act)
+	}
+}
+
+func TestResolvedAgent_ToolAction(t *testing.T) {
+	safeTool := makeToolResource(NamespaceWorkspace, "safe-tool")
+	dangerousTool := makeToolResource(NamespaceWorkspace, "dangerous-tool")
+	dangerousTool.Spec.Annotations = &ToolAnnotation{IsDangerous: true}
+
+	// 1. Nil ResolvedAgent or nil Tool
+	var nilAgent *ResolvedAgent
+	if act := nilAgent.ToolAction(safeTool); act != ToolPolicyDeny {
+		t.Errorf("expected deny for nil ResolvedAgent, got %v", act)
+	}
+	raBase := &ResolvedAgent{}
+	if act := raBase.ToolAction(nil); act != ToolPolicyDeny {
+		t.Errorf("expected deny for nil tool, got %v", act)
+	}
+
+	// 2. Default resolution: dangerous tool yields ask
+	if act := raBase.ToolAction(dangerousTool); act != ToolPolicyAsk {
+		t.Errorf("expected ask for dangerous tool with no policies, got %v", act)
+	}
+	if act := raBase.ToolAction(safeTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for safe tool with no policies, got %v", act)
+	}
+
+	// 3. Workspace sets dangerous: ask, Agent sets dangerous: allow
+	// Stricter (ask) must prevail
+	raWsAskAgAllow := &ResolvedAgent{
+		WorkspacePolicy: &ToolPolicies{
+			Dangerous: ToolPolicyAsk,
+		},
+		Agent: agentWithSpec(NamespaceWorkspace, "ag", AgentSpec{
+			Policies: &Policies{
+				Tools: &ToolPolicies{
+					Dangerous: ToolPolicyAllow,
+				},
+			},
+		}),
+	}
+	if act := raWsAskAgAllow.ToolAction(dangerousTool); act != ToolPolicyAsk {
+		t.Errorf("expected workspace ask ceiling to override agent allow, got %v", act)
+	}
+
+	// 4. Workspace sets dangerous: allow, Agent sets dangerous: allow -> allow
+	raBothAllow := &ResolvedAgent{
+		WorkspacePolicy: &ToolPolicies{
+			Dangerous: ToolPolicyAllow,
+		},
+		Agent: agentWithSpec(NamespaceWorkspace, "ag", AgentSpec{
+			Policies: &Policies{
+				Tools: &ToolPolicies{
+					Dangerous: ToolPolicyAllow,
+				},
+			},
+		}),
+	}
+	if act := raBothAllow.ToolAction(dangerousTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow when both workspace and agent allow, got %v", act)
+	}
+
+	// 5. Workspace sets dangerous: allow, Agent sets dangerous: ask -> ask (agent narrows)
+	raWsAllowAgAsk := &ResolvedAgent{
+		WorkspacePolicy: &ToolPolicies{
+			Dangerous: ToolPolicyAllow,
+		},
+		Agent: agentWithSpec(NamespaceWorkspace, "ag", AgentSpec{
+			Policies: &Policies{
+				Tools: &ToolPolicies{
+					Dangerous: ToolPolicyAsk,
+				},
+			},
+		}),
+	}
+	if act := raWsAllowAgAsk.ToolAction(dangerousTool); act != ToolPolicyAsk {
+		t.Errorf("expected agent narrowing to ask, got %v", act)
+	}
+
+	// 6. Workspace ask pattern vs Agent allow
+	raWsAskPattern := &ResolvedAgent{
+		WorkspacePolicy: &ToolPolicies{
+			Ask: []string{"safe-*"},
+		},
+	}
+	if act := raWsAskPattern.ToolAction(safeTool); act != ToolPolicyAsk {
+		t.Errorf("expected workspace ask pattern to produce ask, got %v", act)
+	}
+}
+
+func TestToolPolicies_ValidationErrors(t *testing.T) {
+	// Invalid workspace dangerous action
+	reg1 := NewRegistry(&Workspace{
+		Def: &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Metadata:   Metadata{Name: "bad-ws"},
+			},
+			Spec: WorkspaceDefSpec{
+				Policies: &Policies{
+					Tools: &ToolPolicies{
+						Dangerous: "invalid-action",
+					},
+				},
+			},
+		},
+	})
+	if err := reg1.Validate(); err == nil || !strings.Contains(err.Error(), "invalid dangerous action") {
+		t.Errorf("expected invalid dangerous action error, got %v", err)
+	}
+
+	// Invalid agent openWorld action
+	reg2 := NewRegistry(nil)
+	badAgent := agentWithSpec(NamespaceWorkspace, "bad-agent", AgentSpec{
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				OpenWorld: "maybe",
+			},
+		},
+	})
+	reg2.Set(badAgent.QualifiedName(), badAgent)
+	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "invalid openWorld action") {
+		t.Errorf("expected invalid openWorld action error, got %v", err)
 	}
 }
 

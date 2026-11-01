@@ -2,6 +2,7 @@ package warp
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -144,6 +145,73 @@ spec:
 
 	if !reflect.DeepEqual(res.Resource, res2.Resource) {
 		t.Errorf("Round-trip failed: MCP resources are not equal")
+	}
+}
+
+func TestAgentToolPoliciesRoundTrip(t *testing.T) {
+	content := `---
+apiVersion: warp/v1alpha1
+kind: Agent
+metadata:
+  name: policy-agent
+spec:
+  policies:
+    tools:
+      dangerous: ask
+      openWorld: deny
+      include: ["git-*"]
+      exclude: ["git-push"]
+      ask: ["git-commit"]
+---
+Instructions for policy agent.
+`
+	res, err := Parse("policy-agent.md", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	ag, ok := res.Resource.(*Agent)
+	if !ok {
+		t.Fatalf("Expected *Agent, got %T", res.Resource)
+	}
+
+	if ag.Spec.Policies == nil || ag.Spec.Policies.Tools == nil {
+		t.Fatal("expected Policies.Tools to be populated")
+	}
+	tp := ag.Spec.Policies.Tools
+	if tp.Dangerous != ToolPolicyAsk {
+		t.Errorf("expected Dangerous == ask, got %q", tp.Dangerous)
+	}
+	if tp.OpenWorld != ToolPolicyDeny {
+		t.Errorf("expected OpenWorld == deny, got %q", tp.OpenWorld)
+	}
+	if !slices.Equal(tp.Include, []string{"git-*"}) {
+		t.Errorf("expected Include == [git-*], got %v", tp.Include)
+	}
+	if !slices.Equal(tp.Exclude, []string{"git-push"}) {
+		t.Errorf("expected Exclude == [git-push], got %v", tp.Exclude)
+	}
+	if !slices.Equal(tp.Ask, []string{"git-commit"}) {
+		t.Errorf("expected Ask == [git-commit], got %v", tp.Ask)
+	}
+
+	formatted, err := Format(ag)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	res2, err := Parse("policy-agent.md", string(formatted))
+	if err != nil {
+		t.Fatalf("Second parse failed: %v", err)
+	}
+
+	ag2, ok := res2.Resource.(*Agent)
+	if !ok {
+		t.Fatalf("Expected *Agent, got %T", res2.Resource)
+	}
+
+	if !reflect.DeepEqual(ag.Spec.Policies, ag2.Spec.Policies) {
+		t.Errorf("Round-trip failed: policies mismatch: %+v vs %+v", ag.Spec.Policies, ag2.Spec.Policies)
 	}
 }
 

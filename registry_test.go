@@ -1175,12 +1175,12 @@ func TestAgentResolution_GlobCapabilities(t *testing.T) {
 	// Standalone tools
 	refTool := makeToolResource(NamespaceWorkspace, "list-files")
 	refTool.Spec.Command = []string{"ls", "-la"}
-	refTool.Spec.Description = "List files"
+	refTool.Metadata.Description = "List files"
 	reg.Set(refTool.QualifiedName(), refTool)
 
 	echoTool := makeToolResource(NamespaceWorkspace, "echo-tool")
 	echoTool.Spec.Command = []string{"echo"}
-	echoTool.Spec.Description = "Echo tool"
+	echoTool.Metadata.Description = "Echo tool"
 	reg.Set(echoTool.QualifiedName(), echoTool)
 
 	agent := agentWithSpec("app", "dev-agent", AgentSpec{
@@ -3449,11 +3449,11 @@ func TestResolveCommand(t *testing.T) {
 
 	// Setup tools
 	toolCmd := makeToolResource(NamespaceWorkspace, "tool-cmd")
-	toolCmd.Spec.Description = "Command tool"
+	toolCmd.Metadata.Description = "Command tool"
 	reg.Set(toolCmd.QualifiedName(), toolCmd)
 
 	toolSkill := makeToolResource(NamespaceWorkspace, "tool-skill")
-	toolSkill.Spec.Description = "Skill tool"
+	toolSkill.Metadata.Description = "Skill tool"
 	reg.Set(toolSkill.QualifiedName(), toolSkill)
 
 	toolDangerous := makeToolResource(NamespaceWorkspace, "tool-dangerous")

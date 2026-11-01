@@ -1006,16 +1006,12 @@
           "type": "string",
           "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
         },
-        "description": {
-          "type": "string",
-          "description": "Short description (used in YAML tools)"
-        },
         "command": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
+          "description": "Executable and static args (e.g., [\"python\", \"script.py\"]). Optional for built-in / host-native tools."
         },
         "env": {
           "additionalProperties": {
@@ -1039,9 +1035,6 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "command"
-      ],
       "description": "ToolSpec contains the configuration details for a Tool resource."
     },
     "WorkspaceDefSpec": {
@@ -2314,16 +2307,12 @@
                     "type": "string",
                     "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
                   },
-                  "description": {
-                    "type": "string",
-                    "description": "Short description (used in YAML tools)"
-                  },
                   "command": {
                     "items": {
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
+                    "description": "Executable and static args (e.g., [\"python\", \"script.py\"]). Optional for built-in / host-native tools."
                   },
                   "env": {
                     "additionalProperties": {
@@ -2347,9 +2336,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "command"
-                ],
                 "description": "ToolSpec contains the configuration details for a Tool resource."
               }
             }

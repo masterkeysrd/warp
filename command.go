@@ -109,13 +109,11 @@ func (c *Command) Render(opts *CommandRenderOptions) (string, error) {
 	if opts.Resolved != nil {
 		var tools []TemplateTool
 		for _, t := range opts.Resolved.Tools {
-			desc := t.Metadata.Description
-			if desc == "" {
-				desc = t.Spec.Description
-			}
 			tools = append(tools, TemplateTool{
 				Name:        t.Metadata.Name,
-				Description: desc,
+				Description: t.Metadata.Description,
+				Dir:         t.Directory,
+				Path:        t.GetPath(),
 			})
 		}
 		var skills []TemplateSkill

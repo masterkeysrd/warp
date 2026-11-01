@@ -1,8 +1,12 @@
 package warp
 
-import "maps"
+import (
+	"fmt"
+	"maps"
+	"path/filepath"
+)
 
-// Tool is a warp resource that describes a custom tool.
+// Tool is a warp resource that describes a custom or host-native tool.
 type Tool struct {
 	BaseResource `yaml:",inline"`
 	// Spec holds the tool-specific configuration.
@@ -10,26 +14,138 @@ type Tool struct {
 }
 
 // DeepCopy returns a deep copy of the Tool.
-func (in *Tool) DeepCopy() *Tool {
-	if in == nil {
+func (t *Tool) DeepCopy() *Tool {
+	if t == nil {
 		return nil
 	}
 	out := new(Tool)
-	out.BaseResource = *in.BaseResource.DeepCopy()
-	out.Spec = *in.Spec.DeepCopy()
+	out.BaseResource = *t.BaseResource.DeepCopy()
+	out.Spec = *t.Spec.DeepCopy()
 	return out
+}
+
+// ToolRenderOptions holds options for rendering tool instructions or command arguments.
+type ToolRenderOptions struct {
+	Workspace *Workspace
+	Project   *Project
+	Agent     *Agent
+	Input     map[string]any // Tool call arguments (keyed by inputSchema property names)
+	Globals   map[string]any
+}
+
+func (t *Tool) buildGlobals(opts *ToolRenderOptions) map[string]any {
+	if opts == nil {
+		opts = &ToolRenderOptions{}
+	}
+	mergedGlobals := make(map[string]any)
+	maps.Copy(mergedGlobals, opts.Globals)
+	maps.Copy(mergedGlobals, opts.Input)
+	if opts.Input != nil {
+		mergedGlobals["Input"] = opts.Input
+	}
+
+	if opts.Workspace != nil {
+		tw := TemplateWorkspace{
+			Dir:  opts.Workspace.RootPath,
+			Path: filepath.Join(opts.Workspace.RootPath, WorkspaceFileName),
+		}
+		mergedGlobals["Workspace"] = tw
+		mergedGlobals["WorkspaceDir"] = tw.Dir
+		mergedGlobals["WorkspacePath"] = tw.Path
+	} else {
+		mergedGlobals["Workspace"] = TemplateWorkspace{}
+		mergedGlobals["WorkspaceDir"] = ""
+		mergedGlobals["WorkspacePath"] = ""
+	}
+
+	if opts.Project != nil {
+		var displayName string
+		if opts.Project.Context != nil && opts.Project.Context.Metadata.DisplayName != "" {
+			displayName = opts.Project.Context.Metadata.DisplayName
+		} else {
+			displayName = opts.Project.Name
+		}
+
+		tp := TemplateProject{
+			Name:        opts.Project.Name,
+			DisplayName: displayName,
+			Dir:         opts.Project.AbsPath(),
+		}
+		mergedGlobals["Project"] = tp
+		mergedGlobals["ProjectDir"] = tp.Dir
+
+		if opts.Project.Context != nil {
+			tc := TemplateContext{
+				Instructions: opts.Project.Context.Spec.Instructions,
+				Path:         opts.Project.Context.GetPath(),
+			}
+			mergedGlobals["Context"] = tc
+			mergedGlobals["ContextPath"] = tc.Path
+		}
+	} else {
+		mergedGlobals["Project"] = TemplateProject{}
+		mergedGlobals["ProjectDir"] = ""
+	}
+
+	if opts.Agent != nil {
+		ta := TemplateAgent{
+			Name:        opts.Agent.Metadata.Name,
+			Description: opts.Agent.Metadata.Description,
+			Dir:         opts.Agent.Directory,
+			Path:        opts.Agent.GetPath(),
+		}
+		mergedGlobals["Agent"] = ta
+	} else {
+		mergedGlobals["Agent"] = TemplateAgent{}
+	}
+
+	return mergedGlobals
+}
+
+// Render processes the tool's instructions as a template.
+// It injects Workspace, Project scope, invoking Agent, and Input arguments into the generic Render.
+func (t *Tool) Render(opts *ToolRenderOptions) (string, error) {
+	if t == nil {
+		return "", nil
+	}
+	renderOpts := &RenderOptions{
+		Globals: t.buildGlobals(opts),
+	}
+	return Render(t, renderOpts)
+}
+
+// RenderCommand renders each element in ToolSpec.Command as a template using the tool's render context.
+func (t *Tool) RenderCommand(opts *ToolRenderOptions) ([]string, error) {
+	if t == nil || len(t.Spec.Command) == 0 {
+		return nil, nil
+	}
+	renderOpts := &RenderOptions{
+		Globals: t.buildGlobals(opts),
+	}
+	data, err := buildTemplateData(t, renderOpts)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(t.Spec.Command))
+	for i, cmdPart := range t.Spec.Command {
+		rendered, err := renderTemplate(fmt.Sprintf("%s-command-%d", t.GetName(), i), cmdPart, data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to render tool command [%d] %q: %w", i, cmdPart, err)
+		}
+		out[i] = rendered
+	}
+	return out, nil
 }
 
 // ToolSpec contains the configuration details for a Tool resource.
 type ToolSpec struct {
 	// Instructions is the detailed description of what the tool does, populated from the Markdown body.
 	Instructions string            `yaml:"instructions,omitempty"`
-	Description  string            `yaml:"description,omitempty"`  // Short description (used in YAML tools)
-	Command      []string          `yaml:"command"`                // Executable and static args (e.g., ["python", "script.py"])
-	Env          map[string]string `yaml:"env,omitempty"`          // Environment variables injected into the process
-	InputSchema  map[string]any    `yaml:"inputSchema,omitempty"`  // JSON Schema object defining arguments the LLM must pass
-	OutputSchema map[string]any    `yaml:"outputSchema,omitempty"` // JSON Schema object defining the tool's output
-	Annotations  *ToolAnnotation   `yaml:"annotations,omitempty"`  // Safety profile for Tool Execution Security
+	Command      []string          `yaml:"command,omitempty" json:"command,omitempty"` // Executable and static args (e.g., ["python", "script.py"]). Optional for built-in / host-native tools.
+	Env          map[string]string `yaml:"env,omitempty"`                              // Environment variables injected into the process
+	InputSchema  map[string]any    `yaml:"inputSchema,omitempty"`                      // JSON Schema object defining arguments the LLM must pass
+	OutputSchema map[string]any    `yaml:"outputSchema,omitempty"`                     // JSON Schema object defining the tool's output
+	Annotations  *ToolAnnotation   `yaml:"annotations,omitempty"`                      // Safety profile for Tool Execution Security
 }
 
 // ToolAnnotation defines the safety profile for a tool.

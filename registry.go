@@ -2025,12 +2025,6 @@ func resolveTools(resolver Resolver) []*Tool {
 		if t == nil {
 			return
 		}
-		// Copy and ensure Metadata.Description falls back to Spec.Description if needed
-		if t.Metadata.Description == "" && t.Spec.Description != "" {
-			cp := t.DeepCopy()
-			cp.Metadata.Description = cp.Spec.Description
-			t = cp
-		}
 		qn := t.QualifiedName()
 		if !seen[qn] {
 			seen[qn] = true
@@ -2066,11 +2060,6 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 	addTool := func(t *Tool) {
 		if t == nil {
 			return
-		}
-		if t.Metadata.Description == "" && t.Spec.Description != "" {
-			cp := t.DeepCopy()
-			cp.Metadata.Description = cp.Spec.Description
-			t = cp
 		}
 		qn := t.QualifiedName()
 		if !seen[qn] {
@@ -2290,11 +2279,6 @@ func resolveCommand(resolver Resolver, executingAgent *ResolvedAgent, ref string
 	addTool := func(t *Tool) {
 		if t == nil {
 			return
-		}
-		if t.Metadata.Description == "" && t.Spec.Description != "" {
-			cp := t.DeepCopy()
-			cp.Metadata.Description = cp.Spec.Description
-			t = cp
 		}
 		qn := t.QualifiedName()
 		if !seenTools[qn] {

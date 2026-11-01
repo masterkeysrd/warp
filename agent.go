@@ -98,6 +98,8 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			ta.Tools = append(ta.Tools, TemplateTool{
 				Name:        t.Metadata.Name,
 				Description: t.Metadata.Description,
+				Dir:         t.Directory,
+				Path:        t.GetPath(),
 			})
 		}
 		for _, cmd := range opts.Resolved.Commands {

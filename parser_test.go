@@ -745,3 +745,45 @@ Review file $file focusing on $focus.
 		t.Errorf("Unexpected second argument: %+v", skill.Spec.Arguments[1])
 	}
 }
+
+func TestTool_BuiltInOmittedCommand(t *testing.T) {
+	yamlContent := `apiVersion: warp/v1alpha1
+kind: Tool
+metadata:
+  name: native-read-file
+  description: Host-native file reading
+spec:
+  inputSchema:
+    type: object
+    properties:
+      path:
+        type: string
+  annotations:
+    isReadOnly: true
+`
+	res, err := Parse("tools/native-read-file.yaml", yamlContent)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	tool, ok := res.Resource.(*Tool)
+	if !ok {
+		t.Fatalf("expected *Tool, got %T", res.Resource)
+	}
+	if tool.Metadata.Name != "native-read-file" {
+		t.Errorf("expected name native-read-file, got %q", tool.Metadata.Name)
+	}
+	if len(tool.Spec.Command) != 0 {
+		t.Errorf("expected empty command for built-in tool, got %v", tool.Spec.Command)
+	}
+	if tool.Spec.Annotations == nil || !tool.Spec.Annotations.IsReadOnly {
+		t.Errorf("expected isReadOnly: true, got %+v", tool.Spec.Annotations)
+	}
+
+	formatted, err := Format(tool)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+	if strings.Contains(string(formatted), "command:") {
+		t.Errorf("expected command: to be omitted in formatted built-in tool, got:\n%s", string(formatted))
+	}
+}

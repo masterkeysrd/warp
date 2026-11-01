@@ -104,6 +104,8 @@ type TemplateDecision struct {
 type TemplateTool struct {
 	Name        string
 	Description string
+	Dir         string
+	Path        string
 }
 
 // Render processes the resource's instructions as a template.
@@ -187,6 +189,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 	data["CommandPath"] = ""
 	data["DecisionDir"] = ""
 	data["DecisionPath"] = ""
+	data["ToolDir"] = ""
+	data["ToolPath"] = ""
 
 	// Add globals first
 	maps.Copy(data, opts.Globals)
@@ -431,6 +435,36 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 		data["Keywords"] = v.Spec.Triggers.Keywords
 		data["Priority"] = v.Spec.Priority
 		data["Triggers"] = v.Spec.Triggers
+	case *Tool:
+		var tt TemplateTool
+		if existing, ok := data["Tool"].(TemplateTool); ok {
+			tt = existing
+			if tt.Dir == "" {
+				tt.Dir = v.Directory
+			}
+			if tt.Path == "" {
+				tt.Path = v.GetPath()
+			}
+			if tt.Description == "" {
+				tt.Description = v.Metadata.Description
+			}
+			data["Tool"] = tt
+		} else {
+			tt = TemplateTool{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Dir:         v.Directory,
+				Path:        v.GetPath(),
+			}
+			data["Tool"] = tt
+		}
+		data["ToolDir"] = tt.Dir
+		data["ToolPath"] = tt.Path
+		data["Command"] = v.Spec.Command
+		data["Env"] = v.Spec.Env
+		data["InputSchema"] = v.Spec.InputSchema
+		data["OutputSchema"] = v.Spec.OutputSchema
+		data["Annotations"] = v.Spec.Annotations
 	}
 
 	return data, nil
@@ -451,6 +485,8 @@ func getInstructions(res Resource) string {
 	case *Decision:
 		return v.Spec.Instructions
 	case *Rule:
+		return v.Spec.Instructions
+	case *Tool:
 		return v.Spec.Instructions
 	default:
 		return ""

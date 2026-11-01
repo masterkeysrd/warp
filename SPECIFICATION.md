@@ -807,13 +807,13 @@ spec:
 
 ### 3.8 Tool
 
-A `Tool` resource describes a custom tool that an agent can invoke.
+A `Tool` resource describes a custom command-line tool or a host-native tool that an agent can invoke.
 
 #### `spec` fields
 
 | Field         | Type     | Required | Description                                                                 |
 |---------------|----------|:--------:|-----------------------------------------------------------------------------|
-| `command`     | string[] | ✅       | Executable and static args (e.g., `["python", "script.py"]`).               |
+| `command`     | string[] |          | Executable and template args (e.g., `["ls", "-F", "$path"]`). Optional when representing a built-in or host-native tool implemented directly by the runtime. |
 | `env`         | map      |          | Environment variables injected into the process.                            |
 | `inputSchema`  | map      |          | JSON Schema object defining arguments the LLM must pass.                    |
 | `outputSchema`| map      |          | JSON Schema object defining the tool's output.                              |
@@ -822,6 +822,17 @@ A `Tool` resource describes a custom tool that an agent can invoke.
 > `instructions` is **not** written in the YAML front-matter. It is populated
 > automatically from the Markdown body below the closing `---`. This Markdown body
 > serves as the detailed description of what the tool does (sent to the LLM).
+
+#### Built-in & Host-Native Tools
+
+When `command` is omitted, the `Tool` represents a built-in or host-native tool implemented directly by the host runtime environment. This allows built-in capabilities to declare formal `inputSchema`, `outputSchema`, and safety `annotations` within the workspace catalog and participate in workspace/agent `policies.tools` policy filtering.
+
+#### Command Argument Substitution & Execution
+
+When `spec.command` is defined, each element in `command` is processed as a template via `Tool.RenderCommand`:
+- Tool call input arguments (defined in `inputSchema`) are injected into the template scope as named variables (e.g. `$path` or `{{.path}}`, as well as `{{.Input.path}}`).
+- Built-in path shorthands are available: `$ToolDir`, `$ToolPath`, `$ProjectDir`, `$WorkspaceDir`.
+- The invoking agent's metadata is accessible via `{{.Agent.Name}}`.
 
 #### `ToolAnnotation` fields
 
@@ -840,10 +851,9 @@ apiVersion: warp/v1alpha1
 kind: Tool
 metadata:
   name: list-files
-  description: List files in a directory.
-spec:
-  command: ["ls", "-F"]
   description: List files in the current directory with type indicators.
+spec:
+  command: ["ls", "-F", "$path"]
   inputSchema:
     type: object
     properties:
@@ -1431,9 +1441,9 @@ The reference implementation uses Go's `text/template` engine, with a preprocess
 You can use shell-style variables directly in your Markdown instructions:
 
 - **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
-- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`
+- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`, `$ToolDir`, `$ToolPath`
 - **Positional Arguments:** `$1`, `$2` (used in `Command`, `Decision`, and `Skill` resources)
-- **Argument References:** When a resource defines arguments (e.g. `arguments: [{name: "ticker"}]`), you can use `$ticker` (or `{{.ticker}}`) to refer to the argument.
+- **Argument References:** When a resource defines arguments (e.g. `arguments: [{name: "ticker"}]` or `inputSchema`), you can use `$ticker` (or `{{.ticker}}`) to refer to the argument.
 - **Escaping:** Use `$$` to output a literal `$`.
 
 _Under the hood, the runtime translates `$Var` into Go template syntax `{{.Var}}` and `$1` into `{{index . "1"}}`._
@@ -1450,7 +1460,7 @@ To minimize boilerplate, the template context lifts common metadata and spec fie
 
 ### Scoped Template Objects
 
-When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`, `Rule.Render`), structured view models are injected into the template context:
+When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`, `Rule.Render`, `Tool.Render`, `Tool.RenderCommand`), structured view models are injected into the template context:
 
 | Object | Fields | Description |
 |--------|--------|-------------|
@@ -1462,6 +1472,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Rule}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority` | Rule metadata, routing hints, priority, directory, and file path (also available as `$RuleDir`, `$RulePath`). |
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules` | Command metadata, executing agent, context mode, argument definitions, directory, file path, effective tools, eager skills, and eager rules (directory and file path also available as `$CommandDir`, `$CommandPath`). |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Questions`, `.Dir`, `.Path` | Decision metadata, argument definitions, structured questions (also available as `{{.Questions}}`), directory, and file path (directory and file path also available as `$DecisionDir`, `$DecisionPath`). |
+| `{{.Tool}}` | `.Name`, `.Description`, `.Dir`, `.Path` | Tool metadata, directory, and file path (directory and file path also available as `$ToolDir`, `$ToolPath`). |
 
 ### Advanced Templating
 

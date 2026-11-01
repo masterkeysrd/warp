@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -751,5 +752,154 @@ func TestCommandRender_ResolvedAndShorthands(t *testing.T) {
 	expected := "Dir: /workspace/commands | Path: /workspace/commands/build.md | Agent: builder | Skills: go-build | Rules: no-cgo | Tools: compile | FlattenedSkills: go-build | FlattenedRules: no-cgo "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+}
+
+func TestToolRender(t *testing.T) {
+	ws := &Workspace{
+		RootPath: "/Users/user/code/warp",
+	}
+
+	proj := &Project{
+		Name:     "cli",
+		Path:     "cmd/cli",
+		RootPath: "/Users/user/code/warp",
+	}
+
+	agent := &Agent{
+		BaseResource: BaseResource{
+			Directory: "/Users/user/code/warp/.agents",
+			Path:      "/Users/user/code/warp/.agents/reviewer.md",
+			Metadata: Metadata{
+				Name:        "code-reviewer",
+				Description: "Reviews code",
+			},
+		},
+	}
+
+	tool := &Tool{
+		BaseResource: BaseResource{
+			Directory: "/Users/user/code/warp/tools",
+			Path:      "/Users/user/code/warp/tools/ls.yaml",
+			Metadata: Metadata{
+				Name:        "list-files",
+				Description: "List files in a directory",
+			},
+		},
+		Spec: ToolSpec{
+			Instructions: "Tool: {{.Tool.Name}} | Desc: {{.Tool.Description}} | Dir: {{.Tool.Dir}} | Path: {{.Tool.Path}} | ShorthandDir: $ToolDir | ShorthandPath: $ToolPath | Project: {{.Project.Name}} | Agent: {{.Agent.Name}} | Input: $path",
+		},
+	}
+
+	opts := &ToolRenderOptions{
+		Workspace: ws,
+		Project:   proj,
+		Agent:     agent,
+		Input:     map[string]any{"path": "src/pkg"},
+	}
+
+	res, err := tool.Render(opts)
+	if err != nil {
+		t.Fatalf("Tool.Render failed: %v", err)
+	}
+
+	expected := "Tool: list-files | Desc: List files in a directory | Dir: /Users/user/code/warp/tools | Path: /Users/user/code/warp/tools/ls.yaml | ShorthandDir: /Users/user/code/warp/tools | ShorthandPath: /Users/user/code/warp/tools/ls.yaml | Project: cli | Agent: code-reviewer | Input: src/pkg"
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+
+	var nilTool *Tool
+	resNil, err := nilTool.Render(nil)
+	if err != nil {
+		t.Errorf("nil Tool should not error, got %v", err)
+	}
+	if resNil != "" {
+		t.Errorf("nil Tool should render empty string, got %q", resNil)
+	}
+}
+
+func TestToolRenderCommand(t *testing.T) {
+	ws := &Workspace{
+		RootPath: "/workspace",
+	}
+
+	proj := &Project{
+		Name:     "my-proj",
+		Path:     "packages/core",
+		RootPath: "/workspace",
+	}
+
+	agent := &Agent{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "worker"},
+		},
+	}
+
+	tool := &Tool{
+		BaseResource: BaseResource{
+			Directory: "/tools/scripts",
+			Path:      "/tools/scripts/run.yaml",
+			Metadata: Metadata{
+				Name: "runner",
+			},
+		},
+		Spec: ToolSpec{
+			Command: []string{
+				"python",
+				"$ToolDir/script.py",
+				"--target",
+				"$path",
+				"--proj",
+				"$ProjectDir",
+				"--ws",
+				"$WorkspaceDir",
+				"--by",
+				"{{.Agent.Name}}",
+			},
+		},
+	}
+
+	opts := &ToolRenderOptions{
+		Workspace: ws,
+		Project:   proj,
+		Agent:     agent,
+		Input: map[string]any{
+			"path": "data/sample.json",
+		},
+	}
+
+	out, err := tool.RenderCommand(opts)
+	if err != nil {
+		t.Fatalf("Tool.RenderCommand failed: %v", err)
+	}
+
+	expected := []string{
+		"python",
+		"/tools/scripts/script.py",
+		"--target",
+		"data/sample.json",
+		"--proj",
+		"/workspace/packages/core",
+		"--ws",
+		"/workspace",
+		"--by",
+		"worker",
+	}
+
+	if !slices.Equal(out, expected) {
+		t.Errorf("RenderCommand result:\nGot:  %v\nWant: %v", out, expected)
+	}
+
+	// Nil tool / empty command
+	var nilTool *Tool
+	outNil, err := nilTool.RenderCommand(nil)
+	if err != nil || outNil != nil {
+		t.Errorf("expected (nil, nil) for nil tool, got (%v, %v)", outNil, err)
+	}
+
+	emptyTool := &Tool{}
+	outEmpty, err := emptyTool.RenderCommand(nil)
+	if err != nil || outEmpty != nil {
+		t.Errorf("expected (nil, nil) for empty tool command, got (%v, %v)", outEmpty, err)
 	}
 }

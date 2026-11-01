@@ -1,6 +1,6 @@
 # Warp Templating Guide
 
-Warp resources (such as Agents, Skills, Rules, Commands, Decisions, and Contexts) use Go's standard `text/template` engine to dynamically render their instructions. This allows you to write highly dynamic, context-aware prompts that adapt to the workspace and project they are executed in.
+Warp resources (such as Agents, Skills, Rules, Commands, Decisions, Tools, and Contexts) use Go's standard `text/template` engine to dynamically render their instructions. This allows you to write highly dynamic, context-aware prompts that adapt to the workspace and project they are executed in.
 
 Warp also supports a convenient shell-like shorthand syntax (e.g., `$Variable`) which is automatically evaluated alongside standard template tags.
 
@@ -51,7 +51,7 @@ The agent has access to its own metadata, which is useful for creating generic, 
 | `{{.Agent.Dir}}` | The absolute filesystem path to the directory containing the agent definition. | `/Users/user/code/warp/.agents` |
 | `{{.Agent.Path}}` | The absolute filesystem path to the agent definition file. | `/Users/user/code/warp/.agents/researcher.md` |
 | `{{.Agent.Skills}}` | A list of skill objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Keywords`, `.UseWhen`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, and `.Path`. | `{{range .Agent.Skills}}{{.Name}}: {{.Description}}{{end}}` |
-| `{{.Agent.Tools}}` | A list of tool objects the agent has access to. Each object exposes `.Name` and `.Description`. | `{{range .Agent.Tools}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Tools}}` | A list of tool objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Dir`, and `.Path`. | `{{range .Agent.Tools}}{{.Name}}: {{.Description}} ({{.Path}}){{end}}` |
 | `{{.Agent.Commands}}` | A list of command objects the agent can invoke. Each object exposes `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, and `.Path`. | `{{range .Agent.Commands}}{{.Name}}: {{.Description}}{{end}}` |
 | `{{.Agent.Subagents}}` | A list of subagent objects the agent can delegate to. Each object exposes `.Name`, `.Description`, `.Dir`, and `.Path`. | `{{range .Agent.Subagents}}{{.Name}}: {{.Description}}{{end}}` |
 | `{{.Agent.Rules}}` | A list of rule objects governing the agent (sorted by priority descending). Each object exposes `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Priority`, `.Dir`, and `.Path`. | `{{range .Agent.Rules}}{{.Name}} (P{{.Priority}}): {{.UseWhen}}{{end}}` |
@@ -355,6 +355,54 @@ Questions to evaluate:
 - Question: {{.Name}} ({{.Type}})
 {{end}}
 ```
+
+---
+
+## Tool Templating
+
+Tools represent custom executable command-line utilities or host-native capabilities that agents can invoke. Warp provides templating support for both:
+1. **`Tool.Render`**: Expands Markdown instructions (`spec.instructions`) defining the tool's detailed prompt or documentation sent to the LLM.
+2. **`Tool.RenderCommand`**: Renders each element in `spec.command` with invocation arguments and contextual paths to produce the concrete argument list to execute.
+
+### Available Context Objects
+
+Tool templates have access to:
+*   `{{.Project}}`: The active project scope.
+*   `{{.Context}}`: The active project's `AGENTS.md` context.
+*   `{{.Workspace}}`: The active workspace scope.
+*   `{{.Agent}}`: The invoking agent (`.Name`, `.Description`, `.Dir`, `.Path`).
+*   `Input`: Tool call arguments passed by the LLM (keyed by `inputSchema` property names, also directly available as `$arg` or `{{.arg}}`).
+*   `Globals`: Any implementor-injected global variables.
+
+In addition, they have access to the Tool metadata:
+
+#### 1. The `Tool` Object
+Represents the tool being rendered (also exposes top-level shorthands `$ToolDir` and `$ToolPath`).
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `{{.Tool.Name}}` | The name of the tool. | `list-files` |
+| `{{.Tool.Description}}` | The description of the tool (from `metadata.description`). | `List files in a directory.` |
+| `{{.Tool.Dir}}` | The absolute path to the directory containing the tool definition (`$ToolDir`). | `/Users/user/code/warp/tools` |
+| `{{.Tool.Path}}` | The absolute path to the tool definition file (`$ToolPath`). | `/Users/user/code/warp/tools/ls.yaml` |
+
+#### 2. Command Argument Substitution
+When executing a tool with `spec.command`, each command element is rendered as a template:
+
+```yaml
+spec:
+  command: ["ls", "-F", "$path"]
+  inputSchema:
+    type: object
+    properties:
+      path:
+        type: string
+```
+
+When the agent calls the tool with `{ "path": "src/" }`:
+- `$path` evaluates to `"src/"`.
+- `Tool.RenderCommand` produces `["ls", "-F", "src/"]`.
+- Built-in path shorthands like `$ToolDir`, `$ProjectDir`, and `$WorkspaceDir` can also be used directly inside `command`.
 
 ---
 

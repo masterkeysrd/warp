@@ -652,3 +652,64 @@ func TestAgentRender_WithRules(t *testing.T) {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}
 }
+
+func TestCommandRender_ResolvedAndShorthands(t *testing.T) {
+	cmd := &Command{
+		BaseResource: BaseResource{
+			Directory: "/workspace/commands",
+			Path:      "/workspace/commands/build.md",
+			Metadata: Metadata{
+				Name: "build",
+			},
+		},
+		Spec: CommandSpec{
+			Skills:       []string{"go-build"},
+			Rules:        []string{"no-cgo"},
+			Instructions: "Dir: $CommandDir | Path: $CommandPath | Agent: {{.Agent.Name}} | Skills: {{range .Command.Skills}}{{.Name}} {{end}}| Rules: {{range .Command.Rules}}{{.Name}} {{end}}| Tools: {{range .Command.Tools}}{{.Name}} {{end}}| FlattenedSkills: {{range .Skills}}{{.}} {{end}}| FlattenedRules: {{range .Rules}}{{.}} {{end}}",
+		},
+	}
+
+	execAgent := &Agent{
+		BaseResource: BaseResource{
+			Directory: "/workspace/agents",
+			Path:      "/workspace/agents/builder.md",
+			Metadata: Metadata{
+				Name: "builder",
+			},
+		},
+	}
+
+	resolved := &ResolvedCommand{
+		Command: cmd,
+		Agent: &ResolvedAgent{
+			Agent: execAgent,
+		},
+		Skills: []Skill{
+			{
+				BaseResource: BaseResource{Metadata: Metadata{Name: "go-build"}},
+				Spec:         SkillSpec{UseWhen: "compiling Go"},
+			},
+		},
+		Rules: []Rule{
+			{
+				BaseResource: BaseResource{Metadata: Metadata{Name: "no-cgo"}},
+				Spec:         RuleSpec{Priority: 90},
+			},
+		},
+		Tools: []*Tool{
+			{
+				BaseResource: BaseResource{Metadata: Metadata{Name: "compile"}},
+			},
+		},
+	}
+
+	res, err := cmd.Render(&CommandRenderOptions{Resolved: resolved})
+	if err != nil {
+		t.Fatalf("Command.Render failed: %v", err)
+	}
+
+	expected := "Dir: /workspace/commands | Path: /workspace/commands/build.md | Agent: builder | Skills: go-build | Rules: no-cgo | Tools: compile | FlattenedSkills: go-build | FlattenedRules: no-cgo "
+	if res != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
+	}
+}

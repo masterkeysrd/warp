@@ -501,8 +501,24 @@ func (r *Registry) Validate() error {
 					return fmt.Errorf("command %s: model %q does not support completion capability", name, mRef)
 				}
 			}
+			for _, skillRef := range cmd.Spec.Skills {
+				if hasGlobMeta(skillRef) || skillRef == "*" {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindSkill, skillRef) {
+					return fmt.Errorf("command %s references missing skill: %s", name, skillRef)
+				}
+			}
+			for _, ruleRef := range cmd.Spec.Rules {
+				if hasGlobMeta(ruleRef) || ruleRef == "*" {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindRule, ruleRef) {
+					return fmt.Errorf("command %s references missing rule: %s", name, ruleRef)
+				}
+			}
 			for _, toolRef := range cmd.Spec.Tools {
-				if hasGlobMeta(toolRef) {
+				if hasGlobMeta(toolRef) || toolRef == "*" {
 					continue
 				}
 				if !r.hasKindLocked(ns, KindTool, toolRef) {
@@ -1409,6 +1425,16 @@ func (s *ScopedRegistry) ResolveAgent(ref string) (*ResolvedAgent, error) {
 	return resolveExecutableAgent(s, ref)
 }
 
+// ResolveCommand resolves a command by ref, eagerly loading its skills, rules, and effective tools.
+func (r *Registry) ResolveCommand(ref string) (*ResolvedCommand, error) {
+	return resolveCommand(r, nil, ref)
+}
+
+// ResolveCommand resolves a command by ref within this project scope, eagerly loading its skills, rules, and effective tools.
+func (s *ScopedRegistry) ResolveCommand(ref string) (*ResolvedCommand, error) {
+	return resolveCommand(s, nil, ref)
+}
+
 // ResolveModels returns the prioritized list of resolved models for the given
 // capability role, following the WARP model resolution hierarchy:
 //  1. Non-empty explicit model overrides (e.g., from Agent, Command, or Decision).
@@ -2135,6 +2161,204 @@ func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*T
 	}
 
 	return tools, nil
+}
+
+// ResolveCommand resolves a command for this resolved agent, verifying that the command
+// is enabled for the agent (unless the command specifies an explicit agent override)
+// and filtering effective tools against the agent's security policies.
+func (ra *ResolvedAgent) ResolveCommand(resolver Resolver, ref string) (*ResolvedCommand, error) {
+	return resolveCommand(resolver, ra, ref)
+}
+
+func resolveCommand(resolver Resolver, executingAgent *ResolvedAgent, ref string) (*ResolvedCommand, error) {
+	res, ok := resolver.ResolveResource(ref)
+	if !ok {
+		return nil, fmt.Errorf("command %q not found", ref)
+	}
+	cmd, ok := res.(*Command)
+	if !ok {
+		return nil, fmt.Errorf("resource %q is a %s, not a Command", ref, res.GetKind())
+	}
+
+	// Determine executing agent
+	if cmd.Spec.Agent != "" {
+		ag, err := resolveExecutableAgent(resolver, cmd.Spec.Agent)
+		if err != nil {
+			return nil, err
+		}
+		executingAgent = ag
+	} else if executingAgent != nil {
+		found := false
+		for _, c := range executingAgent.Commands {
+			if c.QualifiedName() == cmd.QualifiedName() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			agentName := "agent"
+			if executingAgent.Agent != nil && executingAgent.Agent.Metadata.Name != "" {
+				agentName = executingAgent.Agent.Metadata.Name
+			}
+			return nil, fmt.Errorf("command %q is not enabled for agent %q", ref, agentName)
+		}
+	}
+
+	// 1. Eagerly resolve Skills (cmd.Spec.Skills)
+	var skills []Skill
+	if containsWildcard(cmd.Spec.Skills) {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: true})
+		for _, r := range all {
+			if sk, ok := r.(*Skill); ok {
+				skills = append(skills, *sk)
+			}
+		}
+	} else if len(cmd.Spec.Skills) > 0 {
+		var allSkills []Resource
+		for _, sRef := range cmd.Spec.Skills {
+			if hasGlobMeta(sRef) {
+				if allSkills == nil {
+					allSkills = resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: false})
+				}
+				for _, r := range allSkills {
+					if sk, ok := r.(*Skill); ok && matchRefPattern(resolver, sRef, r) {
+						skills = append(skills, *sk)
+					}
+				}
+				continue
+			}
+			r, ok := resolver.ResolveResource(sRef)
+			if !ok {
+				continue
+			}
+			if sk, ok := r.(*Skill); ok {
+				skills = append(skills, *sk)
+			}
+		}
+	}
+	skills = deduplicateSkills(skills)
+
+	// 2. Eagerly resolve Rules (cmd.Spec.Rules)
+	var rules []Rule
+	addRule := func(r *Rule) {
+		if r == nil {
+			return
+		}
+		cp := r.DeepCopy()
+		cp.Spec.Triggers.Always = true
+		rules = append(rules, *cp)
+	}
+
+	if containsWildcard(cmd.Spec.Rules) {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: true})
+		for _, r := range all {
+			if rl, ok := r.(*Rule); ok {
+				addRule(rl)
+			}
+		}
+	} else if len(cmd.Spec.Rules) > 0 {
+		var allRules []Resource
+		for _, rRef := range cmd.Spec.Rules {
+			if hasGlobMeta(rRef) {
+				if allRules == nil {
+					allRules = resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: false})
+				}
+				for _, r := range allRules {
+					if rl, ok := r.(*Rule); ok && matchRefPattern(resolver, rRef, r) {
+						addRule(rl)
+					}
+				}
+				continue
+			}
+			r, ok := resolver.ResolveResource(rRef)
+			if !ok {
+				continue
+			}
+			if rl, ok := r.(*Rule); ok {
+				addRule(rl)
+			}
+		}
+	}
+	rules = deduplicateRules(rules)
+
+	// 3. Eagerly resolve Tools (cmd.Spec.Tools + skill.Spec.Tools)
+	var tools []*Tool
+	seenTools := make(map[string]bool)
+	addTool := func(t *Tool) {
+		if t == nil {
+			return
+		}
+		if t.Metadata.Description == "" && t.Spec.Description != "" {
+			cp := t.DeepCopy()
+			cp.Metadata.Description = cp.Spec.Description
+			t = cp
+		}
+		qn := t.QualifiedName()
+		if !seenTools[qn] {
+			seenTools[qn] = true
+			tools = append(tools, t)
+		}
+	}
+
+	collectToolsFromRefs := func(toolRefs []string) {
+		if containsWildcard(toolRefs) {
+			all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
+			for _, r := range all {
+				if t, ok := r.(*Tool); ok {
+					addTool(t)
+				}
+			}
+		} else if len(toolRefs) > 0 {
+			var allTools []Resource
+			for _, tRef := range toolRefs {
+				if hasGlobMeta(tRef) {
+					if allTools == nil {
+						allTools = resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: false})
+					}
+					for _, r := range allTools {
+						if t, ok := r.(*Tool); ok && matchRefPattern(resolver, tRef, r) {
+							addTool(t)
+						}
+					}
+					continue
+				}
+				tRes, ok := resolver.ResolveResource(tRef)
+				if !ok {
+					continue
+				}
+				if t, ok := tRes.(*Tool); ok {
+					addTool(t)
+				}
+			}
+		}
+	}
+
+	collectToolsFromRefs(cmd.Spec.Tools)
+	for _, sk := range skills {
+		collectToolsFromRefs(sk.Spec.Tools)
+	}
+
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].QualifiedName() < tools[j].QualifiedName()
+	})
+
+	if wsPolicy := workspaceToolPolicy(resolver); wsPolicy != nil {
+		tools = filterTools(tools, wsPolicy)
+	}
+
+	if executingAgent != nil && executingAgent.Agent != nil && executingAgent.Agent.Spec.Policies != nil && executingAgent.Agent.Spec.Policies.Tools != nil {
+		agPolicy := executingAgent.Agent.Spec.Policies.Tools.DeepCopy()
+		agPolicy.Include = nil
+		tools = filterTools(tools, agPolicy)
+	}
+
+	return &ResolvedCommand{
+		Command: cmd,
+		Agent:   executingAgent,
+		Skills:  skills,
+		Rules:   rules,
+		Tools:   tools,
+	}, nil
 }
 
 func matchRefPattern(resolver Resolver, pat string, res Resource) bool {

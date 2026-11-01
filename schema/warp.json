@@ -140,6 +140,20 @@
           "type": "array",
           "description": "Models is a prioritized list of LLM model identifiers to use for this\ncommand (e.g., [\"gpt-4o-mini\", \"claude-3-haiku\"]). Overrides agent defaults."
         },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Skills is a list of Skill refs or globs eagerly loaded by the system when executing this command."
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Rules is a list of Rule refs or globs eagerly loaded (always: true) by the system when executing this command."
+        },
         "tools": {
           "items": {
             "type": "string"
@@ -1515,6 +1529,20 @@
                     },
                     "type": "array",
                     "description": "Models is a prioritized list of LLM model identifiers to use for this\ncommand (e.g., [\"gpt-4o-mini\", \"claude-3-haiku\"]). Overrides agent defaults."
+                  },
+                  "skills": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Skills is a list of Skill refs or globs eagerly loaded by the system when executing this command."
+                  },
+                  "rules": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Rules is a list of Rule refs or globs eagerly loaded (always: true) by the system when executing this command."
                   },
                   "tools": {
                     "items": {

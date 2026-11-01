@@ -21,6 +21,8 @@ const (
 type CommandRenderOptions struct {
 	Workspace *Workspace
 	Project   *Project
+	Agent     *Agent
+	Resolved  *ResolvedCommand
 	Args      []string
 	Globals   map[string]any
 }
@@ -83,6 +85,87 @@ func (c *Command) Render(opts *CommandRenderOptions) (string, error) {
 		mergedGlobals["ProjectDir"] = ""
 	}
 
+	// Inject invoking Agent derived from arguments or resolved command
+	var ag *Agent
+	if opts.Agent != nil {
+		ag = opts.Agent
+	} else if opts.Resolved != nil && opts.Resolved.Agent != nil && opts.Resolved.Agent.Agent != nil {
+		ag = opts.Resolved.Agent.Agent
+	}
+
+	if ag != nil {
+		ta := TemplateAgent{
+			Name:        ag.Metadata.Name,
+			Description: ag.Metadata.Description,
+			Dir:         ag.Directory,
+			Path:        ag.GetPath(),
+		}
+		mergedGlobals["Agent"] = ta
+	} else {
+		mergedGlobals["Agent"] = TemplateAgent{}
+	}
+
+	// Inject resolved command details if provided
+	if opts.Resolved != nil {
+		var tools []TemplateTool
+		for _, t := range opts.Resolved.Tools {
+			desc := t.Metadata.Description
+			if desc == "" {
+				desc = t.Spec.Description
+			}
+			tools = append(tools, TemplateTool{
+				Name:        t.Metadata.Name,
+				Description: desc,
+			})
+		}
+		var skills []TemplateSkill
+		for _, s := range opts.Resolved.Skills {
+			skills = append(skills, TemplateSkill{
+				Name:         s.Metadata.Name,
+				Description:  s.Metadata.Description,
+				UseWhen:      s.Spec.UseWhen,
+				Keywords:     s.Spec.Keywords,
+				Tools:        s.Spec.Tools,
+				ArgumentHint: s.Spec.ArgumentHint,
+				Arguments:    s.Spec.Arguments,
+				Dir:          s.Directory,
+				Path:         s.GetPath(),
+			})
+		}
+		var rules []TemplateRule
+		for _, r := range opts.Resolved.Rules {
+			rules = append(rules, TemplateRule{
+				Name:        r.Metadata.Name,
+				Description: r.Metadata.Description,
+				UseWhen:     r.Spec.Triggers.UseWhen,
+				Keywords:    r.Spec.Triggers.Keywords,
+				Dir:         r.Directory,
+				Path:        r.GetPath(),
+				Priority:    r.Spec.Priority,
+			})
+		}
+		ctxMode := c.Spec.Context
+		if ctxMode == "" {
+			ctxMode = CommandContextInline
+		}
+		tc := TemplateCommand{
+			Name:         c.Metadata.Name,
+			Description:  c.Metadata.Description,
+			Agent:        c.Spec.Agent,
+			Context:      ctxMode,
+			ArgumentHint: c.Spec.ArgumentHint,
+			Arguments:    c.Spec.Arguments,
+			Dir:          c.Directory,
+			Path:         c.GetPath(),
+			Tools:        tools,
+			Skills:       skills,
+			Rules:        rules,
+		}
+		mergedGlobals["Command"] = tc
+		mergedGlobals["CommandDir"] = tc.Dir
+		mergedGlobals["CommandPath"] = tc.Path
+	}
+
 	renderOpts := &RenderOptions{
 		Args:    opts.Args,
 		Globals: mergedGlobals,
@@ -127,6 +210,10 @@ type CommandSpec struct {
 	// Models is a prioritized list of LLM model identifiers to use for this
 	// command (e.g., ["gpt-4o-mini", "claude-3-haiku"]). Overrides agent defaults.
 	Models []string `yaml:"models,omitempty,flow"`
+	// Skills is a list of Skill refs or globs eagerly loaded by the system when executing this command.
+	Skills []string `yaml:"skills,omitempty" json:"skills,omitempty"`
+	// Rules is a list of Rule refs or globs eagerly loaded (always: true) by the system when executing this command.
+	Rules []string `yaml:"rules,omitempty" json:"rules,omitempty"`
 	// Tools is a list of resource refs (names or paths) restricting which
 	// Tool resources can be used while executing this command.
 	Tools []string `yaml:"tools,omitempty"`
@@ -147,6 +234,14 @@ func (in *CommandSpec) DeepCopy() *CommandSpec {
 	if in.Models != nil {
 		out.Models = make([]string, len(in.Models))
 		copy(out.Models, in.Models)
+	}
+	if in.Skills != nil {
+		out.Skills = make([]string, len(in.Skills))
+		copy(out.Skills, in.Skills)
+	}
+	if in.Rules != nil {
+		out.Rules = make([]string, len(in.Rules))
+		copy(out.Rules, in.Rules)
 	}
 	if in.Tools != nil {
 		out.Tools = make([]string, len(in.Tools))

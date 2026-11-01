@@ -460,20 +460,31 @@ Refer to templates and guidelines stored in `$SkillDir/templates/valuation.md`.
 
 ### 3.5 Command
 
-A `Command` encapsulates a discrete, reusable operation that an agent can invoke. Commands carry no
-configuration beyond the shared metadata header; their behaviour is described entirely in the
-Markdown body.
+A `Command` encapsulates a discrete, reusable operation that an agent or human operator can invoke. Its
+execution instructions are authored in the Markdown body of the defining file, while structured execution
+lifecycle parameters, models, skills, rules, and tools are declared in `spec`.
 
 #### `spec` fields
 
-| Field          | Type         | Required | Description                                                         |
-|----------------|--------------|:--------:|---------------------------------------------------------------------|
-| `agent`        | string       |          | Preferred or required Agent ref to execute this command.            |
-| `context`      | string       |          | Conversational context mode: `inline` (default), `fork`, or `clean`.|
-| `models`       | string[]     |          | Preferred models for this command. Overrides agent defaults.        |
-| `tools`        | string[]     |          | Tools allowed during this command execution.                        |
-| `argumentHint` | string       |          | Single-line hint indicating expected argument format upon invocation. |
-| `arguments`    | Argument[]   |          | Structured parameters accepted by this command.                     |
+| Field          | Type         | Required | Default   | Description                                                                                   |
+|----------------|--------------|:--------:|-----------|-----------------------------------------------------------------------------------------------|
+| `agent`        | string       |          | —         | Preferred or required Agent ref to execute this command.                                      |
+| `context`      | string       |          | `inline`  | Conversational context mode: `inline` (default), `fork`, or `clean`.                         |
+| `models`       | string[]     |          | `[]`      | Prioritized list of model identifiers or aliases (e.g. `["@fast", "@default"]`). Overrides agent defaults. |
+| `skills`       | string[]     |          | `[]`      | Skill references or globs eagerly loaded by the system during this command execution.         |
+| `rules`        | string[]     |          | `[]`      | Rule references or globs eagerly loaded with `triggers.always: true` during this command execution. |
+| `tools`        | string[]     |          | `[]`      | Tool references or globs enabled during this command execution.                               |
+| `argumentHint` | string       |          | —         | Single-line hint indicating expected argument format upon invocation.                         |
+| `arguments`    | Argument[]   |          | `[]`      | Structured parameters accepted by this command.                                               |
+
+#### Eager Resource Loading (`ResolveCommand`)
+
+When a command is executed, a conforming runtime or `ResolveCommand(ref)` prepares the execution context by eagerly loading its declared resources into a `ResolvedCommand`:
+
+1. **Executing Agent**: If `spec.agent` is defined, the named agent is resolved via `ResolveAgent`. If invoked by an existing `ResolvedAgent` without an explicit `spec.agent`, the invoking agent executes the command (verifying that the command is declared in its enabled commands list).
+2. **Eager Skills**: Skills declared in `spec.skills` (supporting exact references, wildcards `*`, and glob patterns) are eagerly resolved into `ResolvedCommand.Skills`.
+3. **Eager Rules**: Rules declared in `spec.rules` (supporting exact references, wildcards `*`, and glob patterns) are eagerly resolved into `ResolvedCommand.Rules`. Every rule matched by a command has its `spec.triggers.always` set to `true`, ensuring it applies unconditionally during command execution. Rules are sorted by priority descending.
+4. **Effective Tools & Policy Ceiling**: The toolset for the command combines tools explicitly listed in `cmd.spec.tools` (including wildcards and globs) and tools declared on all eagerly resolved skills (`skill.spec.tools`). The combined tools are deduplicated, filtered against the workspace tool policy ceiling (`workspace.spec.policies.tools`), and narrowed by the executing agent's security policies (enforcing `exclude`, `dangerous`, `openWorld`, and `readOnly` restrictions without requiring the command's dynamic tools to be present in the agent's base `include` list).
 
 #### Full example
 
@@ -486,7 +497,9 @@ metadata:
   description: Produce a structured equity research report.
   displayName: Generate Report
 spec:
-  models: ["gpt-4o-mini"]
+  models: ["@fast", "@default"]
+  skills: ["finance"]
+  rules: ["compliance/*"]
   tools: ["local/Tool/read-file"]
   arguments:
     - name: ticker
@@ -499,7 +512,8 @@ spec:
 
 # Generate Report
 
-Produce a structured equity research report for the given ticker symbol.
+Produce a structured equity research report for ticker `$ticker` for year `$year`.
+Use the report templates stored in `$CommandDir/templates`.
 
 ## Output Format
 
@@ -1178,7 +1192,18 @@ loaded Workspace.
 |------------------------------------|------------------------------------------------------------------------------|
 | All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy. |
 
-### 7.4 Workspace-specific
+### 7.4 Command-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Valid `spec.agent` reference        | A declared agent reference does not match any loaded `Agent` in the resolution hierarchy. |
+| Valid `spec.context` value          | `spec.context` is set to a value other than `inline`, `fork`, or `clean`. |
+| All `spec.skills` paths resolve     | A listed path does not match any loaded `Skill` in the resolution hierarchy. |
+| All `spec.rules` paths resolve      | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
+| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy. |
+| Declared `spec.models` resolve and support completion | When providers exist, a listed model or alias reference does not resolve or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
+
+### 7.5 Workspace-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
@@ -1187,13 +1212,13 @@ loaded Workspace.
 | `spec.defaultModel` resolves and supports completion | When providers exist, `defaultModel` does not resolve or resolves to a `ProviderModel` lacking completion capability. |
 | `spec.defaultModels` capabilities match role | When providers exist, a model in `defaultModels` does not resolve or resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
 
-### 7.5 Plugin-specific
+### 7.6 Plugin-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | No structural resources in exports  | The `spec.exports` list matches a resource of kind `Workspace`, `Context`, or `Plugin`. |
 
-### 7.6 Decision-specific
+### 7.7 Decision-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
@@ -1204,14 +1229,14 @@ loaded Workspace.
 | Score levels                        | A `score` question has fewer than 2 `levels` or a level with an empty `label`. |
 | Declared `spec.models` support decision | When providers exist, a listed model or alias reference does not resolve or resolves to a `ProviderModel` whose `capabilities.decision` is `false`. |
 
-### 7.7 Rule-specific
+### 7.8 Rule-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | Valid `triggers.decision` reference | A declared decision reference does not match any loaded `Decision` in the resolution hierarchy. |
 | Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` in the resolution hierarchy. |
 
-### 7.8 ModelProvider-specific
+### 7.9 ModelProvider-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
@@ -1420,7 +1445,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`, `[]TemplateRule`) for the agent. |
 | `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path (also available as `$SkillDir`, `$SkillPath`). |
 | `{{.Rule}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority` | Rule metadata, routing hints, priority, directory, and file path (also available as `$RuleDir`, `$RulePath`). |
-| `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, executing agent, context mode, argument definitions, directory, file path, and tools. |
+| `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules` | Command metadata, executing agent, context mode, argument definitions, directory, file path, effective tools, eager skills, and eager rules (directory and file path also available as `$CommandDir`, `$CommandPath`). |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |
 
 ### Advanced Templating

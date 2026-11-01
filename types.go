@@ -398,6 +398,16 @@ type ResolvedAgent struct {
 	WorkspacePolicy *ToolPolicies
 }
 
+// ResolvedCommand holds a fully resolved Command with its executing agent,
+// eagerly resolved skills, eagerly resolved rules, and effective tools.
+type ResolvedCommand struct {
+	Command *Command
+	Agent   *ResolvedAgent
+	Skills  []Skill
+	Rules   []Rule
+	Tools   []*Tool
+}
+
 // StricterToolPolicyAction returns the stricter of two tool policy actions
 // based on the hierarchy: allow < ask < deny.
 func StricterToolPolicyAction(a, b ToolPolicyAction) ToolPolicyAction {

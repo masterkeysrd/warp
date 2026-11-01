@@ -85,6 +85,8 @@ type TemplateCommand struct {
 	Dir          string
 	Path         string
 	Tools        []TemplateTool
+	Skills       []TemplateSkill
+	Rules        []TemplateRule
 }
 
 // TemplateDecision represents the decision view model for templates.
@@ -180,6 +182,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 	data["RulePath"] = ""
 	data["SkillDir"] = ""
 	data["SkillPath"] = ""
+	data["CommandDir"] = ""
+	data["CommandPath"] = ""
 
 	// Add globals first
 	maps.Copy(data, opts.Globals)
@@ -301,8 +305,11 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 		if ctxMode == "" {
 			ctxMode = CommandContextInline
 		}
-		if _, ok := data["Command"]; !ok {
-			tc := TemplateCommand{
+		var tc TemplateCommand
+		if existing, ok := data["Command"].(TemplateCommand); ok {
+			tc = existing
+		} else {
+			tc = TemplateCommand{
 				Name:         v.Metadata.Name,
 				Description:  v.Metadata.Description,
 				Agent:        v.Spec.Agent,
@@ -314,6 +321,10 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			}
 			data["Command"] = tc
 		}
+		data["CommandDir"] = tc.Dir
+		data["CommandPath"] = tc.Path
+		data["Skills"] = v.Spec.Skills
+		data["Rules"] = v.Spec.Rules
 		data["Models"] = v.Spec.Models
 		data["Tools"] = v.Spec.Tools
 		data["ArgumentHint"] = v.Spec.ArgumentHint

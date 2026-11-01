@@ -208,6 +208,7 @@ Command templates have access to the same foundational view models:
 *   `{{.Project}}`: The active project scope where the command was executed.
 *   `{{.Context}}`: The active project's `AGENTS.md` rules.
 *   `{{.Workspace}}`: The active workspace scope.
+*   `{{.Agent}}`: The executing agent (configured via `spec.agent` or the invoking agent).
 *   `Globals`: Any implementor-injected global variables.
 
 In addition, they have access to the Command metadata and specific argument variables:
@@ -221,9 +222,11 @@ Represents the command being rendered.
 | `{{.Command.Description}}` | The description of the command. | `Runs the test suite.` |
 | `{{.Command.Agent}}` | The target agent configured to execute this command. | `code-reviewer` |
 | `{{.Command.Context}}` | The conversational context execution mode (`inline`, `fork`, `clean`). | `inline` |
-| `{{.Command.Dir}}` | The absolute path to the directory containing the command. | `/Users/user/code/warp/commands` |
-| `{{.Command.Path}}` | The absolute path to the command definition file. | `/Users/user/code/warp/commands/test.md` |
-| `{{.Command.Tools}}` | A list of tool objects this command explicitly uses. | `{{range .Command.Tools}}...{{end}}` |
+| `{{.Command.Dir}}` | The absolute path to the directory containing the command (`$CommandDir`). | `/Users/user/code/warp/commands` |
+| `{{.Command.Path}}` | The absolute path to the command definition file (`$CommandPath`). | `/Users/user/code/warp/commands/test.md` |
+| `{{.Command.Tools}}` | A list of tool objects effective during this command execution. | `{{range .Command.Tools}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Command.Skills}}` | A list of skill objects eagerly loaded for this command. | `{{range .Command.Skills}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Command.Rules}}` | A list of rule objects eagerly loaded for this command (`always: true`). | `{{range .Command.Rules}}{{.Name}} (P{{.Priority}}): {{.UseWhen}}{{end}}` |
 
 #### 2. Arguments
 When a user invokes a command with arguments (e.g., `warp run my-command arg1 arg2`), Warp automatically injects these arguments into the template. You can access them using Go template syntax or the convenient Shell shorthand.

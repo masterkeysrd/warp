@@ -3129,3 +3129,353 @@ func TestModelAliases_Validation(t *testing.T) {
 		t.Errorf("expected target model cannot be empty error, got %v", err)
 	}
 }
+
+func TestCommandValidation(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	prov := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "openai"},
+		},
+		Spec: ModelProviderSpec{
+			Models: []ProviderModel{
+				{
+					ID:           "gpt-4o",
+					Aliases:      []string{"fast"},
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal},
+				},
+				{
+					ID:           "text-embedding-3",
+					Capabilities: &ProviderModelCapabilities{Completion: &falseVal},
+				},
+			},
+		},
+	}
+
+	tool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "read-file"},
+		},
+	}
+
+	skill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "doc-gen"},
+		},
+	}
+
+	rule := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "lint-rule"},
+		},
+	}
+
+	agent := agentWithSpec(NamespaceWorkspace, "writer", AgentSpec{})
+
+	// 1. Valid command passes
+	reg := NewRegistry(nil)
+	reg.Set(prov.QualifiedName(), prov)
+	reg.Set(tool.QualifiedName(), tool)
+	reg.Set(skill.QualifiedName(), skill)
+	reg.Set(rule.QualifiedName(), rule)
+	reg.Set(agent.QualifiedName(), agent)
+
+	validCmd := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "valid-cmd"},
+		},
+		Spec: CommandSpec{
+			Agent:   "writer",
+			Context: CommandContextFork,
+			Models:  []string{"@fast"},
+			Skills:  []string{"doc-gen", "other/*"},
+			Rules:   []string{"lint-rule", "rules/*"},
+			Tools:   []string{"read-file", "tools/*"},
+		},
+	}
+	reg.Set(validCmd.QualifiedName(), validCmd)
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("expected valid command to pass, got: %v", err)
+	}
+
+	// 2. Missing skill
+	regMissingSkill := NewRegistry(nil)
+	cmdBadSkill := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-skill-cmd"},
+		},
+		Spec: CommandSpec{
+			Skills: []string{"missing-skill"},
+		},
+	}
+	regMissingSkill.Set(cmdBadSkill.QualifiedName(), cmdBadSkill)
+	if err := regMissingSkill.Validate(); err == nil || !strings.Contains(err.Error(), "references missing skill: missing-skill") {
+		t.Errorf("expected missing skill error, got: %v", err)
+	}
+
+	// 3. Missing rule
+	regMissingRule := NewRegistry(nil)
+	cmdBadRule := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-rule-cmd"},
+		},
+		Spec: CommandSpec{
+			Rules: []string{"missing-rule"},
+		},
+	}
+	regMissingRule.Set(cmdBadRule.QualifiedName(), cmdBadRule)
+	if err := regMissingRule.Validate(); err == nil || !strings.Contains(err.Error(), "references missing rule: missing-rule") {
+		t.Errorf("expected missing rule error, got: %v", err)
+	}
+
+	// 4. Missing tool
+	regMissingTool := NewRegistry(nil)
+	cmdBadTool := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-tool-cmd"},
+		},
+		Spec: CommandSpec{
+			Tools: []string{"missing-tool"},
+		},
+	}
+	regMissingTool.Set(cmdBadTool.QualifiedName(), cmdBadTool)
+	if err := regMissingTool.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool: missing-tool") {
+		t.Errorf("expected missing tool error, got: %v", err)
+	}
+
+	// 5. Incompatible model (embedding model lacks completion)
+	regBadModel := NewRegistry(nil)
+	regBadModel.Set(prov.QualifiedName(), prov)
+	cmdBadModel := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-model-cmd"},
+		},
+		Spec: CommandSpec{
+			Models: []string{"openai/text-embedding-3"},
+		},
+	}
+	regBadModel.Set(cmdBadModel.QualifiedName(), cmdBadModel)
+	if err := regBadModel.Validate(); err == nil || !strings.Contains(err.Error(), "does not support completion capability") {
+		t.Errorf("expected model completion capability error, got: %v", err)
+	}
+}
+
+func TestResolveCommand(t *testing.T) {
+	reg := NewRegistry(nil)
+	reg.AddProject(&Project{Name: "app", Path: ".", RootPath: "/repo"})
+
+	// Setup tools
+	toolCmd := makeToolResource(NamespaceWorkspace, "tool-cmd")
+	toolCmd.Spec.Description = "Command tool"
+	reg.Set(toolCmd.QualifiedName(), toolCmd)
+
+	toolSkill := makeToolResource(NamespaceWorkspace, "tool-skill")
+	toolSkill.Spec.Description = "Skill tool"
+	reg.Set(toolSkill.QualifiedName(), toolSkill)
+
+	toolDangerous := makeToolResource(NamespaceWorkspace, "tool-dangerous")
+	toolDangerous.Spec.Annotations = &ToolAnnotation{IsDangerous: true}
+	reg.Set(toolDangerous.QualifiedName(), toolDangerous)
+
+	toolExcluded := makeToolResource(NamespaceWorkspace, "tool-excluded")
+	reg.Set(toolExcluded.QualifiedName(), toolExcluded)
+
+	// Setup skills
+	skillDoc := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "doc-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"tool-skill", "tool-dangerous"},
+		},
+	}
+	reg.Set(skillDoc.QualifiedName(), skillDoc)
+
+	// Setup rules
+	ruleLow := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "rule-low"},
+		},
+		Spec: RuleSpec{
+			Priority: 10,
+			Triggers: RuleTriggers{Always: false},
+		},
+	}
+	ruleHigh := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "rule-high"},
+		},
+		Spec: RuleSpec{
+			Priority: 100,
+			Triggers: RuleTriggers{Always: false},
+		},
+	}
+	reg.Set(ruleLow.QualifiedName(), ruleLow)
+	reg.Set(ruleHigh.QualifiedName(), ruleHigh)
+
+	// Setup agent with policies:
+	// - Include contains only unrelated tool (testing that Include is not enforced on command dynamic tools)
+	// - Dangerous is denied
+	// - Exclude contains "tool-excluded"
+	agentWithPolicies := agentWithSpec(NamespaceWorkspace, "strict-agent", AgentSpec{
+		Commands: []string{"agent-cmd"},
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Include:   []string{"unrelated-tool"},
+				Exclude:   []string{"tool-excluded"},
+				Dangerous: ToolPolicyDeny,
+			},
+		},
+	})
+	reg.Set(agentWithPolicies.QualifiedName(), agentWithPolicies)
+
+	// Command with explicit agent
+	cmdExplicitAgent := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "explicit-cmd"},
+		},
+		Spec: CommandSpec{
+			Agent:  "strict-agent",
+			Skills: []string{"doc-skill"},
+			Rules:  []string{"rule-low", "rule-high"},
+			Tools:  []string{"tool-cmd", "tool-excluded"},
+		},
+	}
+	reg.Set(cmdExplicitAgent.QualifiedName(), cmdExplicitAgent)
+
+	// Command meant for agent invocation without explicit agent
+	cmdAgentInvoked := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "agent-cmd"},
+		},
+		Spec: CommandSpec{
+			Skills: []string{"doc-skill"},
+			Tools:  []string{"tool-cmd"},
+		},
+	}
+	reg.Set(cmdAgentInvoked.QualifiedName(), cmdAgentInvoked)
+
+	// Unenabled command
+	cmdUnenabled := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "unenabled-cmd"},
+		},
+	}
+	reg.Set(cmdUnenabled.QualifiedName(), cmdUnenabled)
+
+	// 1. Resolve Command from registry
+	resCmd, err := reg.ResolveCommand("explicit-cmd")
+	if err != nil {
+		t.Fatalf("ResolveCommand failed: %v", err)
+	}
+	if resCmd.Agent == nil || resCmd.Agent.Agent.Metadata.Name != "strict-agent" {
+		t.Errorf("expected executing agent strict-agent, got %v", resCmd.Agent)
+	}
+
+	// 2. Check eager skills
+	if len(resCmd.Skills) != 1 || resCmd.Skills[0].Metadata.Name != "doc-skill" {
+		t.Errorf("expected [doc-skill] eager skills, got %v", resCmd.Skills)
+	}
+
+	// 3. Check eager rules (Always forced to true, sorted priority descending)
+	if len(resCmd.Rules) != 2 {
+		t.Fatalf("expected 2 eager rules, got %d", len(resCmd.Rules))
+	}
+	if resCmd.Rules[0].Metadata.Name != "rule-high" || resCmd.Rules[1].Metadata.Name != "rule-low" {
+		t.Errorf("expected rules sorted priority descending [rule-high, rule-low], got [%s, %s]",
+			resCmd.Rules[0].Metadata.Name, resCmd.Rules[1].Metadata.Name)
+	}
+	if !resCmd.Rules[0].Spec.Triggers.Always || !resCmd.Rules[1].Spec.Triggers.Always {
+		t.Errorf("expected command eager rules to have Always=true, got %v, %v",
+			resCmd.Rules[0].Spec.Triggers.Always, resCmd.Rules[1].Spec.Triggers.Always)
+	}
+
+	// 4. Check effective tools (tool-cmd + tool-skill; tool-dangerous denied, tool-excluded excluded)
+	if len(resCmd.Tools) != 2 {
+		var toolNames []string
+		for _, tRef := range resCmd.Tools {
+			toolNames = append(toolNames, tRef.Metadata.Name)
+		}
+		t.Fatalf("expected 2 effective tools [tool-cmd, tool-skill], got %d: %v", len(resCmd.Tools), toolNames)
+	}
+	if resCmd.Tools[0].Metadata.Name != "tool-cmd" || resCmd.Tools[1].Metadata.Name != "tool-skill" {
+		t.Errorf("expected deterministic sorted tools [tool-cmd, tool-skill], got [%s, %s]",
+			resCmd.Tools[0].Metadata.Name, resCmd.Tools[1].Metadata.Name)
+	}
+
+	// 5. Resolve via ResolvedAgent.ResolveCommand
+	resolvedAgent, err := reg.ResolveAgent("strict-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	agentResCmd, err := resolvedAgent.ResolveCommand(reg, "agent-cmd")
+	if err != nil {
+		t.Fatalf("resolvedAgent.ResolveCommand failed: %v", err)
+	}
+	if agentResCmd.Agent != resolvedAgent {
+		t.Errorf("expected executing agent to be the invoking resolved agent")
+	}
+
+	// 6. Resolve unenabled command via ResolvedAgent -> fails
+	_, err = resolvedAgent.ResolveCommand(reg, "unenabled-cmd")
+	if err == nil || !strings.Contains(err.Error(), "command \"unenabled-cmd\" is not enabled for agent \"strict-agent\"") {
+		t.Errorf("expected unenabled command error, got: %v", err)
+	}
+
+	// 7. ScopedRegistry test
+	scoped := reg.Project("app")
+	scopedResCmd, err := scoped.ResolveCommand("explicit-cmd")
+	if err != nil {
+		t.Fatalf("scoped.ResolveCommand failed: %v", err)
+	}
+	if scopedResCmd.Command.Metadata.Name != "explicit-cmd" {
+		t.Errorf("expected explicit-cmd from scoped registry, got %s", scopedResCmd.Command.Metadata.Name)
+	}
+}

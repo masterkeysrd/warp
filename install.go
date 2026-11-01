@@ -381,9 +381,6 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *Plu
 	for p, m := range tempReg.MCPs {
 		appendResource(p, m.Kind, m.GetName(), m.GetMetadata().Description)
 	}
-	for p, tk := range tempReg.Toolkits {
-		appendResource(p, tk.Kind, tk.GetName(), tk.GetMetadata().Description)
-	}
 
 	sort.Slice(resources, func(i, j int) bool {
 		if resources[i].Kind != resources[j].Kind {

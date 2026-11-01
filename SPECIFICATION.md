@@ -27,9 +27,8 @@ execute Warp resources without modification.
    - [3.7 ModelProvider](#37-modelprovider)
    - [3.8 Tool](#38-tool)
    - [3.9 MCP](#39-mcp)
-   - [3.10 Toolkit](#310-toolkit)
-   - [3.11 Plugin](#311-plugin)
-   - [3.12 Rule](#312-rule)
+   - [3.10 Plugin](#310-plugin)
+   - [3.11 Rule](#311-rule)
 4. [Cross-References](#4-cross-references)
 5. [Discovery and Loading](#5-discovery-and-loading)
    - [5.1 Phase 1: Workspace Discovery](#51-phase-1-workspace-discovery)
@@ -70,7 +69,7 @@ Standard resources follow this structure:
 
 ### YAML Resources
 
-Resources that are pure configuration (e.g. `ModelProvider`, `Tool`, `MCP`, `Toolkit`)
+Resources that are pure configuration (e.g. `ModelProvider`, `Tool`, `MCP`)
 may omit the Markdown body and instruction delimiters. These files must have a
 `.yaml` or `.yml` extension and contain only a valid YAML document.
 
@@ -83,7 +82,7 @@ Every resource kind shares the following top-level YAML fields.
 | Field                  | Type   | Required | Description                                                                                |
 |------------------------|--------|:--------:|--------------------------------------------------------------------------------------------|
 | `apiVersion`           | string | ✅       | Schema version. Currently always `warp/v1alpha1`.                                          |
-| `kind`                 | string | ✅       | Resource type. One of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`, `Plugin`. |
+| `kind`                 | string | ✅       | Resource type. One of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Plugin`, `Rule`. |
 | `metadata.name`        | string | ✅       | Unique identifier for the resource within its kind.                                        |
 | `metadata.description` | string |          | Short human-readable summary.                                                              |
 | `metadata.displayName` | string |          | Pretty-printed label for UIs.                                                              |
@@ -384,7 +383,7 @@ Skills declare how and when the runtime or orchestrator should activate them:
 
 #### Progressive Tool Loading
 
-Skills can declare required or associated Tool and Toolkit references in `spec.tools`. When an agent invokes
+Skills can declare required or associated Tool references or glob patterns in `spec.tools`. When an agent invokes
 or executes a skill, the runtime progressively loads the skill's declared tools via `resolvedAgent.ToolsForSkill(...)`.
 
 Progressive tool loading is bounded by a two-tier security ceiling:
@@ -399,7 +398,7 @@ This allows agents to maintain minimal ambient tool access while enabling attach
 |----------------|--------------|------------------------------------------------------------------------------------------|
 | `useWhen`      | string       | Explicit routing instructions to the LLM on when to trigger this skill (e.g. "Use this when..."). |
 | `keywords`     | string[]     | Array of semantic tags used for discovery and prompting.                                 |
-| `tools`        | string[]     | List of Tool or Toolkit references required or used by this skill.                       |
+| `tools`        | string[]     | List of Tool references or glob patterns required or used by this skill.                  |
 | `argumentHint` | string       | Single-line hint indicating expected argument format upon invocation.                    |
 | `arguments`    | Argument[]   | Structured parameters accepted by the skill.                                             |
 
@@ -892,37 +891,7 @@ spec:
 
 ---
 
-### 3.10 Toolkit
-
-A `Toolkit` resource groups multiple tools together. Tools can be defined inline
-or referenced by file path.
-
-#### `spec` fields
-
-| Field   | Type     | Required | Description                          |
-|---------|----------|:--------:|--------------------------------------|
-| `tools` | object[] | ✅       | Array of tool references or inline definitions. |
-
-#### Full example (`toolkits/default.yaml`)
-
-```yaml
-apiVersion: warp/v1alpha1
-kind: Toolkit
-metadata:
-  name: default-toolkit
-spec:
-  tools:
-    - $ref: tools/ls.yaml
-    - name: echo
-      command: ["echo"]
-      description: Print a message.
-      inputSchema:
-        type: object
-        properties:
-          msg: { type: string }
-```
-
-### 3.11 Plugin
+### 3.10 Plugin
 
 A `Plugin` resource (typically named `PLUGIN.md` or `PLUGIN.yaml`) is placed at the root of a repository to declare it as a distributable WARP package. It acts as the manifest for the repository, telling the loader where to find the resources and which ones are meant for public consumption.
 
@@ -962,7 +931,7 @@ This repository provides standard financial analysis skills.
 
 ---
 
-### 3.12 Rule
+### 3.11 Rule
 
 A `Rule` resource defines ambient constraints, coding standards, security guardrails, or architectural invariants that agents must adhere to within a project or workspace scope. Unlike `Skill` resources (which represent active, opt-in capabilities), rules represent passive governance and boundaries that are evaluated and injected based on multi-modal triggers.
 
@@ -982,7 +951,7 @@ A `Rule` resource defines ambient constraints, coding standards, security guardr
 | `useWhen`  | string   |          | —       | Semantic instructions to an LLM or router model describing when this rule should be active.             |
 | `keywords` | string[] |          | —       | Array of semantic tags used for discovery and prompting.                                               |
 | `decision` | string   |          | —       | Qualified or Short Name of a `Decision` resource evaluated to determine whether to activate this rule.  |
-| `tools`    | string[] |          | —       | List of Tool or Toolkit names that activate this rule when invoked by the agent.                        |
+| `tools`    | string[] |          | —       | List of Tool names that activate this rule when invoked by the agent.                                   |
 
 #### Full example (`.agents/rules/go-concurrency.md`)
 
@@ -1191,7 +1160,7 @@ loaded Workspace.
 | `apiVersion` is present      | Field is empty or absent.                                          |
 | `kind` is present            | Field is empty or absent.                                          |
 | `metadata.name` is present   | Field is empty or absent.                                          |
-| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `Rule`, `ModelProvider`, `Tool`, `MCP`, `Toolkit`, `Plugin`. |
+| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `Rule`, `ModelProvider`, `Tool`, `MCP`, `Plugin`. |
 
 ### 7.2 Agent-specific
 
@@ -1207,7 +1176,7 @@ loaded Workspace.
 
 | Rule                               | Error condition                                                              |
 |------------------------------------|------------------------------------------------------------------------------|
-| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` or `Toolkit` in the resolution hierarchy. |
+| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy. |
 
 ### 7.4 Workspace-specific
 
@@ -1240,7 +1209,7 @@ loaded Workspace.
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | Valid `triggers.decision` reference | A declared decision reference does not match any loaded `Decision` in the resolution hierarchy. |
-| Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` or `Toolkit` in the resolution hierarchy. |
+| Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` in the resolution hierarchy. |
 
 ### 7.8 ModelProvider-specific
 
@@ -1284,7 +1253,7 @@ function parse(filePath, fileContent):
         return error "missing front-matter delimiters"
 
   6. Decode segments[1] as YAML.
-  7. IF kind is not in {Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Toolkit, Plugin}:
+  7. IF kind is not in {Workspace, Context, Agent, Skill, Command, Decision, Rule, ModelProvider, Tool, MCP, Plugin}:
      return error "unsupported kind"
 
   8. Populate resource from YAML and segments[2] (instructions).

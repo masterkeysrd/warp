@@ -55,7 +55,6 @@
 //	ModelProvider  – configuration for an LLM provider.
 //	Tool           – a custom tool definition.
 //	MCP            – a Model Context Protocol server configuration.
-//	Toolkit        – a collection of referenced or inline tools.
 //
 // # Loading Resources
 //

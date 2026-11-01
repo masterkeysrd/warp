@@ -36,8 +36,6 @@ spec:
     - finance
   commands:
     - report
-  tools:
-    - git-toolkit
 ---
 
 # My Agent
@@ -52,14 +50,13 @@ You are a helpful assistant that specializes in financial analysis...
 | `Workspace`     | Root authority for the session (`WORKSPACE.md`); declares active projects, plugins, and workspace-wide policies. |
 | `Context`       | Identity, instructions, and explicit resource references for a project scope (`AGENTS.md`). |
 | `Plugin`        | Manifest declaring a plugin's identity and exported resources (`PLUGIN.md`). |
-| `Agent`         | An autonomous agent with LLM configuration, inheritance (`extends`), policies, and references to skills, commands, tools/toolkits, MCPs, and subagents. |
+| `Agent`         | An autonomous agent with LLM configuration, inheritance (`extends`), policies, and references to skills, commands, rules, and subagents. |
 | `Skill`         | A bundle of expertise guidelines for a specific domain. Agents load skills to adopt a persona or follow conventions. |
 | `Command`       | A discrete, reusable operation an agent can invoke (e.g. "generate a report"). |
 | `Decision`      | A probabilistic decision evaluation defining structured questions (`predicate`, `choice`, `score`) and an evaluation rubric. |
 | `Rule`          | Ambient constraints, coding standards, and guardrails with multi-modal activation triggers (`always`, `globs`, `useWhen`, `decision`, `tools`). |
 | `ModelProvider` | Configuration for an LLM provider (API key env var, base URL, available models, default models, thinking config). |
 | `Tool`          | A custom tool definition (input schema, execution binding, and safety annotations). |
-| `Toolkit`       | A collection of referenced (`$ref`) or inline `Tool` definitions that can be attached to an `Agent` as a unit. |
 | `MCP`           | A Model Context Protocol server configuration (`stdio` or `sse`). |
 
 ## Loading & Resolving Resources
@@ -95,7 +92,7 @@ if err != nil {
 // Scope the registry to that project
 scoped := reg.Project(proj.Name)
 
-// Resolve an executable Agent (evaluates inheritance, Toolkits, policies, and globs)
+// Resolve an executable Agent (evaluates inheritance, policies, and globs)
 resolved, err := scoped.ResolveAgent("my-agent")
 ```
 
@@ -130,7 +127,6 @@ AGENTS.md             # Project context instructions (kind: Context)
 ├── skills/           # Skill definitions
 │   └── finance.md    # kind: Skill
 ├── tools/            # Tool definitions (kind: Tool)
-├── toolkits/         # Toolkit definitions (kind: Toolkit)
 ├── mcps/             # MCP server definitions (kind: MCP)
 └── providers/        # Model Provider definitions (kind: ModelProvider)
 ```
@@ -139,7 +135,7 @@ AGENTS.md             # Project context instructions (kind: Context)
 
 - **`Registry` / `ScopedRegistry`** – multi-tenant resource store supporting 3-part qualified names (`namespace/Kind/name`), short-name resolution, and deterministic listing (`ListResources`, `ListProjects`, `Resources`).
   - `Project(name string) *ScopedRegistry` / `ProjectFromPath(path string) (*Project, error)` — scopes resolution to a project namespace.
-  - `ResolveAgent(ref string) (*ResolvedAgent, error)` — resolves an executable Agent (evaluating inheritance, Toolkits, policies, and globs).
+  - `ResolveAgent(ref string) (*ResolvedAgent, error)` — resolves an executable Agent (evaluating inheritance, policies, and globs).
   - `Validate() error` — validates all resources, inheritance chains, and cross-references across the workspace.
 - **`LoadWorkspace(dir string, opts ...LoadOption) (*Registry, error)`** — discovers and loads a workspace starting from `dir`.
 - **`Load(dir string) (*Registry, error)`** — loads a single `.agents` resource directory.

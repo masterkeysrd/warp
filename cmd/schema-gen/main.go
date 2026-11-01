@@ -38,7 +38,7 @@ func main() {
 	schema.Properties.Set("kind", &jsonschema.Schema{
 		Type: "string",
 		Enum: []any{
-			"Workspace", "Context", "Agent", "Skill", "Command", "Decision", "Rule", "ModelProvider", "Tool", "MCP", "Toolkit", "Plugin",
+			"Workspace", "Context", "Agent", "Skill", "Command", "Decision", "Rule", "ModelProvider", "Tool", "MCP", "Plugin",
 		},
 		Description: "The type of WARP resource.",
 	})
@@ -82,7 +82,6 @@ func main() {
 	addKind("ModelProvider", &warp.ModelProviderSpec{})
 	addKind("Tool", &warp.ToolSpec{})
 	addKind("MCP", &warp.MCPSpec{})
-	addKind("Toolkit", &warp.ToolkitSpec{})
 	addKind("Plugin", &warp.PluginSpec{})
 
 	schema.AllOf = allOf

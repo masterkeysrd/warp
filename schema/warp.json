@@ -883,7 +883,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Tools is a list of Tool or Toolkit names that trigger this rule when invoked."
+          "description": "Tools is a list of Tool names that trigger this rule when invoked."
         }
       },
       "additionalProperties": false,
@@ -908,7 +908,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Tools is a list of resource refs (names, qualified refs, or toolkits)\nrequired or used by this skill."
+          "description": "Tools is a list of resource refs (names, qualified refs) or glob patterns\nrequired or used by this skill."
         },
         "argumentHint": {
           "type": "string",
@@ -997,13 +997,9 @@
           "type": "string",
           "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
         },
-        "name": {
-          "type": "string",
-          "description": "Used only when defined inline in a Toolkit"
-        },
         "description": {
           "type": "string",
-          "description": "Short description (used in YAML tools or inline Toolkit tools)"
+          "description": "Short description (used in YAML tools)"
         },
         "command": {
           "items": {
@@ -1038,75 +1034,6 @@
         "command"
       ],
       "description": "ToolSpec contains the configuration details for a Tool resource."
-    },
-    "ToolkitSpec": {
-      "properties": {
-        "tools": {
-          "items": {
-            "$ref": "#/$defs/ToolkitTool"
-          },
-          "type": "array",
-          "description": "Array of tools (referenced or inline)"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "tools"
-      ],
-      "description": "ToolkitSpec contains the configuration details for a Toolkit resource."
-    },
-    "ToolkitTool": {
-      "properties": {
-        "$ref": {
-          "type": "string",
-          "description": "Path to external tool (e.g., \"tools/formatter.yaml\")"
-        },
-        "instructions": {
-          "type": "string",
-          "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
-        },
-        "name": {
-          "type": "string",
-          "description": "Used only when defined inline in a Toolkit"
-        },
-        "description": {
-          "type": "string",
-          "description": "Short description (used in YAML tools or inline Toolkit tools)"
-        },
-        "command": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
-        },
-        "env": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object",
-          "description": "Environment variables injected into the process"
-        },
-        "inputSchema": {
-          "type": "object",
-          "description": "JSON Schema object defining arguments the LLM must pass"
-        },
-        "outputSchema": {
-          "type": "object",
-          "description": "JSON Schema object defining the tool's output"
-        },
-        "annotations": {
-          "$ref": "#/$defs/ToolAnnotation",
-          "description": "Safety profile for Tool Execution Security"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "command"
-      ],
-      "description": "ToolkitTool can be either a reference to an external file or a fully inline ToolSpec."
     },
     "WorkspaceDefSpec": {
       "properties": {
@@ -1866,7 +1793,7 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Tools is a list of Tool or Toolkit names that trigger this rule when invoked."
+                    "description": "Tools is a list of Tool names that trigger this rule when invoked."
                   }
                 },
                 "additionalProperties": false,
@@ -1937,7 +1864,7 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Tools is a list of resource refs (names, qualified refs, or toolkits)\nrequired or used by this skill."
+                    "description": "Tools is a list of resource refs (names, qualified refs) or glob patterns\nrequired or used by this skill."
                   },
                   "argumentHint": {
                     "type": "string",
@@ -2375,13 +2302,9 @@
                     "type": "string",
                     "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
                   },
-                  "name": {
-                    "type": "string",
-                    "description": "Used only when defined inline in a Toolkit"
-                  },
                   "description": {
                     "type": "string",
-                    "description": "Short description (used in YAML tools or inline Toolkit tools)"
+                    "description": "Short description (used in YAML tools)"
                   },
                   "command": {
                     "items": {
@@ -2588,122 +2511,6 @@
       "if": {
         "properties": {
           "kind": {
-            "const": "Toolkit"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "spec": {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://github.com/masterkeysrd/warp/toolkit-spec",
-            "$ref": "#/$defs/ToolkitSpec",
-            "$defs": {
-              "ToolAnnotation": {
-                "properties": {
-                  "isOpenWorld": {
-                    "type": "boolean",
-                    "description": "Interacts with external resources"
-                  },
-                  "isDangerous": {
-                    "type": "boolean",
-                    "description": "Can perform destructive actions"
-                  },
-                  "isReadOnly": {
-                    "type": "boolean",
-                    "description": "Does not modify state"
-                  },
-                  "isIdempotent": {
-                    "type": "boolean",
-                    "description": "Safe to retry"
-                  },
-                  "userHint": {
-                    "type": "string",
-                    "description": "Human-readable hint for approval prompts"
-                  }
-                },
-                "additionalProperties": false,
-                "type": "object",
-                "description": "ToolAnnotation defines the safety profile for a tool."
-              },
-              "ToolkitSpec": {
-                "properties": {
-                  "tools": {
-                    "items": {
-                      "$ref": "#/$defs/ToolkitTool"
-                    },
-                    "type": "array",
-                    "description": "Array of tools (referenced or inline)"
-                  }
-                },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "tools"
-                ],
-                "description": "ToolkitSpec contains the configuration details for a Toolkit resource."
-              },
-              "ToolkitTool": {
-                "properties": {
-                  "$ref": {
-                    "type": "string",
-                    "description": "Path to external tool (e.g., \"tools/formatter.yaml\")"
-                  },
-                  "instructions": {
-                    "type": "string",
-                    "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
-                  },
-                  "name": {
-                    "type": "string",
-                    "description": "Used only when defined inline in a Toolkit"
-                  },
-                  "description": {
-                    "type": "string",
-                    "description": "Short description (used in YAML tools or inline Toolkit tools)"
-                  },
-                  "command": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array",
-                    "description": "Executable and static args (e.g., [\"python\", \"script.py\"])"
-                  },
-                  "env": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "type": "object",
-                    "description": "Environment variables injected into the process"
-                  },
-                  "inputSchema": {
-                    "type": "object",
-                    "description": "JSON Schema object defining arguments the LLM must pass"
-                  },
-                  "outputSchema": {
-                    "type": "object",
-                    "description": "JSON Schema object defining the tool's output"
-                  },
-                  "annotations": {
-                    "$ref": "#/$defs/ToolAnnotation",
-                    "description": "Safety profile for Tool Execution Security"
-                  }
-                },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "command"
-                ],
-                "description": "ToolkitTool can be either a reference to an external file or a fully inline ToolSpec."
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
             "const": "Plugin"
           }
         }
@@ -2789,7 +2596,6 @@
         "ModelProvider",
         "Tool",
         "MCP",
-        "Toolkit",
         "Plugin"
       ],
       "description": "The type of WARP resource."

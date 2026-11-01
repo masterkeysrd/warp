@@ -1160,7 +1160,7 @@ func TestProjectFromPath_SubdirectoryMatching(t *testing.T) {
 	}
 }
 
-func TestToolkitExpansion_And_GlobCapabilities(t *testing.T) {
+func TestAgentResolution_GlobCapabilities(t *testing.T) {
 	reg := NewRegistry(nil)
 	reg.AddProject(&Project{Name: "app", Path: ".", RootPath: "/repo"})
 
@@ -1172,33 +1172,16 @@ func TestToolkitExpansion_And_GlobCapabilities(t *testing.T) {
 	reg.Set(pluginCmd.QualifiedName(), pluginCmd)
 	reg.Set(otherSkill.QualifiedName(), otherSkill)
 
-	// Standalone tool + Toolkit with both $ref and inline tool
+	// Standalone tools
 	refTool := makeToolResource(NamespaceWorkspace, "list-files")
 	refTool.Spec.Command = []string{"ls", "-la"}
 	refTool.Spec.Description = "List files"
 	reg.Set(refTool.QualifiedName(), refTool)
 
-	tk := &Toolkit{
-		BaseResource: BaseResource{
-			APIVersion: APIVersion,
-			Kind:       KindToolkit,
-			Namespace:  NamespaceWorkspace,
-			Metadata:   Metadata{Name: "default-toolkit"},
-		},
-		Spec: ToolkitSpec{
-			Tools: []ToolkitTool{
-				{Ref: "list-files.yaml"},
-				{
-					ToolSpec: ToolSpec{
-						Name:        "echo-inline",
-						Description: "Inline echo tool",
-						Command:     []string{"echo"},
-					},
-				},
-			},
-		},
-	}
-	reg.Set(tk.QualifiedName(), tk)
+	echoTool := makeToolResource(NamespaceWorkspace, "echo-tool")
+	echoTool.Spec.Command = []string{"echo"}
+	echoTool.Spec.Description = "Echo tool"
+	reg.Set(echoTool.QualifiedName(), echoTool)
 
 	agent := agentWithSpec("app", "dev-agent", AgentSpec{
 		Skills:   []string{"warp-dev/*"},
@@ -1228,14 +1211,14 @@ func TestToolkitExpansion_And_GlobCapabilities(t *testing.T) {
 		t.Errorf("expected [scaffold] command from glob, got %v", resolved.Commands)
 	}
 	if len(resolved.Tools) != 2 {
-		t.Fatalf("expected 2 tools (1 standalone + 1 inline from toolkit), got %d: %v", len(resolved.Tools), resolved.Tools)
+		t.Fatalf("expected 2 tools, got %d: %v", len(resolved.Tools), resolved.Tools)
 	}
-	if resolved.Tools[0].Metadata.Name != "echo-inline" || resolved.Tools[1].Metadata.Name != "list-files" {
-		t.Errorf("expected deterministic sorted tools [echo-inline, list-files], got [%s, %s]",
+	if resolved.Tools[0].Metadata.Name != "echo-tool" || resolved.Tools[1].Metadata.Name != "list-files" {
+		t.Errorf("expected deterministic sorted tools [echo-tool, list-files], got [%s, %s]",
 			resolved.Tools[0].Metadata.Name, resolved.Tools[1].Metadata.Name)
 	}
-	if resolved.Tools[0].Metadata.Description != "Inline echo tool" {
-		t.Errorf("expected inline tool description to be populated, got %q", resolved.Tools[0].Metadata.Description)
+	if resolved.Tools[0].Metadata.Description != "Echo tool" {
+		t.Errorf("expected echo-tool description to be populated, got %q", resolved.Tools[0].Metadata.Description)
 	}
 }
 
@@ -2035,7 +2018,7 @@ func TestRuleValidation(t *testing.T) {
 	}
 	reg2 := NewRegistry(nil)
 	reg2.Set(rBadTool.QualifiedName(), rBadTool)
-	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool or toolkit") {
+	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool: missing-tool") {
 		t.Errorf("expected missing tool error, got %v", err)
 	}
 
@@ -2346,7 +2329,7 @@ func TestSkillValidation(t *testing.T) {
 	}
 	reg := NewRegistry(nil)
 	reg.Set(badSkill.QualifiedName(), badSkill)
-	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool or toolkit") {
+	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool: missing-tool") {
 		t.Errorf("expected missing tool error, got %v", err)
 	}
 
@@ -2376,44 +2359,6 @@ func TestSkillValidation(t *testing.T) {
 	if err := reg2.Validate(); err != nil {
 		t.Errorf("expected valid skill validation, got error: %v", err)
 	}
-
-	// Valid toolkit in skill
-	toolkit := &Toolkit{
-		BaseResource: BaseResource{
-			APIVersion: APIVersion,
-			Kind:       KindToolkit,
-			Namespace:  NamespaceWorkspace,
-			Metadata:   Metadata{Name: "my-toolkit"},
-		},
-		Spec: ToolkitSpec{
-			Tools: []ToolkitTool{
-				{
-					ToolSpec: ToolSpec{
-						Name:        "inline-tool",
-						Description: "inline tool description",
-						Command:     []string{"echo"},
-					},
-				},
-			},
-		},
-	}
-	skillWithToolkit := &Skill{
-		BaseResource: BaseResource{
-			APIVersion: APIVersion,
-			Kind:       KindSkill,
-			Namespace:  NamespaceWorkspace,
-			Metadata:   Metadata{Name: "toolkit-skill"},
-		},
-		Spec: SkillSpec{
-			Tools: []string{"my-toolkit"},
-		},
-	}
-	reg3 := NewRegistry(nil)
-	reg3.Set(toolkit.QualifiedName(), toolkit)
-	reg3.Set(skillWithToolkit.QualifiedName(), skillWithToolkit)
-	if err := reg3.Validate(); err != nil {
-		t.Errorf("expected valid toolkit reference in skill, got error: %v", err)
-	}
 }
 
 func TestToolsForSkill(t *testing.T) {
@@ -2427,23 +2372,12 @@ func TestToolsForSkill(t *testing.T) {
 			Metadata:   Metadata{Name: "tool-a", Description: "Tool A"},
 		},
 	}
-	toolkit := &Toolkit{
+	toolB := &Tool{
 		BaseResource: BaseResource{
 			APIVersion: APIVersion,
-			Kind:       KindToolkit,
+			Kind:       KindTool,
 			Namespace:  NamespaceWorkspace,
-			Metadata:   Metadata{Name: "toolkit-b"},
-		},
-		Spec: ToolkitSpec{
-			Tools: []ToolkitTool{
-				{
-					ToolSpec: ToolSpec{
-						Name:        "tool-b1",
-						Description: "Tool B1",
-						Command:     []string{"b1"},
-					},
-				},
-			},
+			Metadata:   Metadata{Name: "tool-b", Description: "Tool B"},
 		},
 	}
 	skill := &Skill{
@@ -2454,13 +2388,25 @@ func TestToolsForSkill(t *testing.T) {
 			Metadata:   Metadata{Name: "my-skill"},
 		},
 		Spec: SkillSpec{
-			Tools: []string{"tool-a", "toolkit-b"},
+			Tools: []string{"tool-a", "tool-b"},
+		},
+	}
+	globSkill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "glob-skill"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"tool-*"},
 		},
 	}
 
 	reg.Set(toolA.QualifiedName(), toolA)
-	reg.Set(toolkit.QualifiedName(), toolkit)
+	reg.Set(toolB.QualifiedName(), toolB)
 	reg.Set(skill.QualifiedName(), skill)
+	reg.Set(globSkill.QualifiedName(), globSkill)
 
 	tools, err := reg.ToolsForSkill("my-skill")
 	if err != nil {
@@ -2469,8 +2415,17 @@ func TestToolsForSkill(t *testing.T) {
 	if len(tools) != 2 {
 		t.Fatalf("expected 2 tools, got %d", len(tools))
 	}
-	if tools[0].Metadata.Name != "tool-a" && tools[1].Metadata.Name != "tool-a" {
-		t.Errorf("expected tool-a to be resolved")
+	if tools[0].Metadata.Name != "tool-a" || tools[1].Metadata.Name != "tool-b" {
+		t.Errorf("expected deterministic sorted tools [tool-a, tool-b], got [%s, %s]", tools[0].Metadata.Name, tools[1].Metadata.Name)
+	}
+
+	// Glob skill test
+	globTools, err := reg.ToolsForSkill("glob-skill")
+	if err != nil {
+		t.Fatalf("glob ToolsForSkill failed: %v", err)
+	}
+	if len(globTools) != 2 {
+		t.Fatalf("expected 2 tools from glob, got %d", len(globTools))
 	}
 
 	// Scoped registry test

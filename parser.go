@@ -176,12 +176,6 @@ func Parse(filePath, content string) (*ParseResult, error) {
 			return nil, fmt.Errorf("failed to parse MCP spec: %w", err)
 		}
 		resource = &res
-	case KindToolkit:
-		var res Toolkit
-		if err := yaml.Unmarshal([]byte(yamlPart), &res); err != nil {
-			return nil, fmt.Errorf("failed to parse Toolkit spec: %w", err)
-		}
-		resource = &res
 	case KindPlugin:
 		var p Plugin
 		if err := yaml.Unmarshal([]byte(yamlPart), &p); err != nil {

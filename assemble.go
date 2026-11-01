@@ -20,7 +20,7 @@ type NamespacedProvider interface {
 }
 
 // NamespacedFSProvider wraps an fs.FS and presents its Agent, Skill, Command,
-// ModelProvider, Tool, MCP, and Toolkit files as a NamespacedProvider.
+// ModelProvider, Tool, and MCP files as a NamespacedProvider.
 type NamespacedFSProvider struct {
 	fsys      fs.FS
 	BasePath  string // Optional virtual root prefix (e.g., "source://system")
@@ -57,7 +57,6 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 		rs.ModelProviders,
 		rs.Tools,
 		rs.MCPs,
-		rs.Toolkits,
 		p.BasePath,
 	); err != nil {
 		return nil, fmt.Errorf("namespaced provider %q: %w", p.namespace, err)
@@ -95,10 +94,6 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 	for _, m := range rs.MCPs {
 		m.Namespace = p.namespace
 		out = append(out, m)
-	}
-	for _, tk := range rs.Toolkits {
-		tk.Namespace = p.namespace
-		out = append(out, tk)
 	}
 	return out, nil
 }

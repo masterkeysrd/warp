@@ -120,7 +120,7 @@ type SkillSpec struct {
 	UseWhen string `yaml:"useWhen,omitempty"`
 	// Keywords is an array of semantic tags used for discovery and prompting.
 	Keywords []string `yaml:"keywords,omitempty,flow"`
-	// Tools is a list of resource refs (names, qualified refs, or toolkits)
+	// Tools is a list of resource refs (names, qualified refs) or glob patterns
 	// required or used by this skill.
 	Tools []string `yaml:"tools,omitempty"`
 	// ArgumentHint is a single-line text hint telling the agent or user what

@@ -24,7 +24,6 @@ Every WARP resource is a Markdown file with YAML front-matter or a pure YAML fil
 - **ModelProvider**: LLM provider configuration (API endpoints, default models).
 - **Tool**: Definition for an executable tool with parameter schema.
 - **MCP**: Model Context Protocol server integration.
-- **Toolkit**: A collection of tools grouped together.
 
 ### 2. Resource Properties (Spec)
 
@@ -32,9 +31,9 @@ Each resource has specific fields in its `spec` block:
 
 | Kind | Key Properties |
 |------|----------------|
-| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `rules` (string[]), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
-| **Context** | `resources` (string[]), `rules` (string[]) |
-| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `policies` (Policies) |
+| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
+| **Context** | — (instructions in Markdown body) |
+| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (AgentThinking), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `policies` (Policies) |
 | **Skill** | `useWhen` (string), `keywords` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Command** | `agent` (string), `context` (string: `inline`, `fork`, `clean`), `models` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Decision** | `models` (string[]), `argumentHint` (string), `arguments` (Argument[]), `questions` (DecisionQuestion[]) |
@@ -42,7 +41,6 @@ Each resource has specific fields in its `spec` block:
 | **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
 | **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `outputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
 | **MCP** | `type` (string: `stdio`, `sse`, `http`, `streamable-http`), `command` (string[]), `endpoint` (string), `env` (map), `auth` (ProviderAuth), `headers` (map), `annotations` (ToolAnnotation), `policies` (MCPPolicies), `overrides` (map) |
-| **Toolkit** | `tools` (ToolkitTool[]) |
 
 ### 3. Directory Layout
 - `.agents/`: The standard location for resources.
@@ -84,7 +82,7 @@ Instructions here...
 ```
 
 ### 2. Technical Resources (.yaml)
-Resources like `ModelProvider`, `Tool`, `MCP`, and `Toolkit` can be defined as pure YAML.
+Resources like `ModelProvider`, `Tool`, and `MCP` can be defined as pure YAML.
 ```yaml
 apiVersion: warp/v1alpha1
 kind: Tool

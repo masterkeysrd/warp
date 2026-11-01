@@ -74,19 +74,6 @@ spec:
 		t.Fatal(err)
 	}
 
-	// Create a Toolkit in YAML
-	toolkitYaml := `apiVersion: warp/v1alpha1
-kind: Toolkit
-metadata:
-  name: test-toolkit
-spec:
-  tools:
-    - $ref: "test-tool.yaml"
-`
-	if err := os.WriteFile(filepath.Join(agentsDir, "test-toolkit.yaml"), []byte(toolkitYaml), 0644); err != nil {
-		t.Fatal(err)
-	}
-
 	ws, err := LoadWorkspace(tmpDir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace failed: %v", err)

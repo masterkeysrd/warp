@@ -86,7 +86,7 @@ func executeValidate(out io.Writer, args []string) error {
 		return fmt.Errorf("Validation Error: %w", err)
 	}
 
-	var contexts, agents, skills, commands, decisions, rules, providers, tools, mcps, toolkits int
+	var contexts, agents, skills, commands, decisions, rules, providers, tools, mcps int
 	for _, res := range reg.Resources() {
 		switch res.GetKind() {
 		case warp.KindContext:
@@ -107,8 +107,6 @@ func executeValidate(out io.Writer, args []string) error {
 			tools++
 		case warp.KindMCP:
 			mcps++
-		case warp.KindToolkit:
-			toolkits++
 		}
 	}
 
@@ -123,7 +121,6 @@ func executeValidate(out io.Writer, args []string) error {
 	fmt.Fprintf(out, "   - %d Model Providers\n", providers)
 	fmt.Fprintf(out, "   - %d Tools\n", tools)
 	fmt.Fprintf(out, "   - %d MCP Servers\n", mcps)
-	fmt.Fprintf(out, "   - %d Toolkits\n", toolkits)
 	return nil
 }
 

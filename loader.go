@@ -45,7 +45,6 @@ type ResourceSet struct {
 	ModelProviders map[string]*ModelProvider
 	Tools          map[string]*Tool
 	MCPs           map[string]*MCP
-	Toolkits       map[string]*Toolkit
 }
 
 // ResourceProvider loads workspace-global resources that should be merged into
@@ -67,8 +66,8 @@ func NewFSResourceProvider(fsys fs.FS, basePath string) *FSResourceProvider {
 	return &FSResourceProvider{fsys: fsys, BasePath: basePath}
 }
 
-// LoadResources loads Agent, Skill, Command, Decision, Rule, ModelProvider, Tool, MCP, and
-// Toolkit resources from the provider filesystem.
+// LoadResources loads Agent, Skill, Command, Decision, Rule, ModelProvider, Tool, and MCP
+// resources from the provider filesystem.
 func (p *FSResourceProvider) LoadResources() (*ResourceSet, error) {
 	if p == nil {
 		return nil, fmt.Errorf("resource provider is required")
@@ -88,7 +87,6 @@ func (p *FSResourceProvider) LoadResources() (*ResourceSet, error) {
 		resources.ModelProviders,
 		resources.Tools,
 		resources.MCPs,
-		resources.Toolkits,
 		p.BasePath,
 	); err != nil {
 		return nil, err
@@ -107,7 +105,6 @@ func newResourceSet() *ResourceSet {
 		ModelProviders: make(map[string]*ModelProvider),
 		Tools:          make(map[string]*Tool),
 		MCPs:           make(map[string]*MCP),
-		Toolkits:       make(map[string]*Toolkit),
 	}
 }
 
@@ -381,9 +378,6 @@ func loadWorkspacePlugins(reg *Registry, workspaceRoot string, plugins []Workspa
 		for p, m := range rs.MCPs {
 			injectPluginResource(p, m)
 		}
-		for p, tk := range rs.Toolkits {
-			injectPluginResource(p, tk)
-		}
 	}
 	return nil
 }
@@ -442,9 +436,6 @@ func injectResourceSetFallback(reg *Registry, rs *ResourceSet) {
 	for _, m := range rs.MCPs {
 		inject(m, ns)
 	}
-	for _, tk := range rs.Toolkits {
-		inject(tk, ns)
-	}
 }
 
 func resourceBase(r Resource) *BaseResource {
@@ -465,8 +456,6 @@ func resourceBase(r Resource) *BaseResource {
 	case *Tool:
 		return &v.BaseResource
 	case *MCP:
-		return &v.BaseResource
-	case *Toolkit:
 		return &v.BaseResource
 	default:
 		_ = baser(nil)
@@ -501,7 +490,7 @@ func loadAgentsDirIntoRegistry(reg *Registry, fsys fs.FS, ns string, basePath st
 		}
 
 		switch res.Kind {
-		case KindAgent, KindSkill, KindCommand, KindDecision, KindRule, KindModelProvider, KindTool, KindMCP, KindToolkit:
+		case KindAgent, KindSkill, KindCommand, KindDecision, KindRule, KindModelProvider, KindTool, KindMCP:
 			r, ok := res.Resource.(Resource)
 			if !ok {
 				return nil
@@ -653,7 +642,7 @@ func loadContext(projectDir string) (*Context, string) {
 
 // loadAgentsDir walks an agents directory (provided as an fs.FS rooted at the
 // agents dir itself) and registers every Agent, Skill, Command, Decision,
-// Provider, Tool, MCP, and Toolkit file found.
+// Provider, Tool, and MCP file found.
 // Map keys are file paths relative to the agents directory root.
 func loadAgentsDir(fsys fs.FS,
 	agents map[string]*Agent,
@@ -664,7 +653,6 @@ func loadAgentsDir(fsys fs.FS,
 	providers map[string]*ModelProvider,
 	tools map[string]*Tool,
 	mcps map[string]*MCP,
-	toolkits map[string]*Toolkit,
 	basePath string,
 ) error {
 	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
@@ -741,11 +729,6 @@ func loadAgentsDir(fsys fs.FS,
 			m.Directory = dir
 			m.Path = fullPath
 			mcps[p] = m
-		case KindToolkit:
-			tk := res.Resource.(*Toolkit)
-			tk.Directory = dir
-			tk.Path = fullPath
-			toolkits[p] = tk
 		}
 		// Other kinds (Workspace, Context) found inside an agents dir are
 		// silently ignored.

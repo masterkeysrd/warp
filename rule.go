@@ -150,7 +150,7 @@ type RuleTriggers struct {
 	Keywords []string `yaml:"keywords,omitempty,flow"`
 	// Decision is an optional reference to a Decision resource evaluated to activate this rule.
 	Decision string `yaml:"decision,omitempty"`
-	// Tools is a list of Tool or Toolkit names that trigger this rule when invoked.
+	// Tools is a list of Tool names that trigger this rule when invoked.
 	Tools []string `yaml:"tools,omitempty,flow"`
 }
 
@@ -215,7 +215,7 @@ func (r *RuleTriggers) MatchesPath(targetPath string) bool {
 	return false
 }
 
-// MatchesTool reports whether the trigger conditions match the given tool or toolkit name.
+// MatchesTool reports whether the trigger conditions match the given tool name.
 func (r *RuleTriggers) MatchesTool(toolName string) bool {
 	if r == nil || len(r.Tools) == 0 {
 		return false

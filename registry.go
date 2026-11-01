@@ -483,8 +483,8 @@ func (r *Registry) Validate() error {
 				if hasGlobMeta(toolRef) || toolRef == "*" {
 					continue
 				}
-				if !r.hasKindLocked(ns, KindTool, toolRef) && !r.hasKindLocked(ns, KindToolkit, toolRef) {
-					return fmt.Errorf("skill %s references missing tool or toolkit: %s", name, toolRef)
+				if !r.hasKindLocked(ns, KindTool, toolRef) {
+					return fmt.Errorf("skill %s references missing tool: %s", name, toolRef)
 				}
 			}
 		}
@@ -520,22 +520,6 @@ func (r *Registry) Validate() error {
 					// valid
 				default:
 					return fmt.Errorf("command %s has invalid context %q: must be one of inline, fork, clean", name, cmd.Spec.Context)
-				}
-			}
-		}
-		if tk, ok := res.(*Toolkit); ok {
-			for i, item := range tk.Spec.Tools {
-				if item.Ref != "" {
-					if !r.hasKindLocked(ns, KindTool, item.Ref) {
-						return fmt.Errorf("toolkit %s tool[%d] references missing tool: %s", name, i, item.Ref)
-					}
-				} else {
-					if item.Name == "" {
-						return fmt.Errorf("toolkit %s tool[%d]: inline tool requires name", name, i)
-					}
-					if len(item.Command) == 0 {
-						return fmt.Errorf("toolkit %s tool[%d] (%s): inline tool requires command", name, i, item.Name)
-					}
 				}
 			}
 		}
@@ -637,8 +621,8 @@ func (r *Registry) validateRuleLocked(name string, rule *Rule) error {
 		if hasGlobMeta(tRef) || tRef == "*" {
 			continue
 		}
-		if !r.hasKindLocked(ns, KindTool, tRef) && !r.hasKindLocked(ns, KindToolkit, tRef) {
-			return fmt.Errorf("rule %s: trigger references missing tool or toolkit: %s", name, tRef)
+		if !r.hasKindLocked(ns, KindTool, tRef) {
+			return fmt.Errorf("rule %s: trigger references missing tool: %s", name, tRef)
 		}
 	}
 	return nil
@@ -1332,7 +1316,7 @@ func (s *ScopedRegistry) ToolsForAgent(agentName string) ([]*Tool, error) {
 }
 
 // ToolsForSkill returns the Tool resources required or declared by the named skill within
-// this project scope. It expands any referenced Toolkits into their constituent tools.
+// this project scope.
 func (s *ScopedRegistry) ToolsForSkill(skillRef string) ([]*Tool, error) {
 	return resolveToolsForSkill(s, skillRef)
 }
@@ -1466,7 +1450,7 @@ func (r *Registry) ResolveRulesForPath(targetPath string) []Rule {
 }
 
 // ToolsForSkill returns the Tool resources required or declared by the named skill within
-// this registry scope. It expands any referenced Toolkits into their constituent tools.
+// this registry scope.
 func (r *Registry) ToolsForSkill(skillRef string) ([]*Tool, error) {
 	return resolveToolsForSkill(r, skillRef)
 }
@@ -1839,8 +1823,8 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		skills = deduplicateSkills(skills)
 	}
 
-	// 2. Resolve Tools (including Toolkit expansions)
-	tools := resolveToolsAndToolkits(resolver)
+	// 2. Resolve Tools
+	tools := resolveTools(resolver)
 
 	// Apply tool policy filter
 	wsPolicy := workspaceToolPolicy(resolver)
@@ -2005,7 +1989,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	}, nil
 }
 
-func resolveToolsAndToolkits(resolver Resolver) []*Tool {
+func resolveTools(resolver Resolver) []*Tool {
 	var tools []*Tool
 	seen := make(map[string]bool)
 	addTool := func(t *Tool) {
@@ -2032,53 +2016,10 @@ func resolveToolsAndToolkits(resolver Resolver) []*Tool {
 		}
 	}
 
-	allToolkits := resolver.ListResources(QueryOptions{Kinds: []Kind{KindToolkit}, Effective: true})
-	for _, r := range allToolkits {
-		if tk, ok := r.(*Toolkit); ok {
-			expandToolkit(tk, resolver, addTool)
-		}
-	}
-
 	sort.Slice(tools, func(i, j int) bool {
 		return tools[i].QualifiedName() < tools[j].QualifiedName()
 	})
 	return tools
-}
-
-func expandToolkit(tk *Toolkit, resolver Resolver, addTool func(*Tool)) {
-	if tk == nil {
-		return
-	}
-	for _, item := range tk.Spec.Tools {
-		if item.Ref != "" {
-			if refRes, ok := resolver.ResolveResource(item.Ref); ok {
-				if t, ok := refRes.(*Tool); ok {
-					addTool(t)
-				}
-			}
-			continue
-		}
-		if item.Name != "" {
-			desc := item.Description
-			if desc == "" {
-				desc = item.Instructions
-			}
-			inlineTool := &Tool{
-				BaseResource: BaseResource{
-					APIVersion: tk.APIVersion,
-					Kind:       KindTool,
-					Namespace:  tk.Namespace,
-					Directory:  tk.Directory,
-					Metadata: Metadata{
-						Name:        item.Name,
-						Description: desc,
-					},
-				},
-				Spec: *item.ToolSpec.DeepCopy(),
-			}
-			addTool(inlineTool)
-		}
-	}
 }
 
 func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
@@ -2109,16 +2050,34 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 		}
 	}
 
-	for _, tRef := range skill.Spec.Tools {
-		tRes, ok := resolver.ResolveResource(tRef)
-		if !ok {
-			continue
+	if containsWildcard(skill.Spec.Tools) {
+		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
+		for _, r := range all {
+			if t, ok := r.(*Tool); ok {
+				addTool(t)
+			}
 		}
-		switch val := tRes.(type) {
-		case *Tool:
-			addTool(val)
-		case *Toolkit:
-			expandToolkit(val, resolver, addTool)
+	} else if len(skill.Spec.Tools) > 0 {
+		var allTools []Resource
+		for _, tRef := range skill.Spec.Tools {
+			if hasGlobMeta(tRef) {
+				if allTools == nil {
+					allTools = resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: false})
+				}
+				for _, r := range allTools {
+					if t, ok := r.(*Tool); ok && matchRefPattern(resolver, tRef, r) {
+						addTool(t)
+					}
+				}
+				continue
+			}
+			tRes, ok := resolver.ResolveResource(tRef)
+			if !ok {
+				continue
+			}
+			if t, ok := tRes.(*Tool); ok {
+				addTool(t)
+			}
 		}
 	}
 
@@ -2133,7 +2092,7 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 
 // ToolsForSkill returns the tools required or declared by the named skill for this resolved agent.
 // It verifies that the resolved skill is present in ra.Skills (returning an error if not enabled),
-// resolves the skill's tools (expanding toolkits and applying the workspace policy ceiling),
+// resolves the skill's tools (applying the workspace policy ceiling),
 // and filters the tools against the agent's policy without requiring them to match the agent's
 // base Include list (enforcing Exclude, Dangerous, OpenWorld, and ReadOnly).
 func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {

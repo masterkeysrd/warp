@@ -88,7 +88,7 @@ func runGet(args []string) {
 	if mode == "specific" && *includeFlag == "" && !*autoApprove {
 		// Group by kind
 		byKind := make(map[string][]exportMock)
-		kindsOrder := []string{"Agent", "Skill", "Command", "Tool", "MCP", "Toolkit", "ModelProvider"}
+		kindsOrder := []string{"Agent", "Skill", "Command", "Tool", "MCP", "ModelProvider"}
 
 		for _, exp := range discoveredExports {
 			byKind[exp.kind] = append(byKind[exp.kind], exp)

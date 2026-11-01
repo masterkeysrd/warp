@@ -113,7 +113,7 @@ Represents the skill being rendered (also exposes top-level shorthands `$SkillDi
 | `{{.Skill.Description}}` | The description of the skill. | `Guidelines for writing Go code.` |
 | `{{.Skill.UseWhen}}` | The explicit condition for using the skill (also `$UseWhen`). | `Use this when writing tests.` |
 | `{{.Skill.Keywords}}` | A list of semantic keywords. | `["go", "testing"]` |
-| `{{.Skill.Tools}}` | A list of tool and toolkit names/references required by the skill. | `["git_diff", "git_status"]` |
+| `{{.Skill.Tools}}` | A list of tool names/references required by the skill. | `["git_diff", "git_status"]` |
 | `{{.Skill.ArgumentHint}}` | Single-line hint indicating expected invocation arguments (also `$ArgumentHint`). | `Provide the file path to review` |
 | `{{.Skill.Arguments}}` | A list of structured parameter definitions accepted by the skill. | `[{{Name: "file", ...}}]` |
 | `{{.Skill.Dir}}` | The absolute path to the directory containing the skill (also `$SkillDir`). | `/Users/user/code/warp/skills/go` |

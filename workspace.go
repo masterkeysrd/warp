@@ -90,7 +90,6 @@ func (w *WorkspaceDef) GetPath() string {
 type WorkspaceDefSpec struct {
 	Projects        []string          `yaml:"projects,omitempty,flow"`
 	DefaultProvider string            `yaml:"defaultProvider,omitempty"`
-	DefaultModel    string            `yaml:"defaultModel,omitempty"`
 	DefaultModels   *ModelDefaults    `yaml:"defaultModels,omitempty" json:"defaultModels,omitempty"`
 	ModelAliases    map[string]string `yaml:"modelAliases,omitempty" json:"modelAliases,omitempty"`
 	DefaultAgent    string            `yaml:"defaultAgent,omitempty"`

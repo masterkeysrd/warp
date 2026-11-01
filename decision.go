@@ -21,12 +21,13 @@ const (
 type DecisionRenderOptions struct {
 	Workspace *Workspace
 	Project   *Project
+	Agent     *Agent
 	Args      []string
 	Globals   map[string]any
 }
 
 // Render processes the decision's instructions as a template.
-// It injects Workspace, Project scope, and positional Args into the generic Render.
+// It injects Workspace, Project scope, invoking Agent, and positional Args into the generic Render.
 func (d *Decision) Render(opts *DecisionRenderOptions) (string, error) {
 	if d == nil {
 		return "", nil
@@ -81,6 +82,19 @@ func (d *Decision) Render(opts *DecisionRenderOptions) (string, error) {
 	} else {
 		mergedGlobals["Project"] = TemplateProject{}
 		mergedGlobals["ProjectDir"] = ""
+	}
+
+	// Inject invoking Agent derived from arguments
+	if opts.Agent != nil {
+		ta := TemplateAgent{
+			Name:        opts.Agent.Metadata.Name,
+			Description: opts.Agent.Metadata.Description,
+			Dir:         opts.Agent.Directory,
+			Path:        opts.Agent.GetPath(),
+		}
+		mergedGlobals["Agent"] = ta
+	} else {
+		mergedGlobals["Agent"] = TemplateAgent{}
 	}
 
 	renderOpts := &RenderOptions{

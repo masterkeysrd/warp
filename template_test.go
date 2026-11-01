@@ -500,9 +500,21 @@ func TestDecisionRender(t *testing.T) {
 		RootPath: "/Users/user/code/warp",
 	}
 
+	agent := &Agent{
+		BaseResource: BaseResource{
+			Directory: "/Users/user/code/warp/.agents",
+			Path:      "/Users/user/code/warp/.agents/reviewer.md",
+			Metadata: Metadata{
+				Name:        "code-reviewer",
+				Description: "Reviews code changes",
+			},
+		},
+	}
+
 	dec := &Decision{
 		BaseResource: BaseResource{
 			Directory: "/Users/user/code/warp/.agents/decisions",
+			Path:      "/Users/user/code/warp/.agents/decisions/pr-triage.md",
 			Metadata: Metadata{
 				Name:        "pr-triage",
 				Description: "Triage PR",
@@ -514,14 +526,16 @@ func TestDecisionRender(t *testing.T) {
 			},
 			Questions: []DecisionQuestion{
 				{Name: "is_safe", Type: DecisionQuestionPredicate},
+				{Name: "priority", Type: DecisionQuestionScore},
 			},
-			Instructions: "Decision: {{.Decision.Name}} | Dir: {{.Decision.Dir}} | Project: {{.Project.Name}} | Branch: $branch | Questions: {{range .Questions}}{{.Name}}({{.Type}}){{end}}",
+			Instructions: "Decision: {{.Decision.Name}} | Dir: {{.Decision.Dir}} | Path: {{.Decision.Path}} | ShorthandDir: $DecisionDir | ShorthandPath: $DecisionPath | Project: {{.Project.Name}} | Branch: $branch | Agent: {{.Agent.Name}} | Questions: {{range .Decision.Questions}}{{.Name}}({{.Type}}) {{end}}| FlatQuestions: {{range .Questions}}{{.Name}} {{end}}",
 		},
 	}
 
 	opts := &DecisionRenderOptions{
 		Workspace: ws,
 		Project:   proj,
+		Agent:     agent,
 		Args:      []string{"feature/auth"},
 	}
 
@@ -530,7 +544,7 @@ func TestDecisionRender(t *testing.T) {
 		t.Fatalf("Decision.Render failed: %v", err)
 	}
 
-	expected := "Decision: pr-triage | Dir: /Users/user/code/warp/.agents/decisions | Project: cli | Branch: feature/auth | Questions: is_safe(predicate)"
+	expected := "Decision: pr-triage | Dir: /Users/user/code/warp/.agents/decisions | Path: /Users/user/code/warp/.agents/decisions/pr-triage.md | ShorthandDir: /Users/user/code/warp/.agents/decisions | ShorthandPath: /Users/user/code/warp/.agents/decisions/pr-triage.md | Project: cli | Branch: feature/auth | Agent: code-reviewer | Questions: is_safe(predicate) priority(score) | FlatQuestions: is_safe priority "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}
@@ -542,6 +556,32 @@ func TestDecisionRender(t *testing.T) {
 	}
 	if resNil != "" {
 		t.Errorf("nil Decision should render empty string, got %q", resNil)
+	}
+}
+
+func TestDecisionRender_AgentNilAndShorthands(t *testing.T) {
+	dec := &Decision{
+		BaseResource: BaseResource{
+			Directory: "/workspace/decisions",
+			Metadata: Metadata{
+				Name: "check",
+			},
+		},
+		Spec: DecisionSpec{
+			Questions: []DecisionQuestion{
+				{Name: "ok", Type: DecisionQuestionPredicate},
+			},
+			Instructions: "Dir:$DecisionDir Path:$DecisionPath Questions:{{range .Decision.Questions}}{{.Name}}{{end}} Agent:{{.Agent.Name}}",
+		},
+	}
+
+	res, err := dec.Render(nil)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	expected := "Dir:/workspace/decisions Path:/workspace/decisions/check.md Questions:ok Agent:"
+	if res != expected {
+		t.Errorf("Expected %q, got %q", expected, res)
 	}
 }
 

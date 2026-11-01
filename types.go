@@ -292,23 +292,23 @@ type ToolPolicies struct {
 }
 
 // DeepCopy returns a deep copy of the ToolPolicies.
-func (in *ToolPolicies) DeepCopy() *ToolPolicies {
-	if in == nil {
+func (p *ToolPolicies) DeepCopy() *ToolPolicies {
+	if p == nil {
 		return nil
 	}
 	out := new(ToolPolicies)
-	*out = *in
-	if in.Include != nil {
-		out.Include = make([]string, len(in.Include))
-		copy(out.Include, in.Include)
+	*out = *p
+	if p.Include != nil {
+		out.Include = make([]string, len(p.Include))
+		copy(out.Include, p.Include)
 	}
-	if in.Exclude != nil {
-		out.Exclude = make([]string, len(in.Exclude))
-		copy(out.Exclude, in.Exclude)
+	if p.Exclude != nil {
+		out.Exclude = make([]string, len(p.Exclude))
+		copy(out.Exclude, p.Exclude)
 	}
-	if in.Ask != nil {
-		out.Ask = make([]string, len(in.Ask))
-		copy(out.Ask, in.Ask)
+	if p.Ask != nil {
+		out.Ask = make([]string, len(p.Ask))
+		copy(out.Ask, p.Ask)
 	}
 	return out
 }
@@ -426,7 +426,7 @@ func (ra *ResolvedAgent) ToolAction(tool *Tool) ToolPolicyAction {
 	if ra == nil || tool == nil {
 		return ToolPolicyDeny
 	}
-	var wsAction ToolPolicyAction = ToolPolicyAllow
+	wsAction := ToolPolicyAllow
 	if ra.WorkspacePolicy != nil {
 		wsAction = ra.WorkspacePolicy.EvaluateTool(tool)
 	}

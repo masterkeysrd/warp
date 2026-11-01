@@ -1,6 +1,6 @@
 # Warp Templating Guide
 
-Warp resources (such as Agents, Commands, and Contexts) use Go's standard `text/template` engine to dynamically render their instructions. This allows you to write highly dynamic, context-aware prompts that adapt to the workspace and project they are executed in.
+Warp resources (such as Agents, Skills, Rules, Commands, Decisions, and Contexts) use Go's standard `text/template` engine to dynamically render their instructions. This allows you to write highly dynamic, context-aware prompts that adapt to the workspace and project they are executed in.
 
 Warp also supports a convenient shell-like shorthand syntax (e.g., `$Variable`) which is automatically evaluated alongside standard template tags.
 
@@ -279,6 +279,81 @@ Please adhere to these rules when writing documentation:
 **Task:**
 1. Read the source code for `$package_name`.
 2. Generate the markdown file and save it to `{{.Project.Dir}}/docs/$package_name.md`.
+```
+
+---
+
+## Decision Templating
+
+Decisions represent probabilistic evaluations (predicates, choices, ordinal scores). When evaluated, a Decision's `Instructions` (the markdown body below frontmatter) are rendered as a template defining the evaluation rubric or system instructions.
+
+### Available Context Objects
+
+Decision templates have access to:
+*   `{{.Project}}`: The active project scope where the decision was evaluated.
+*   `{{.Context}}`: The active project's `AGENTS.md` context.
+*   `{{.Workspace}}`: The active workspace scope.
+*   `{{.Agent}}`: The optional invoking agent (`.Name`, `.Description`, `.Dir`, `.Path`).
+*   `Globals`: Any implementor-injected global variables.
+
+In addition, they have access to the Decision metadata, argument variables, and questions:
+
+#### 1. The `Decision` Object
+Represents the decision being rendered (also exposes top-level shorthands `$DecisionDir`, `$DecisionPath`, `$ArgumentHint`, `{{.Questions}}`, `{{.Models}}`, and `{{.Arguments}}`).
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `{{.Decision.Name}}` | The name of the decision. | `pr-triage` |
+| `{{.Decision.Description}}` | The description of the decision. | `Triages pull requests.` |
+| `{{.Decision.ArgumentHint}}` | Single-line hint indicating expected argument format (also `$ArgumentHint`). | `Provide PR diff and author` |
+| `{{.Decision.Arguments}}` | A list of structured parameter definitions accepted by the decision. | `[{{Name: "pr_diff", ...}}]` |
+| `{{.Decision.Questions}}` | A list of structured questions (`predicate`, `choice`, `score`) evaluated by this decision (also `{{.Questions}}`). | `{{range .Decision.Questions}}{{.Name}} ({{.Type}}){{end}}` |
+| `{{.Decision.Dir}}` | The absolute path to the directory containing the decision (`$DecisionDir`). | `/Users/user/code/warp/.agents/decisions` |
+| `{{.Decision.Path}}` | The absolute path to the decision definition file (`$DecisionPath`). | `/Users/user/code/warp/.agents/decisions/pr-triage.md` |
+
+#### 2. Arguments
+Like Commands and Skills, Decisions can accept positional invocation arguments (`$1`, `$2`, `{{.Args}}`) which are mapped to declared `arguments`:
+
+*   Named parameters: `$pr_diff` or `{{.pr_diff}}`.
+*   Positional arguments: `$1`, `$2`, `{{index . "1"}}`.
+
+#### 3. Dynamic Questions & Rule Evaluation
+When a `Rule` triggers evaluation via `spec.triggers.decision`:
+- The `Decision` resource supplies the evaluation model (`spec.models`) and rubric prompt (`instructions`).
+- The runtime dynamically injects the predicate question synthesized from the rule's metadata and `triggers.useWhen`.
+
+### Example: A Reusable Decision Rubric
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: Decision
+metadata:
+  name: safety-check
+  description: Evaluate change safety and risk
+spec:
+  argumentHint: "Provide commit diff"
+  arguments:
+    - name: diff
+      required: true
+  questions:
+    - name: is_destructive
+      type: predicate
+      threshold: 0.8
+      criteria:
+        true: Contains drop table, rm -rf, or data deletion calls.
+        false: Only adds or updates code without unrecoverable deletions.
+---
+# Safety Evaluation Rubric
+
+You are evaluating a change for agent **{{.Agent.Name}}** in project **{{.Project.DisplayName}}** ($ProjectDir).
+
+Evaluate the following diff against the declared criteria:
+$diff
+
+Questions to evaluate:
+{{range .Decision.Questions}}
+- Question: {{.Name}} ({{.Type}})
+{{end}}
 ```
 
 ---

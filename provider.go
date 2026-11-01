@@ -55,20 +55,13 @@ func (in *ModelProvider) defaultForRole(role ModelRole) string {
 	if in == nil {
 		return ""
 	}
-	if m := in.Spec.DefaultModels.ForRole(role); m != "" {
-		return m
-	}
-	if role == ModelRoleCompletion {
-		return in.Spec.DefaultModel
-	}
-	return ""
+	return in.Spec.DefaultModels.ForRole(role)
 }
 
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
 	Type          string            `yaml:"type"`                                                   // e.g., "ollama", "openai", "anthropic", "typesafe"
-	Endpoint      string            `yaml:"endpoint"`                                               // API base URL
-	DefaultModel  string            `yaml:"defaultModel,omitempty"`                                 // Default completion model to use if none specified
+	Endpoint      string            `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`           // API base URL
 	DefaultModels *ModelDefaults    `yaml:"defaultModels,omitempty" json:"defaultModels,omitempty"` // Role-based default models (completion, decision, embedding)
 	Auth          *ProviderAuth     `yaml:"auth,omitempty" json:"auth,omitempty"`                   // Authentication configuration
 	Headers       map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`             // Custom HTTP headers for all provider requests
@@ -126,9 +119,9 @@ func (in *ProviderAuth) DeepCopy() *ProviderAuth {
 
 // ProviderModel describes a specific model available from a provider.
 type ProviderModel struct {
-	ID           string                     `yaml:"id"`                                              // Unique model ID (e.g., "gpt-4")
-	Name         string                     `yaml:"name"`                                            // Model name (e.g., "gpt-4")
-	Label        string                     `yaml:"label"`                                           // Human-friendly label (e.g., "GPT-4")
+	ID           string                     `yaml:"id"`                                              // The canonical model ID—the exact identifier sent to the provider API (e.g., "claude-3-7-sonnet-20250219")
+	Name         string                     `yaml:"name"`                                            // The resource/short name within WARP (e.g., "claude-3-7-sonnet")
+	Label        string                     `yaml:"label"`                                           // The human-readable display value for UIs (e.g., "Claude 3.7 Sonnet")
 	Aliases      []string                   `yaml:"aliases,omitempty,flow" json:"aliases,omitempty"` // Model aliases for @ references
 	Limits       ProviderModelLimits        `yaml:"limits"`                                          // Context, output token, and vector dimension limits
 	Capabilities *ProviderModelCapabilities `yaml:"capabilities,omitempty"`                          // Supported features and configuration boundaries
@@ -299,11 +292,11 @@ func (in *ProviderModelCapabilities) DeepCopy() *ProviderModelCapabilities {
 }
 
 type ProviderModelThinkingCapability struct {
-	Type            string   `yaml:"type"`                      // The strategy this model supports: toggle, effort, budget, or adaptive
-	IsDefault       bool     `yaml:"isDefault,omitempty"`       // Marks this strategy as the primary default
-	AllowedEfforts  []string `yaml:"allowedEfforts,omitempty"`  // Used if type: effort. e.g., ["low", "medium", "high"]
-	MaxBudgetTokens int      `yaml:"maxBudgetTokens,omitempty"` // Used if type: budget. The maximum allowed thinking tokens
-	Default         any      `yaml:"default,omitempty"`         // The default value
+	Type            ThinkingStrategy `yaml:"type"`                      // The strategy this model supports: toggle, effort, budget, or adaptive
+	IsDefault       bool             `yaml:"isDefault,omitempty"`       // Marks this strategy as the primary default
+	AllowedEfforts  []string         `yaml:"allowedEfforts,omitempty"`  // Used if type: effort. e.g., ["low", "medium", "high"]
+	MaxBudgetTokens int              `yaml:"maxBudgetTokens,omitempty"` // Used if type: budget. The maximum allowed thinking tokens
+	Default         any              `yaml:"default,omitempty"`         // The default value
 }
 
 func (in *ProviderModelThinkingCapability) DeepCopy() *ProviderModelThinkingCapability {

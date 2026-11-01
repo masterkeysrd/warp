@@ -330,16 +330,6 @@ func (r *Registry) Validate() error {
 				}
 			}
 		}
-		if dm := r.workspace.Def.Spec.DefaultModel; dm != "" && len(r.findProvidersLocked()) > 0 {
-			if _, _, isAlias := isAliasRef(dm); isAlias {
-				if err := r.validateAliasModelRefLocked("workspace defaultModel", dm, ModelRoleCompletion); err != nil {
-					return err
-				}
-			}
-			if m := r.findDeclaredModelForRoleLocked(dm, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
-				return fmt.Errorf("workspace defaultModel %q does not support completion capability", dm)
-			}
-		}
 		if dm := r.workspace.Def.Spec.DefaultModels; dm != nil {
 			if err := r.validateModelDefaultsLocked("workspace", dm); err != nil {
 				return err
@@ -402,6 +392,32 @@ func (r *Registry) Validate() error {
 				if agent.Spec.Thinking.BudgetTokens < 0 {
 					return fmt.Errorf("agent %s: thinking budgetTokens cannot be negative (%d)", name, agent.Spec.Thinking.BudgetTokens)
 				}
+				for _, mRef := range agent.Spec.Models {
+					m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion)
+					if m == nil || m.Capabilities == nil || len(m.Capabilities.Thinking) == 0 {
+						continue
+					}
+					var matchingCap *ProviderModelThinkingCapability
+					for i := range m.Capabilities.Thinking {
+						if m.Capabilities.Thinking[i].Type == agent.Spec.Thinking.Type {
+							matchingCap = &m.Capabilities.Thinking[i]
+							break
+						}
+					}
+					if matchingCap == nil {
+						return fmt.Errorf("agent %s: model %q does not support thinking strategy %q", name, mRef, agent.Spec.Thinking.Type)
+					}
+					if agent.Spec.Thinking.Type == ThinkingStrategyEffort && agent.Spec.Thinking.Effort != "" && len(matchingCap.AllowedEfforts) > 0 {
+						if !slices.Contains(matchingCap.AllowedEfforts, agent.Spec.Thinking.Effort) {
+							return fmt.Errorf("agent %s: model %q does not allow thinking effort %q", name, mRef, agent.Spec.Thinking.Effort)
+						}
+					}
+					if agent.Spec.Thinking.Type == ThinkingStrategyBudget && agent.Spec.Thinking.BudgetTokens > 0 && matchingCap.MaxBudgetTokens > 0 {
+						if agent.Spec.Thinking.BudgetTokens > matchingCap.MaxBudgetTokens {
+							return fmt.Errorf("agent %s: model %q thinking budgetTokens %d exceeds maximum %d", name, mRef, agent.Spec.Thinking.BudgetTokens, matchingCap.MaxBudgetTokens)
+						}
+					}
+				}
 			}
 			for _, skillRef := range agent.Spec.Skills {
 				if hasGlobMeta(skillRef) {
@@ -458,6 +474,15 @@ func (r *Registry) Validate() error {
 				}
 			}
 			for _, m := range mp.Spec.Models {
+				if m.Capabilities != nil {
+					for _, tc := range m.Capabilities.Thinking {
+						switch tc.Type {
+						case ThinkingStrategyToggle, ThinkingStrategyEffort, ThinkingStrategyBudget, ThinkingStrategyAdaptive:
+						default:
+							return fmt.Errorf("provider %s: model %q has invalid thinking strategy %q", name, m.ID, tc.Type)
+						}
+					}
+				}
 				for _, a := range m.Aliases {
 					norm := normalizeAliasName(a)
 					if norm == "" {
@@ -761,9 +786,6 @@ func (r *Registry) findDeclaredModelForRoleLocked(ref string, role ModelRole) *P
 			}
 			if r.workspace != nil && r.workspace.Def != nil {
 				wsModel := r.workspace.Def.Spec.DefaultModels.ForRole(role)
-				if wsModel == "" && role == ModelRoleCompletion {
-					wsModel = r.workspace.Def.Spec.DefaultModel
-				}
 				if wsModel != "" && wsModel != "@default" && wsModel != "default" {
 					return r.findDeclaredModelForRoleLocked(wsModel, role)
 				}
@@ -981,17 +1003,6 @@ func validateToolPolicies(tp *ToolPolicies, prefix string) error {
 		default:
 			return fmt.Errorf("%s: invalid openWorld action %q (must be allow, ask, or deny)", prefix, tp.OpenWorld)
 		}
-	}
-	return nil
-}
-
-// checkToolPolicyLocked evaluates a tool against the tool policy.
-func checkToolPolicyLocked(tool *Tool, policy *ToolPolicies) error {
-	if policy == nil {
-		return nil
-	}
-	if policy.EvaluateTool(tool) == ToolPolicyDeny {
-		return fmt.Errorf("tool denied by policy")
 	}
 	return nil
 }
@@ -1438,11 +1449,9 @@ func (s *ScopedRegistry) ResolveCommand(ref string) (*ResolvedCommand, error) {
 // ResolveModels returns the prioritized list of resolved models for the given
 // capability role, following the WARP model resolution hierarchy:
 //  1. Non-empty explicit model overrides (e.g., from Agent, Command, or Decision).
-//  2. Workspace role-specific default (spec.defaultModels.<role>), falling back
-//     to spec.defaultModel when role is ModelRoleCompletion.
+//  2. Workspace role-specific default (spec.defaultModels.<role>).
 //  3. Default Provider (or effective providers') role-specific default
-//     (spec.defaultModels.<role>), falling back to spec.defaultModel when role
-//     is ModelRoleCompletion, and then capability-matching models in spec.models.
+//     (spec.defaultModels.<role>), and then capability-matching models in spec.models.
 //
 // Model references (including IDs containing "/" and model name aliases) are
 // matched against effective ModelProvider catalogs and canonicalized to
@@ -1593,9 +1602,6 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 				}
 			}
 			wsModel := wsSpec.DefaultModels.ForRole(role)
-			if wsModel == "" && role == ModelRoleCompletion {
-				wsModel = wsSpec.DefaultModel
-			}
 			if wsModel != "" && wsModel != "@default" && wsModel != "default" {
 				if _, _, ok := isAliasRef(wsModel); ok {
 					return resolveAlias(wsModel, visited)
@@ -1693,9 +1699,6 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 
 	// 2. Workspace defaults
 	wsModel := wsSpec.DefaultModels.ForRole(role)
-	if wsModel == "" && role == ModelRoleCompletion {
-		wsModel = wsSpec.DefaultModel
-	}
 	if wsModel != "" {
 		if _, _, ok := isAliasRef(wsModel); ok {
 			return resolveAlias(wsModel, make(map[string]bool))

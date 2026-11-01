@@ -95,6 +95,7 @@ type TemplateDecision struct {
 	Description  string
 	ArgumentHint string
 	Arguments    []Argument
+	Questions    []DecisionQuestion
 	Dir          string
 	Path         string
 }
@@ -184,6 +185,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 	data["SkillPath"] = ""
 	data["CommandDir"] = ""
 	data["CommandPath"] = ""
+	data["DecisionDir"] = ""
+	data["DecisionPath"] = ""
 
 	// Add globals first
 	maps.Copy(data, opts.Globals)
@@ -361,8 +364,11 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			}
 		}
 	case *Decision:
-		if _, ok := data["Decision"]; !ok {
-			td := TemplateDecision{
+		var td TemplateDecision
+		if existing, ok := data["Decision"].(TemplateDecision); ok {
+			td = existing
+		} else {
+			td = TemplateDecision{
 				Name:         v.Metadata.Name,
 				Description:  v.Metadata.Description,
 				ArgumentHint: v.Spec.ArgumentHint,
@@ -370,8 +376,11 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				Dir:          v.Directory,
 				Path:         v.GetPath(),
 			}
-			data["Decision"] = td
 		}
+		td.Questions = v.Spec.Questions
+		data["Decision"] = td
+		data["DecisionDir"] = td.Dir
+		data["DecisionPath"] = td.Path
 		data["Models"] = v.Spec.Models
 		data["Questions"] = v.Spec.Questions
 		data["ArgumentHint"] = v.Spec.ArgumentHint

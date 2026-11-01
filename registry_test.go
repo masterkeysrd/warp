@@ -505,13 +505,13 @@ func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
 	tGitPush.Spec.Annotations = &ToolAnnotation{IsDangerous: true}
 	tBash := makeToolResource(NamespaceWorkspace, "bash")
 	tReadFile := makeToolResource(NamespaceWorkspace, "read-file")
-	tHttpGet := makeToolResource(NamespaceWorkspace, "http-get")
+	tHTTPGET := makeToolResource(NamespaceWorkspace, "http-get")
 
 	reg.Set(tGitStatus.QualifiedName(), tGitStatus)
 	reg.Set(tGitPush.QualifiedName(), tGitPush)
 	reg.Set(tBash.QualifiedName(), tBash)
 	reg.Set(tReadFile.QualifiedName(), tReadFile)
-	reg.Set(tHttpGet.QualifiedName(), tHttpGet)
+	reg.Set(tHTTPGET.QualifiedName(), tHTTPGET)
 
 	// 1. Validate() succeeds even though the registry contains tools excluded or disallowed by workspace policy
 	if err := reg.Validate(); err != nil {
@@ -593,26 +593,26 @@ func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
 
 	// 5. Workspace sets `include: ["git-*", "read-file"]` and Agent sets `include: ["git-status", "http-get"]`
 	// Only `git-status` is in resolved.Tools (http-get was blocked by workspace, git-push was blocked by dangerous/not in agent, read-file was not in agent).
-	agentGitAndHttp := agentWithSpec(NamespaceWorkspace, "agent-git-http", AgentSpec{
+	agentGitAndHTTP := agentWithSpec(NamespaceWorkspace, "agent-git-http", AgentSpec{
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Include: []string{"git-status", "http-get"},
 			},
 		},
 	})
-	reg.Set(agentGitAndHttp.QualifiedName(), agentGitAndHttp)
+	reg.Set(agentGitAndHTTP.QualifiedName(), agentGitAndHTTP)
 
-	resGitHttp, err := reg.ResolveAgent("workspace/Agent/agent-git-http")
+	resGitHTTP, err := reg.ResolveAgent("workspace/Agent/agent-git-http")
 	if err != nil {
 		t.Fatalf("ResolveAgent(agent-git-http): %v", err)
 	}
-	var gitHttpNames []string
-	for _, tool := range resGitHttp.Tools {
-		gitHttpNames = append(gitHttpNames, tool.Metadata.Name)
+	var gitHTTPNames []string
+	for _, tool := range resGitHTTP.Tools {
+		gitHTTPNames = append(gitHTTPNames, tool.Metadata.Name)
 	}
-	expectedGitHttp := []string{"git-status"}
-	if !slicesEqual(gitHttpNames, expectedGitHttp) {
-		t.Errorf("expected agent with git-status+http-get to get %v, got %v", expectedGitHttp, gitHttpNames)
+	expectedGitHTTP := []string{"git-status"}
+	if !slicesEqual(gitHTTPNames, expectedGitHTTP) {
+		t.Errorf("expected agent with git-status+http-get to get %v, got %v", expectedGitHTTP, gitHTTPNames)
 	}
 
 	// 6. Test with ScopedRegistry as well
@@ -1580,9 +1580,8 @@ func TestResolveModels(t *testing.T) {
 			Metadata:   Metadata{Name: "local-ai"},
 		},
 		Spec: ModelProviderSpec{
-			Type:         "ollama",
-			Endpoint:     "http://localhost:11434",
-			DefaultModel: "llama3.3-fallback",
+			Type:     "ollama",
+			Endpoint: "http://localhost:11434",
 			DefaultModels: &ModelDefaults{
 				Completion: "llama3.3",
 				Decision:   "nimble",
@@ -1633,7 +1632,7 @@ func TestResolveModels(t *testing.T) {
 		t.Errorf("provider embedding ResolveModels = %v, want [local-ai/nomic-embed-text]", gotProvEmb)
 	}
 
-	// Case 2: Workspace defines DefaultModel (legacy/scalar) and DefaultProvider
+	// Case 2: Workspace defines DefaultModels and DefaultProvider
 	reg2 := NewRegistry(&Workspace{
 		Def: &WorkspaceDef{
 			BaseResource: BaseResource{
@@ -1643,16 +1642,18 @@ func TestResolveModels(t *testing.T) {
 			},
 			Spec: WorkspaceDefSpec{
 				DefaultProvider: "local-ai",
-				DefaultModel:    "scalar-ws-model",
+				DefaultModels: &ModelDefaults{
+					Completion: "scalar-ws-model",
+				},
 			},
 		},
 	})
 	reg2.Set(provider.QualifiedName(), provider)
 	if got := resolvedQualifiedIDs(reg2.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, []string{"local-ai/scalar-ws-model"}) {
-		t.Errorf("workspace DefaultModel fallback = %v, want [local-ai/scalar-ws-model]", got)
+		t.Errorf("workspace DefaultModels fallback = %v, want [local-ai/scalar-ws-model]", got)
 	}
 
-	// Case 3: Provider defines only DefaultModel (no DefaultModels)
+	// Case 3: Provider defines DefaultModels
 	provScalar := &ModelProvider{
 		BaseResource: BaseResource{
 			APIVersion: APIVersion,
@@ -1661,9 +1662,11 @@ func TestResolveModels(t *testing.T) {
 			Metadata:   Metadata{Name: "simple-prov"},
 		},
 		Spec: ModelProviderSpec{
-			Type:         "openai",
-			Endpoint:     "https://api.openai.com/v1",
-			DefaultModel: "gpt-4o",
+			Type:     "openai",
+			Endpoint: "https://api.openai.com/v1",
+			DefaultModels: &ModelDefaults{
+				Completion: "gpt-4o",
+			},
 		},
 	}
 	reg3 := NewRegistry(&Workspace{
@@ -1681,7 +1684,7 @@ func TestResolveModels(t *testing.T) {
 	reg3.Set(provScalar.QualifiedName(), provScalar)
 	scoped3 := reg3.Project("app")
 	if got := resolvedQualifiedIDs(scoped3.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, []string{"simple-prov/gpt-4o"}) {
-		t.Errorf("scoped provider DefaultModel fallback = %v, want [simple-prov/gpt-4o]", got)
+		t.Errorf("scoped provider DefaultModels fallback = %v, want [simple-prov/gpt-4o]", got)
 	}
 	if got := scoped3.ResolveModels(ModelRoleDecision); got != nil {
 		t.Errorf("expected nil when no decision model is configured, got %v", got)
@@ -1697,9 +1700,11 @@ func TestResolveModels_SlashModelIDsAndCatalogLookup(t *testing.T) {
 			Metadata:   Metadata{Name: "mlx-serve"},
 		},
 		Spec: ModelProviderSpec{
-			Type:         "openai",
-			Endpoint:     "http://localhost:8080/v1",
-			DefaultModel: "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+			Type:     "openai",
+			Endpoint: "http://localhost:8080/v1",
+			DefaultModels: &ModelDefaults{
+				Completion: "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
+			},
 			Models: []ProviderModel{
 				{
 					ID:    "ddalcu/Qwen3.8-27B-MLX-Serve-4bit",
@@ -1748,9 +1753,9 @@ func TestResolveModels_SlashModelIDsAndCatalogLookup(t *testing.T) {
 		t.Errorf("ResolveModels(qualified name alias) = %v, want %v", got, want)
 	}
 
-	// 2. Provider defaultModel containing slash resolves when workspace has no defaultProvider
+	// 2. Provider defaultModels containing slash resolves when workspace has no defaultProvider
 	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion)); !slicesEqual(got, want) {
-		t.Errorf("ResolveModels(provider defaultModel with slash) = %v, want %v", got, want)
+		t.Errorf("ResolveModels(provider defaultModels with slash) = %v, want %v", got, want)
 	}
 
 	// 3. ResolveModel catalog lookup returns *ResolvedModel with Provider, Model, ModelID, and QualifiedID
@@ -1800,7 +1805,7 @@ func TestResolveModels_SlashModelIDsAndCatalogLookup(t *testing.T) {
 		t.Errorf("ResolveModel(unregistered) = (%+v, %v), want (nil, false)", rm, ok)
 	}
 
-	// 5. Fallback to capability-matching models when neither workspace nor provider sets defaultModel/defaultModels
+	// 5. Fallback to capability-matching models when neither workspace nor provider sets defaultModels
 	capProvider := &ModelProvider{
 		BaseResource: BaseResource{
 			APIVersion: APIVersion,
@@ -2482,6 +2487,152 @@ func TestAgent_Thinking_ValidationAndMerge(t *testing.T) {
 	}
 }
 
+func TestModelProviderAndAgent_ThinkingCapabilityValidation(t *testing.T) {
+	trueVal := true
+
+	// 1. ModelProvider with invalid thinking strategy
+	badProvider := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "bad-prov"},
+		},
+		Spec: ModelProviderSpec{
+			Type: "openai",
+			Models: []ProviderModel{
+				{
+					ID:    "m1",
+					Name:  "m1",
+					Label: "M1",
+					Capabilities: &ProviderModelCapabilities{
+						Completion: &trueVal,
+						Thinking: []ProviderModelThinkingCapability{
+							{Type: ThinkingStrategy("super-thinking")},
+						},
+					},
+				},
+			},
+		},
+	}
+	regBadProv := NewRegistry(nil)
+	regBadProv.Set(badProvider.QualifiedName(), badProvider)
+	if err := regBadProv.Validate(); err == nil || !strings.Contains(err.Error(), "has invalid thinking strategy") {
+		t.Errorf("expected invalid thinking strategy error, got %v", err)
+	}
+
+	// Provider with valid models and thinking capabilities
+	goodProvider := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "ai"},
+		},
+		Spec: ModelProviderSpec{
+			Type: "anthropic",
+			Models: []ProviderModel{
+				{
+					ID:    "claude-3-7-sonnet-20250219",
+					Name:  "claude-3-7-sonnet",
+					Label: "Claude 3.7 Sonnet",
+					Capabilities: &ProviderModelCapabilities{
+						Completion: &trueVal,
+						Thinking: []ProviderModelThinkingCapability{
+							{
+								Type:            ThinkingStrategyBudget,
+								MaxBudgetTokens: 4096,
+							},
+						},
+					},
+				},
+				{
+					ID:    "o3-mini",
+					Name:  "o3-mini",
+					Label: "O3 Mini",
+					Capabilities: &ProviderModelCapabilities{
+						Completion: &trueVal,
+						Thinking: []ProviderModelThinkingCapability{
+							{
+								Type:           ThinkingStrategyEffort,
+								AllowedEfforts: []string{"low", "medium"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// 2. Unsupported strategy
+	regUnsupported := NewRegistry(nil)
+	regUnsupported.Set(goodProvider.QualifiedName(), goodProvider)
+	agentUnsupported := agentWithSpec(NamespaceWorkspace, "ag-unsupported", AgentSpec{
+		Models: []string{"ai/claude-3-7-sonnet"},
+		Thinking: &AgentThinking{
+			Type:   ThinkingStrategyEffort,
+			Effort: "low",
+		},
+	})
+	regUnsupported.Set(agentUnsupported.QualifiedName(), agentUnsupported)
+	if err := regUnsupported.Validate(); err == nil || !strings.Contains(err.Error(), "does not support thinking strategy") {
+		t.Errorf("expected does not support thinking strategy error, got %v", err)
+	}
+
+	// 3. Disallowed effort
+	regDisallowedEffort := NewRegistry(nil)
+	regDisallowedEffort.Set(goodProvider.QualifiedName(), goodProvider)
+	agentDisallowedEffort := agentWithSpec(NamespaceWorkspace, "ag-effort", AgentSpec{
+		Models: []string{"ai/o3-mini"},
+		Thinking: &AgentThinking{
+			Type:   ThinkingStrategyEffort,
+			Effort: "high",
+		},
+	})
+	regDisallowedEffort.Set(agentDisallowedEffort.QualifiedName(), agentDisallowedEffort)
+	if err := regDisallowedEffort.Validate(); err == nil || !strings.Contains(err.Error(), "does not allow thinking effort") {
+		t.Errorf("expected does not allow thinking effort error, got %v", err)
+	}
+
+	// 4. Exceeding maxBudgetTokens
+	regExceedBudget := NewRegistry(nil)
+	regExceedBudget.Set(goodProvider.QualifiedName(), goodProvider)
+	agentExceedBudget := agentWithSpec(NamespaceWorkspace, "ag-budget", AgentSpec{
+		Models: []string{"ai/claude-3-7-sonnet"},
+		Thinking: &AgentThinking{
+			Type:         ThinkingStrategyBudget,
+			BudgetTokens: 8192,
+		},
+	})
+	regExceedBudget.Set(agentExceedBudget.QualifiedName(), agentExceedBudget)
+	if err := regExceedBudget.Validate(); err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Errorf("expected budgetTokens exceeds maximum error, got %v", err)
+	}
+
+	// 5. Valid Agent thinking configurations
+	regValid := NewRegistry(nil)
+	regValid.Set(goodProvider.QualifiedName(), goodProvider)
+	agentValid1 := agentWithSpec(NamespaceWorkspace, "ag-valid-1", AgentSpec{
+		Models: []string{"ai/claude-3-7-sonnet"},
+		Thinking: &AgentThinking{
+			Type:         ThinkingStrategyBudget,
+			BudgetTokens: 2048,
+		},
+	})
+	agentValid2 := agentWithSpec(NamespaceWorkspace, "ag-valid-2", AgentSpec{
+		Models: []string{"ai/o3-mini"},
+		Thinking: &AgentThinking{
+			Type:   ThinkingStrategyEffort,
+			Effort: "medium",
+		},
+	})
+	regValid.Set(agentValid1.QualifiedName(), agentValid1)
+	regValid.Set(agentValid2.QualifiedName(), agentValid2)
+	if err := regValid.Validate(); err != nil {
+		t.Errorf("expected valid agent thinking to pass validation, got %v", err)
+	}
+}
+
 func TestToolPolicies_ReadOnly(t *testing.T) {
 	readOnlyTool := &Tool{
 		BaseResource: BaseResource{
@@ -2848,7 +2999,9 @@ func TestModelAliases_Resolution(t *testing.T) {
 			Metadata:   Metadata{Name: "anthropic"},
 		},
 		Spec: ModelProviderSpec{
-			DefaultModel: "claude-3-5-sonnet",
+			DefaultModels: &ModelDefaults{
+				Completion: "claude-3-5-sonnet",
+			},
 			Models: []ProviderModel{
 				{
 					ID:           "claude-3-5-haiku",
@@ -2873,7 +3026,9 @@ func TestModelAliases_Resolution(t *testing.T) {
 			Metadata:   Metadata{Name: "openai"},
 		},
 		Spec: ModelProviderSpec{
-			DefaultModel: "gpt-4o",
+			DefaultModels: &ModelDefaults{
+				Completion: "gpt-4o",
+			},
 			Models: []ProviderModel{
 				{
 					ID:           "gpt-4o-mini",

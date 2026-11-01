@@ -267,7 +267,8 @@ metadata:
 spec:
   type: ollama
   endpoint: http://localhost:11434
-  defaultModel: llama3.3
+  defaultModels:
+    completion: llama3.3
   models:
     - id: llama3.3
       name: llama3.3
@@ -501,7 +502,7 @@ func TestOmitemptyFormatting(t *testing.T) {
 		t.Errorf("expected omitted temperature in formatted Agent, got:\n%s", string(agBytes))
 	}
 
-	// 2. Workspace with only DefaultModel should omit empty Projects, DefaultProvider, DefaultAgent, Plugins
+	// 2. Workspace with only DefaultModels should omit empty Projects, DefaultProvider, DefaultAgent, Plugins
 	ws := &WorkspaceDef{
 		BaseResource: BaseResource{
 			APIVersion: APIVersion,
@@ -509,7 +510,9 @@ func TestOmitemptyFormatting(t *testing.T) {
 			Metadata:   Metadata{Name: "clean-ws"},
 		},
 		Spec: WorkspaceDefSpec{
-			DefaultModel: "claude-3-7-sonnet",
+			DefaultModels: &ModelDefaults{
+				Completion: "claude-3-7-sonnet",
+			},
 		},
 	}
 	wsBytes, err := Format(ws)
@@ -522,8 +525,8 @@ func TestOmitemptyFormatting(t *testing.T) {
 			t.Errorf("expected %q to be omitted in formatted WorkspaceDef, got:\n%s", unwanted, wsOut)
 		}
 	}
-	if !strings.Contains(wsOut, "defaultModel: claude-3-7-sonnet") {
-		t.Errorf("expected defaultModel to be serialized in formatted WorkspaceDef, got:\n%s", wsOut)
+	if !strings.Contains(wsOut, "defaultModels:") || !strings.Contains(wsOut, "completion: claude-3-7-sonnet") {
+		t.Errorf("expected defaultModels to be serialized in formatted WorkspaceDef, got:\n%s", wsOut)
 	}
 
 	// 3. ToolAnnotation with only IsReadOnly=true should omit false booleans and empty userHint

@@ -31,14 +31,14 @@ Each resource has specific fields in its `spec` block:
 
 | Kind | Key Properties |
 |------|----------------|
-| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
+| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
 | **Context** | — (instructions in Markdown body) |
 | **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (AgentThinking), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `policies` (Policies) |
 | **Skill** | `useWhen` (string), `keywords` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Command** | `agent` (string), `context` (string: `inline`, `fork`, `clean`), `models` (string[]), `skills` (string[]), `rules` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Decision** | `models` (string[]), `argumentHint` (string), `arguments` (Argument[]), `questions` (DecisionQuestion[]) |
 | **Rule** | `triggers` (RuleTriggers: `always`, `globs`, `useWhen`, `keywords`, `decision`, `tools`), `priority` (int) |
-| **ModelProvider** | `type` (string), `endpoint` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
+| **ModelProvider** | `type` (string), `endpoint` (string), `defaultModels` (ModelDefaults), `auth` (ProviderAuth), `models` (ProviderModel[]) |
 | **Tool** | `command` (string[]), `description` (string), `env` (map), `inputSchema` (JSON Schema), `outputSchema` (JSON Schema), `annotations` (ToolAnnotation) |
 | **MCP** | `type` (string: `stdio`, `sse`, `http`, `streamable-http`), `command` (string[]), `endpoint` (string), `env` (map), `auth` (ProviderAuth), `headers` (map), `annotations` (ToolAnnotation), `policies` (MCPPolicies), `overrides` (map) |
 
@@ -56,15 +56,15 @@ Each resource has specific fields in its `spec` block:
 - **Qualified Name**: `namespace/Kind/name` (e.g., `local/Skill/warp-developer`).
 
 ### 5. Instruction Templating
-All Markdown resources render their `instructions` body via Go `text/template` plus shell-style shorthand (`$Name`, `$DisplayName`, `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$1`, `$2`, and named arguments):
+All Markdown resources render their `instructions` body via Go `text/template` plus shell-style shorthand (`$Name`, `$DisplayName`, `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`, `$1`, `$2`, and named arguments):
 - `{{.Workspace}}`: `.Dir`, `.Path`
 - `{{.Project}}`: `.Name`, `.DisplayName`, `.Dir`
 - `{{.Context}}`: `.Path`, `.Instructions`
 - `{{.Agent}}`: `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules`
 - `{{.Skill}}`: `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`
 - `{{.Rule}}`: `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority`
-- `{{.Command}}`: `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`
-- `{{.Decision}}`: `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`
+- `{{.Command}}`: `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules`
+- `{{.Decision}}`: `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Questions`, `.Dir`, `.Path`
 
 ## Resource Creation
 

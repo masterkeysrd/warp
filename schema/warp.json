@@ -450,10 +450,6 @@
           "type": "string",
           "description": "API base URL"
         },
-        "defaultModel": {
-          "type": "string",
-          "description": "Default completion model to use if none specified"
-        },
         "defaultModels": {
           "$ref": "#/$defs/ModelDefaults",
           "description": "Role-based default models (completion, decision, embedding)"
@@ -485,7 +481,6 @@
       "type": "object",
       "required": [
         "type",
-        "endpoint",
         "models"
       ],
       "description": "ModelProviderSpec contains the configuration details for a ModelProvider resource."
@@ -574,15 +569,15 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "Unique model ID (e.g., \"gpt-4\")"
+          "description": "The canonical model ID—the exact identifier sent to the provider API (e.g., \"claude-3-7-sonnet-20250219\")"
         },
         "name": {
           "type": "string",
-          "description": "Model name (e.g., \"gpt-4\")"
+          "description": "The resource/short name within WARP (e.g., \"claude-3-7-sonnet\")"
         },
         "label": {
           "type": "string",
-          "description": "Human-friendly label (e.g., \"GPT-4\")"
+          "description": "The human-readable display value for UIs (e.g., \"Claude 3.7 Sonnet\")"
         },
         "aliases": {
           "items": {
@@ -1060,9 +1055,6 @@
         "defaultProvider": {
           "type": "string"
         },
-        "defaultModel": {
-          "type": "string"
-        },
         "defaultModels": {
           "$ref": "#/$defs/ModelDefaults"
         },
@@ -1221,9 +1213,6 @@
                     "type": "array"
                   },
                   "defaultProvider": {
-                    "type": "string"
-                  },
-                  "defaultModel": {
                     "type": "string"
                   },
                   "defaultModels": {
@@ -1960,10 +1949,6 @@
                     "type": "string",
                     "description": "API base URL"
                   },
-                  "defaultModel": {
-                    "type": "string",
-                    "description": "Default completion model to use if none specified"
-                  },
                   "defaultModels": {
                     "$ref": "#/$defs/ModelDefaults",
                     "description": "Role-based default models (completion, decision, embedding)"
@@ -1995,7 +1980,6 @@
                 "type": "object",
                 "required": [
                   "type",
-                  "endpoint",
                   "models"
                 ],
                 "description": "ModelProviderSpec contains the configuration details for a ModelProvider resource."
@@ -2027,15 +2011,15 @@
                 "properties": {
                   "id": {
                     "type": "string",
-                    "description": "Unique model ID (e.g., \"gpt-4\")"
+                    "description": "The canonical model ID—the exact identifier sent to the provider API (e.g., \"claude-3-7-sonnet-20250219\")"
                   },
                   "name": {
                     "type": "string",
-                    "description": "Model name (e.g., \"gpt-4\")"
+                    "description": "The resource/short name within WARP (e.g., \"claude-3-7-sonnet\")"
                   },
                   "label": {
                     "type": "string",
-                    "description": "Human-friendly label (e.g., \"GPT-4\")"
+                    "description": "The human-readable display value for UIs (e.g., \"Claude 3.7 Sonnet\")"
                   },
                   "aliases": {
                     "items": {

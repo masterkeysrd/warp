@@ -109,7 +109,6 @@ created automatically with its root set to `$CWD`.
 |-------------------|----------|:--------:|----------|-------------------------------------------------------------------------------------------------------------------------------|
 | `projects`        | string[] |          | `[]`     | Directories to load as active projects. `["*"]` discovers all non-hidden immediate subdirectories. An empty value or omission defaults to `["."]`. |
 | `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.models`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
-| `defaultModel`    | string   |          |          | Default completion model to use when an agent omits `spec.models`.                                                            |
 | `defaultModels`   | object   |          | —        | Role-specific default models (`completion`, `decision`, `embedding`) across the workspace.                                    |
 | `modelAliases`    | map      |          | `{}`     | Map of shorthand aliases (e.g. `fast`, `@default`) to target provider-qualified or unqualified model references or aliases.  |
 | `defaultAgent`    | string   |          |          | Default agent to use for this workspace if none is specified.                                                                 |
@@ -129,8 +128,8 @@ created automatically with its root set to `$CWD`.
 When resolving the prioritized model list for a capability role (`completion`, `decision`, or `embedding`), a conforming runtime or `ResolveModels(role, explicit...)` evaluates sources in the following order:
 
 1. **Resource-Level Explicit Models**: Non-empty `spec.models` declared directly on the resource (`Agent`, `Command`, or `Decision`).
-2. **Workspace Role Defaults**: `workspace.spec.defaultModels.<role>`, falling back to `workspace.spec.defaultModel` when the role is `completion`.
-3. **Provider Role Defaults & Capability Fallback**: On the `ModelProvider` referenced by `workspace.spec.defaultProvider` (followed by all other effective `ModelProvider` resources in priority order when `defaultProvider` is unset or defines no default for the role), `provider.spec.defaultModels.<role>` (falling back to `provider.spec.defaultModel` when the role is `completion`), and finally any models in `provider.spec.models` whose `capabilities` support the requested role.
+2. **Workspace Role Defaults**: `workspace.spec.defaultModels.<role>`.
+3. **Provider Role Defaults & Capability Fallback**: On the `ModelProvider` referenced by `workspace.spec.defaultProvider` (followed by all other effective `ModelProvider` resources in priority order when `defaultProvider` is unset or defines no default for the role), `provider.spec.defaultModels.<role>`, and finally any models in `provider.spec.models` whose `capabilities` support the requested role.
 
 **Catalog Qualification & Alias Canonicalization:**
 - A model reference `<prefix>/<rest>` is treated as already provider-qualified when `<prefix>` matches a registered `ModelProvider` (canonicalizing `<rest>` to `<model.id>` if `<rest>` matches a declared model's `id` or `name`), or when `<prefix>` is not a registered provider and the full string does not match any model `id` or `name` in any effective `ModelProvider` (preserving pass-through references).
@@ -139,7 +138,7 @@ When resolving the prioritized model list for a capability role (`completion`, `
 
 **Model Aliases (`@<alias>` and `<provider>/@<alias>`):**
 - **Syntax**: An alias reference starts with `@` either as a bare alias (e.g., `@fast`, `@default`) or scoped to a provider (e.g., `anthropic/@fast`, `anthropic/@default`). References without `@` only match model IDs and names; they never match aliases.
-- **Provider-Scoped Alias (`<provider>/@<alias>`)**: Resolves against `<provider>`. If `<alias>` is `default`, it resolves to that provider's default model for the requested role (`defaultModels.<role>`, falling back to `defaultModel` for completion, an `@default` alias defined on the provider, or the first capability-matching model). If `<alias>` is any other name, it resolves to the model in that provider declaring the matching alias in its `aliases` list.
+- **Provider-Scoped Alias (`<provider>/@<alias>`)**: Resolves against `<provider>`. If `<alias>` is `default`, it resolves to that provider's default model for the requested role (`defaultModels.<role>`, an `@default` alias defined on the provider, or the first capability-matching model). If `<alias>` is any other name, it resolves to the model in that provider declaring the matching alias in its `aliases` list.
 - **Bare Alias (`@<alias>`)**:
   - If `<alias>` is `default`, it checks `workspace.spec.modelAliases["default"]` (or `"@default"`). If unset, it resolves to the standard Workspace -> Provider role-default hierarchy for that role.
   - For any other alias name, it first checks workspace-level overrides in `workspace.spec.modelAliases` (matching both `alias` and `@alias`). If mapped, the target reference is recursively resolved.
@@ -544,6 +543,16 @@ categorical choices, and ordinal scoring rubrics). Its general evaluation contex
 authored in the Markdown body of the file, while structured questions and criteria are declared in
 `spec.questions` (or supplied dynamically at runtime).
 
+#### Dynamic Questions and Rule Decision Triggers
+
+While a `Decision` resource can declare static questions in `spec.questions`, questions may also be supplied dynamically at runtime.
+
+In particular, when a [`Rule`](#311-rule) resource links to a `Decision` via `spec.triggers.decision` (e.g. `triggers.decision: pr-evaluator`):
+- The `Decision` resource provides the decision model (`spec.models`) and evaluation system prompt / rubric (`instructions`).
+- The runtime dynamically injects the predicate question derived from the rule's metadata (`metadata.name`, `metadata.description`) and its trigger conditions (`spec.triggers.useWhen`).
+
+This allows rules to share centralized, sophisticated evaluation rubrics and specialized decision models without duplicating rubric prompts across individual rule files.
+
 #### `spec` fields
 
 | Field          | Type         | Required | Description                                                                                              |
@@ -652,8 +661,7 @@ endpoints and default models.
 | Field           | Type     | Required | Description                                                                                      |
 |-----------------|----------|:--------:|--------------------------------------------------------------------------------------------------|
 | `type`          | string   | ✅       | e.g., `ollama`, `openai`, `anthropic`.                                                           |
-| `endpoint`      | string   | ✅       | API base URL.                                                                                    |
-| `defaultModel`  | string   |          | Default completion model to use if none specified.                                               |
+| `endpoint`      | string   |          | API base URL (optional when the provider `type` has a standard default endpoint).                |
 | `defaultModels` | object   |          | Role-specific default models (`completion`, `decision`, `embedding`) for this provider.          |
 | `auth`          | object   |          | Authentication config (e.g., `type: bearer`, `env: OPENAI_API_KEY`).                             |
 | `headers`       | map      |          | Custom HTTP headers included in all requests to the provider.                                    |
@@ -675,9 +683,9 @@ endpoints and default models.
 
 | Field          | Type     | Required | Description                                     |
 |----------------|----------|:--------:|-------------------------------------------------|
-| `id`           | string   | ✅       | Unique model ID (e.g., `gpt-4`).                |
-| `name`         | string   | ✅       | Model name (e.g., `gpt-4`).                     |
-| `label`        | string   | ✅       | Human-friendly label (e.g., `GPT-4`).           |
+| `id`           | string   | ✅       | The canonical model ID—the exact identifier sent to the provider API (e.g., `claude-3-7-sonnet-20250219`). |
+| `name`         | string   | ✅       | The resource/short name within WARP (e.g., `claude-3-7-sonnet`). |
+| `label`        | string   | ✅       | The human-readable display value for UIs (e.g., `Claude 3.7 Sonnet`). |
 | `aliases`      | string[] |          | Shorthand alias names (e.g., `["fast", "smart"]`) callable via `@<alias>` or `<provider>/@<alias>`. |
 | `limits`       | object   | ✅       | Context, output token, and vector dimension limits. |
 | `capabilities` | object   |          | Supported features and configuration boundaries.|
@@ -755,15 +763,16 @@ metadata:
 spec:
   type: anthropic
   endpoint: https://api.anthropic.com
-  defaultModel: claude-3-7-sonnet
+  defaultModels:
+    completion: claude-3-7-sonnet
   headers:
     X-Custom-Client-Name: "warp-platform"
   config:
     retryAttempts: 3
     timeoutMs: 15000
   models:
-    - id: claude-3-7-sonnet
-      name: claude-3-7-sonnet-20250219
+    - id: claude-3-7-sonnet-20250219
+      name: claude-3-7-sonnet
       label: Claude 3.7 Sonnet
       aliases: ["smart"]
       capabilities:
@@ -966,6 +975,10 @@ A `Rule` resource defines ambient constraints, coding standards, security guardr
 | `keywords` | string[] |          | —       | Array of semantic tags used for discovery and prompting.                                               |
 | `decision` | string   |          | —       | Qualified or Short Name of a `Decision` resource evaluated to determine whether to activate this rule.  |
 | `tools`    | string[] |          | —       | List of Tool names that activate this rule when invoked by the agent.                                   |
+
+#### Decision-Driven Activation (`triggers.decision`)
+
+When a rule links a `Decision` via `triggers.decision`, the referenced `Decision` resource provides the decision model (`spec.models`) and evaluation system prompt/rubric (`instructions`), while the runtime dynamically injects the predicate question derived from the rule's metadata (`metadata.name`, `metadata.description`) and `triggers.useWhen`. If the decision evaluates the predicate to `true` (meeting or exceeding the required threshold and confidence), the rule is activated.
 
 #### Full example (`.agents/rules/go-concurrency.md`)
 
@@ -1185,6 +1198,8 @@ loaded Workspace.
 | All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
 | All `spec.rules` paths resolve    | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
 | Declared `spec.models` resolve and support completion | When providers exist, a listed model or alias reference does not resolve to any declared model or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
+| Valid `spec.thinking` strategy | `spec.thinking.type` is not one of `toggle`, `effort`, `budget`, or `adaptive`, or `budgetTokens < 0`. |
+| Thinking capability match | When `spec.thinking` is declared, every resolved model in `spec.models` that defines thinking capabilities must support `spec.thinking.type`, allowed effort levels (`spec.thinking.effort`), and maximum budget tokens (`spec.thinking.budgetTokens <= maxBudgetTokens`). |
 
 ### 7.3 Skill-specific
 
@@ -1209,7 +1224,6 @@ loaded Workspace.
 |-------------------------------------|----------------------------------------------------------------|
 | All `spec.projects` paths exist     | A listed path (when not `"*"`) does not exist on the filesystem. |
 | Valid `spec.modelAliases`           | An alias entry has an empty key or an empty target model reference. |
-| `spec.defaultModel` resolves and supports completion | When providers exist, `defaultModel` does not resolve or resolves to a `ProviderModel` lacking completion capability. |
 | `spec.defaultModels` capabilities match role | When providers exist, a model in `defaultModels` does not resolve or resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
 
 ### 7.6 Plugin-specific
@@ -1243,6 +1257,7 @@ loaded Workspace.
 | Valid model `aliases`               | Any model alias in `spec.models[].aliases` is empty.           |
 | Unique model `aliases` per provider | A model alias is defined more than once within the same `ModelProvider`. |
 | No alias collision with model IDs or names | A model alias matches the `id` or `name` of a different model in the same `ModelProvider`. |
+| Valid thinking strategies           | Any `spec.models[].capabilities.thinking[].type` is not one of `toggle`, `effort`, `budget`, or `adaptive`. |
 
 ---
 
@@ -1416,7 +1431,7 @@ The reference implementation uses Go's `text/template` engine, with a preprocess
 You can use shell-style variables directly in your Markdown instructions:
 
 - **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
-- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`
+- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`
 - **Positional Arguments:** `$1`, `$2` (used in `Command`, `Decision`, and `Skill` resources)
 - **Argument References:** When a resource defines arguments (e.g. `arguments: [{name: "ticker"}]`), you can use `$ticker` (or `{{.ticker}}`) to refer to the argument.
 - **Escaping:** Use `$$` to output a literal `$`.
@@ -1446,7 +1461,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path (also available as `$SkillDir`, `$SkillPath`). |
 | `{{.Rule}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority` | Rule metadata, routing hints, priority, directory, and file path (also available as `$RuleDir`, `$RulePath`). |
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules` | Command metadata, executing agent, context mode, argument definitions, directory, file path, effective tools, eager skills, and eager rules (directory and file path also available as `$CommandDir`, `$CommandPath`). |
-| `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |
+| `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Questions`, `.Dir`, `.Path` | Decision metadata, argument definitions, structured questions (also available as `{{.Questions}}`), directory, and file path (directory and file path also available as `$DecisionDir`, `$DecisionPath`). |
 
 ### Advanced Templating
 

@@ -331,14 +331,6 @@ func (r *Registry) Validate() error {
 				return err
 			}
 		}
-		for _, rRef := range r.workspace.Def.Spec.Rules {
-			if hasGlobMeta(rRef) {
-				continue
-			}
-			if !r.hasKindLocked(NamespaceWorkspace, KindRule, rRef) {
-				return fmt.Errorf("workspace references missing rule: %s", rRef)
-			}
-		}
 	}
 
 	// Iterate in deterministic order so validation errors are reproducible.
@@ -408,16 +400,6 @@ func (r *Registry) Validate() error {
 					if !r.hasKindLocked(ns, KindRule, ruleRef) {
 						return fmt.Errorf("agent %s references missing rule: %s", name, ruleRef)
 					}
-				}
-			}
-		}
-		if ctx, ok := res.(*Context); ok {
-			for _, rRef := range ctx.Spec.Rules {
-				if hasGlobMeta(rRef) {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindRule, rRef) {
-					return fmt.Errorf("context %s references missing rule: %s", name, rRef)
 				}
 			}
 		}

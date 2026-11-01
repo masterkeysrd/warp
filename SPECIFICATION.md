@@ -205,14 +205,8 @@ inside a project directory will automatically parse it as a `Context` resource. 
 YAML front-matter, the loader infers the `apiVersion`, `kind`, and `metadata.name` fields
 automatically.
 
-#### `spec` fields
-
-| Field       | Type     | Required | Default | Description                                                                                 |
-|-------------|----------|:--------:|---------|---------------------------------------------------------------------------------------------|
-| `resources` | string[] |          | `[]`    | Paths (relative to the project directory) of additional Warp resource files or directories to load into the project namespace. |
-
-> `instructions` is **not** written in the YAML front-matter when using Markdown format. It is populated
-> automatically from the Markdown body below the closing `---`.
+A `Context` defines no `spec` configuration fields in YAML front-matter. Its `spec.instructions`
+is populated automatically from the Markdown body below the closing `---`.
 
 #### Full example
 
@@ -223,9 +217,6 @@ kind: Context
 metadata:
   name: services-api
   description: Contextual rules for the API service project.
-spec:
-  resources:
-    - custom/extra-skill.md
 ---
 
 # API Service

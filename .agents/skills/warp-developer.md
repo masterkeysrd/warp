@@ -32,8 +32,8 @@ Each resource has specific fields in its `spec` block:
 
 | Kind | Key Properties |
 |------|----------------|
-| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `rules` (string[]), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
-| **Context** | `resources` (string[]), `rules` (string[]) |
+| **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModel` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
+| **Context** | — (instructions in Markdown body) |
 | **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (map), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `policies` (Policies) |
 | **Skill** | `useWhen` (string), `keywords` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Command** | `agent` (string), `context` (string: `inline`, `fork`, `clean`), `models` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |

@@ -146,27 +146,10 @@
         "instructions": {
           "type": "string",
           "description": "Instructions is the directive text populated from the Markdown body of\nthe file (below the closing front-matter delimiter)."
-        },
-        "resources": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "description": "Resources is a list of paths to other Warp files to be explicitly\nloaded into the context."
-        },
-        "rules": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs that apply to this project context."
         }
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "resources"
-      ],
       "description": "ContextSpec contains the configuration details for a Context resource."
     },
     "DecisionCriteria": {
@@ -1107,12 +1090,6 @@
         "defaultAgent": {
           "type": "string"
         },
-        "rules": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "plugins": {
           "items": {
             "$ref": "#/$defs/WorkspacePlugin"
@@ -1261,12 +1238,6 @@
                   "defaultAgent": {
                     "type": "string"
                   },
-                  "rules": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
                   "plugins": {
                     "items": {
                       "$ref": "#/$defs/WorkspacePlugin"
@@ -1331,27 +1302,10 @@
                   "instructions": {
                     "type": "string",
                     "description": "Instructions is the directive text populated from the Markdown body of\nthe file (below the closing front-matter delimiter)."
-                  },
-                  "resources": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array",
-                    "description": "Resources is a list of paths to other Warp files to be explicitly\nloaded into the context."
-                  },
-                  "rules": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array",
-                    "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs that apply to this project context."
                   }
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "resources"
-                ],
                 "description": "ContextSpec contains the configuration details for a Context resource."
               }
             }

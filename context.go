@@ -93,12 +93,6 @@ type ContextSpec struct {
 	// Instructions is the directive text populated from the Markdown body of
 	// the file (below the closing front-matter delimiter).
 	Instructions string `yaml:"instructions,omitempty"`
-	// Resources is a list of paths to other Warp files to be explicitly
-	// loaded into the context.
-	Resources []string `yaml:"resources"`
-	// Rules is an optional list of Rule references (Qualified or Short Names) or
-	// globs that apply to this project context.
-	Rules []string `yaml:"rules,omitempty,flow"`
 }
 
 // DeepCopy returns a deep copy of the ContextSpec.
@@ -108,13 +102,5 @@ func (in *ContextSpec) DeepCopy() *ContextSpec {
 	}
 	out := new(ContextSpec)
 	*out = *in
-	if in.Resources != nil {
-		out.Resources = make([]string, len(in.Resources))
-		copy(out.Resources, in.Resources)
-	}
-	if in.Rules != nil {
-		out.Rules = make([]string, len(in.Rules))
-		copy(out.Rules, in.Rules)
-	}
 	return out
 }

@@ -212,12 +212,10 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		}
 		reg.AddProject(proj)
 
-		// Also register the Context as a first-class resource and load any
-		// explicitly referenced Context.Spec.Resources files.
+		// Also register the Context as a first-class resource.
 		if ctx != nil {
 			ctx.SetNamespace(slug)
 			reg.set(ctx.QualifiedName(), ctx)
-			loadContextResources(reg, projAbsPath, slug, ctx.Spec.Resources)
 		}
 
 		// Load project-local resources from PROJECT_DIR/.agents/
@@ -268,36 +266,6 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 	reg.providers = slices.Clone(providers)
 
 	return reg, nil
-}
-
-func loadContextResources(reg *Registry, projAbsPath, ns string, refs []string) {
-	for _, rel := range refs {
-		if rel == "" {
-			continue
-		}
-		target := filepath.Join(projAbsPath, filepath.FromSlash(rel))
-		content, err := os.ReadFile(target) // #nosec G304
-		if err != nil {
-			reg.warnings = append(reg.warnings, fmt.Sprintf("context resource %q: %v", rel, err))
-			continue
-		}
-		res, err := Parse(rel, string(content))
-		if err != nil {
-			reg.warnings = append(reg.warnings, fmt.Sprintf("parse context resource %q: %v", rel, err))
-			continue
-		}
-		r, ok := res.Resource.(Resource)
-		if !ok {
-			continue
-		}
-		br := resourceBase(r)
-		if br == nil {
-			continue
-		}
-		br.Directory = filepath.Dir(target)
-		br.SetNamespace(ns)
-		reg.set(r.QualifiedName(), r)
-	}
 }
 
 func loadWorkspacePlugins(reg *Registry, workspaceRoot string, plugins []WorkspacePlugin) error {

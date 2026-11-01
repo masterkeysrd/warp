@@ -571,50 +571,6 @@ metadata:
 	}
 }
 
-func TestContextSpecResources(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	ctxMd := `---
-apiVersion: warp/v1alpha1
-kind: Context
-metadata:
-  name: custom-ctx
-spec:
-  resources:
-    - extra/custom-skill.md
----
-# Project rules
-`
-	if err := os.WriteFile(filepath.Join(tmpDir, "AGENTS.md"), []byte(ctxMd), 0644); err != nil {
-		t.Fatal(err)
-	}
-	extraDir := filepath.Join(tmpDir, "extra")
-	if err := os.MkdirAll(extraDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	skillMd := `---
-apiVersion: warp/v1alpha1
-kind: Skill
-metadata:
-  name: extra-skill
----
-Extra instructions
-`
-	if err := os.WriteFile(filepath.Join(extraDir, "custom-skill.md"), []byte(skillMd), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	reg, err := LoadWorkspace(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadWorkspace failed: %v", err)
-	}
-
-	projSlug := strings.ToLower(filepath.Base(tmpDir))
-	if _, ok := reg.Project(projSlug).ResolveResource("extra-skill"); !ok {
-		t.Error("expected extra-skill referenced in AGENTS.md spec.resources to be loaded")
-	}
-}
-
 func TestInstallAndLoadPlugin_WithLockVerification(t *testing.T) {
 	pluginDir := t.TempDir()
 	resDir := filepath.Join(pluginDir, "resources", "skills")

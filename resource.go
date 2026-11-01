@@ -22,6 +22,10 @@ type Resource interface {
 	QualifiedName() string
 	// GetMetadata returns the resource's Metadata block.
 	GetMetadata() Metadata
+	// GetDir returns the filesystem directory containing the resource file.
+	GetDir() string
+	// GetPath returns the full filesystem path to the resource file.
+	GetPath() string
 }
 
 // Standard namespace identifiers. These are reserved; plugins must not use them.

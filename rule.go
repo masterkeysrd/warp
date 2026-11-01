@@ -81,7 +81,7 @@ func (r *Rule) Render(opts *RuleRenderOptions) (string, error) {
 			Name:        opts.Agent.Metadata.Name,
 			Description: opts.Agent.Metadata.Description,
 			Dir:         opts.Agent.Directory,
-			Path:        filepath.Join(opts.Agent.Directory, opts.Agent.Metadata.Name+".md"),
+			Path:        opts.Agent.GetPath(),
 		}
 		mergedGlobals["Agent"] = ta
 	} else {

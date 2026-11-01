@@ -174,7 +174,7 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 	// system/Agent/main — parent: 1 skill, base instructions.
 	parent := agentWithSpec(NamespaceSystem, "main", AgentSpec{
 		Instructions: "parent instructions",
-		Skills:       &[]string{"system/Skill/skill-a"},
+		Skills:       []string{"system/Skill/skill-a"},
 	})
 	reg.Set(parent.QualifiedName(), parent)
 	reg.Set(MakeQualifiedName(NamespaceSystem, KindSkill, "skill-a"),
@@ -184,7 +184,7 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 	child := agentWithSpec(NamespaceUser, "main", AgentSpec{
 		Extends:      "system/Agent/main",
 		Instructions: "child instructions",
-		Skills:       &[]string{"user/Skill/skill-b"},
+		Skills:       []string{"user/Skill/skill-b"},
 	})
 	reg.Set(child.QualifiedName(), child)
 	reg.Set(MakeQualifiedName(NamespaceUser, KindSkill, "skill-b"),
@@ -197,8 +197,8 @@ func TestAgent_Inheritance_Merge(t *testing.T) {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
 
-	if len(*merged.Agent.Spec.Skills) != 2 {
-		t.Errorf("expected 2 skills, got %d: %v", len(*merged.Agent.Spec.Skills), *merged.Agent.Spec.Skills)
+	if len(merged.Agent.Spec.Skills) != 2 {
+		t.Errorf("expected 2 skills, got %d: %v", len(merged.Agent.Spec.Skills), merged.Agent.Spec.Skills)
 	}
 	if !strings.Contains(merged.Agent.Spec.Instructions, "parent instructions") {
 		t.Error("merged instructions should contain parent instructions")
@@ -221,17 +221,17 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 
 	grandparent := agentWithSpec(NamespaceSystem, "base", AgentSpec{
 		Instructions: "grandparent",
-		Skills:       &[]string{"skill-a"},
+		Skills:       []string{"skill-a"},
 	})
 	parent := agentWithSpec(NamespaceUser, "middle", AgentSpec{
 		Extends:      "system/Agent/base",
 		Instructions: "parent",
-		Skills:       &[]string{"skill-b"},
+		Skills:       []string{"skill-b"},
 	})
 	child := agentWithSpec(NamespaceWorkspace, "child", AgentSpec{
 		Extends:      "user/Agent/middle",
 		Instructions: "child",
-		Skills:       &[]string{"skill-c"},
+		Skills:       []string{"skill-c"},
 	})
 	for _, r := range []Resource{grandparent, parent, child} {
 		reg.Set(r.QualifiedName(), r)
@@ -241,8 +241,8 @@ func TestAgent_Inheritance_Chain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveAgent: %v", err)
 	}
-	if len(*merged.Agent.Spec.Skills) != 3 {
-		t.Errorf("expected 3 skills, got %d: %v", len(*merged.Agent.Spec.Skills), *merged.Agent.Spec.Skills)
+	if len(merged.Agent.Spec.Skills) != 3 {
+		t.Errorf("expected 3 skills, got %d: %v", len(merged.Agent.Spec.Skills), merged.Agent.Spec.Skills)
 	}
 	// Instruction order: grandparent → parent → child.
 	gpIdx := strings.Index(merged.Agent.Spec.Instructions, "grandparent")
@@ -1008,7 +1008,7 @@ func TestAgent_Subagents(t *testing.T) {
 
 	// Define some agents
 	agentA := agentWithSpec(NamespaceSystem, "agent-a", AgentSpec{
-		Subagents: &[]string{"system/Agent/agent-b"},
+		Subagents: []string{"system/Agent/agent-b"},
 	})
 	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{})
 	agentC := agentWithSpec(NamespaceSystem, "agent-c", AgentSpec{})
@@ -1042,24 +1042,18 @@ func TestAgent_Subagents(t *testing.T) {
 		t.Errorf("expected only agent-b as subagent, got: %v", resolvedA.Subagents)
 	}
 
-	// 3. Resolve Agent with empty subagents (should return all agents that can be triggered by "agent")
+	// 3. Resolve Agent with omitted subagents (defaults to none)
 	resolvedB, err := scoped.ResolveAgent("agent-b")
 	if err != nil {
 		t.Fatalf("ResolveAgent(agent-b): %v", err)
 	}
-	// It should list agent-a, agent-b, agent-c, and agent-e (total 4), but NOT agent-d (which is only triggered by human).
-	if len(resolvedB.Subagents) != 4 {
-		t.Errorf("expected 4 subagents, got %d (agents: %v)", len(resolvedB.Subagents), resolvedB.Subagents)
-	}
-	for _, sa := range resolvedB.Subagents {
-		if sa.Metadata.Name == "agent-d" {
-			t.Errorf("did not expect agent-d (triggers: human) to be resolved as a subagent")
-		}
+	if len(resolvedB.Subagents) != 0 {
+		t.Errorf("expected 0 subagents when omitted, got %d (agents: %v)", len(resolvedB.Subagents), resolvedB.Subagents)
 	}
 
 	// 3b. Resolve Agent with explicitly empty subagents (should return exactly 0 subagents)
 	agentEmptySubagents := agentWithSpec(NamespaceSystem, "agent-empty-subagents", AgentSpec{
-		Subagents: &[]string{},
+		Subagents: []string{},
 	})
 	reg.Set(agentEmptySubagents.QualifiedName(), agentEmptySubagents)
 	resolvedEmpty, err := scoped.ResolveAgent("agent-empty-subagents")
@@ -1072,7 +1066,7 @@ func TestAgent_Subagents(t *testing.T) {
 
 	// 4. Validation fails on missing subagent
 	agentBad := agentWithSpec(NamespaceSystem, "agent-bad", AgentSpec{
-		Subagents: &[]string{"system/Agent/missing"},
+		Subagents: []string{"system/Agent/missing"},
 	})
 	reg.Set(agentBad.QualifiedName(), agentBad)
 	if err := reg.Validate(); err == nil {
@@ -1114,7 +1108,7 @@ func TestRegistry_ListResources_Filter(t *testing.T) {
 func TestWildcardSubagents(t *testing.T) {
 	reg := NewRegistry(nil)
 	agentA := agentWithSpec(NamespaceSystem, "agent-a", AgentSpec{
-		Subagents: &[]string{"*"},
+		Subagents: []string{"*"},
 	})
 	agentB := agentWithSpec(NamespaceSystem, "agent-b", AgentSpec{})
 	agentC := agentWithSpec(NamespaceSystem, "agent-c", AgentSpec{})
@@ -1207,8 +1201,8 @@ func TestToolkitExpansion_And_GlobCapabilities(t *testing.T) {
 	reg.Set(tk.QualifiedName(), tk)
 
 	agent := agentWithSpec("app", "dev-agent", AgentSpec{
-		Skills:   &[]string{"warp-dev/*"},
-		Commands: &[]string{"warp-dev/Command/*"},
+		Skills:   []string{"warp-dev/*"},
+		Commands: []string{"warp-dev/Command/*"},
 	})
 	reg.Set(agent.QualifiedName(), agent)
 
@@ -1251,7 +1245,7 @@ func TestValidate_KindAwareness_And_Inheritance(t *testing.T) {
 	tool := makeToolResource(NamespaceWorkspace, "not-a-skill")
 	tool.Spec.Command = []string{"echo"}
 	agentWrongKind := agentWithSpec(NamespaceWorkspace, "bad-agent", AgentSpec{
-		Skills: &[]string{"not-a-skill"},
+		Skills: []string{"not-a-skill"},
 	})
 	reg1.Set(tool.QualifiedName(), tool)
 	reg1.Set(agentWrongKind.QualifiedName(), agentWrongKind)
@@ -1524,7 +1518,7 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 		Spec: AgentSpec{
 			Models:       []string{"gpt-4o"},
 			Temperature:  &parentTemp,
-			Thinking:     map[string]any{"type": "effort", "effort": "low"},
+			Thinking:     &AgentThinking{Type: ThinkingStrategyEffort, Effort: "low"},
 			Triggers:     []string{"human", "agent"},
 			Instructions: "Base prompt.",
 		},
@@ -1545,7 +1539,7 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 			Extends:      "system/Agent/base-agent",
 			Models:       []string{"claude-3-7-sonnet"},
 			Temperature:  &childTemp,
-			Thinking:     map[string]any{"type": "budget", "budgetTokens": 4096},
+			Thinking:     &AgentThinking{Type: ThinkingStrategyBudget, BudgetTokens: 4096},
 			Triggers:     []string{"human"},
 			Instructions: "Child prompt.",
 		},
@@ -1575,7 +1569,7 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 	if ag.Spec.Temperature == nil || *ag.Spec.Temperature != 0.0 {
 		t.Errorf("expected child temperature override 0.0, got %v", ag.Spec.Temperature)
 	}
-	if ag.Spec.Thinking["type"] != "budget" || ag.Spec.Thinking["budgetTokens"] != 4096 {
+	if ag.Spec.Thinking == nil || ag.Spec.Thinking.Type != ThinkingStrategyBudget || ag.Spec.Thinking.BudgetTokens != 4096 {
 		t.Errorf("expected child thinking override, got %v", ag.Spec.Thinking)
 	}
 	if !slicesEqual(ag.Spec.Triggers, []string{"human"}) {
@@ -1887,7 +1881,7 @@ func TestRuleResolutionAndInheritance(t *testing.T) {
 			Metadata:   Metadata{Name: "base-agent"},
 		},
 		Spec: AgentSpec{
-			Rules: &[]string{"global-sec"},
+			Rules: []string{"global-sec"},
 		},
 	}
 
@@ -1900,7 +1894,7 @@ func TestRuleResolutionAndInheritance(t *testing.T) {
 		},
 		Spec: AgentSpec{
 			Extends: "workspace/Agent/base-agent",
-			Rules:   &[]string{"app-style"},
+			Rules:   []string{"app-style"},
 		},
 	}
 
@@ -2054,7 +2048,7 @@ func TestRuleValidation(t *testing.T) {
 			Metadata:   Metadata{Name: "bad-agent"},
 		},
 		Spec: AgentSpec{
-			Rules: &[]string{"non-existent-rule"},
+			Rules: []string{"non-existent-rule"},
 		},
 	}
 	reg3 := NewRegistry(nil)
@@ -2489,5 +2483,400 @@ func TestToolsForSkill(t *testing.T) {
 	}
 	if len(scopedTools) != 2 {
 		t.Fatalf("expected 2 scoped tools, got %d", len(scopedTools))
+	}
+}
+
+func TestAgent_Thinking_ValidationAndMerge(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	// Valid agent with effort strategy
+	validAgent := agentWithSpec(NamespaceWorkspace, "agent-effort", AgentSpec{
+		Thinking: &AgentThinking{
+			Type:   ThinkingStrategyEffort,
+			Effort: "medium",
+		},
+	})
+	reg.Set(validAgent.QualifiedName(), validAgent)
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	// Invalid strategy
+	badStrategyAgent := agentWithSpec(NamespaceWorkspace, "agent-bad-strat", AgentSpec{
+		Thinking: &AgentThinking{
+			Type: "invalid-strat",
+		},
+	})
+	regBad1 := NewRegistry(nil)
+	regBad1.Set(badStrategyAgent.QualifiedName(), badStrategyAgent)
+	if err := regBad1.Validate(); err == nil || !strings.Contains(err.Error(), "invalid thinking type") {
+		t.Errorf("expected invalid thinking type error, got: %v", err)
+	}
+
+	// Invalid negative budget tokens
+	negBudgetAgent := agentWithSpec(NamespaceWorkspace, "agent-neg-budget", AgentSpec{
+		Thinking: &AgentThinking{
+			Type:         ThinkingStrategyBudget,
+			BudgetTokens: -50,
+		},
+	})
+	regBad2 := NewRegistry(nil)
+	regBad2.Set(negBudgetAgent.QualifiedName(), negBudgetAgent)
+	if err := regBad2.Validate(); err == nil || !strings.Contains(err.Error(), "budgetTokens cannot be negative") {
+		t.Errorf("expected budgetTokens cannot be negative error, got: %v", err)
+	}
+}
+
+func TestToolPolicies_ReadOnly(t *testing.T) {
+	readOnlyTool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "read-tool"},
+		},
+		Spec: ToolSpec{
+			Annotations: &ToolAnnotation{IsReadOnly: true},
+		},
+	}
+	writeTool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "write-tool"},
+		},
+		Spec: ToolSpec{
+			Annotations: &ToolAnnotation{IsReadOnly: false},
+		},
+	}
+
+	pol := &ToolPolicies{
+		ReadOnly: true,
+	}
+
+	if act := pol.EvaluateTool(readOnlyTool); act != ToolPolicyAllow {
+		t.Errorf("expected allow for readOnly tool, got %v", act)
+	}
+	if act := pol.EvaluateTool(writeTool); act != ToolPolicyDeny {
+		t.Errorf("expected deny for non-readOnly tool under ReadOnly policy, got %v", act)
+	}
+
+	// Merge test
+	parentPol := &Policies{
+		Tools: &ToolPolicies{ReadOnly: false},
+	}
+	childPol := &Policies{
+		Tools: &ToolPolicies{ReadOnly: true},
+	}
+	merged := mergePolicies(parentPol, childPol)
+	if !merged.Tools.ReadOnly {
+		t.Error("expected merged policy to have ReadOnly=true from child")
+	}
+}
+
+func TestAgent_Rules_AlwaysAndAmbient(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	// Ambient rule (always on)
+	ambientRule := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "ambient-rule"},
+		},
+		Spec: RuleSpec{
+			Triggers: RuleTriggers{Always: true},
+		},
+	}
+	// Path-specific rule (not ambient)
+	pathRule := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "path-rule"},
+		},
+		Spec: RuleSpec{
+			Triggers: RuleTriggers{Always: false, Globs: []string{"*.go"}},
+		},
+	}
+	// Explicit rule attached to agent
+	explicitRule := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "explicit-rule"},
+		},
+		Spec: RuleSpec{
+			Triggers: RuleTriggers{Always: false, Globs: []string{"*.md"}},
+		},
+	}
+
+	agent := agentWithSpec(NamespaceWorkspace, "test-agent", AgentSpec{
+		Rules: []string{"explicit-rule"},
+	})
+
+	reg.Set(ambientRule.QualifiedName(), ambientRule)
+	reg.Set(pathRule.QualifiedName(), pathRule)
+	reg.Set(explicitRule.QualifiedName(), explicitRule)
+	reg.Set(agent.QualifiedName(), agent)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("validation failed: %v", err)
+	}
+
+	resolved, err := reg.ResolveAgent("workspace/Agent/test-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	// Should contain ambientRule (ambient) and explicitRule (with Always forced to true),
+	// but NOT pathRule.
+	if len(resolved.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d: %v", len(resolved.Rules), resolved.Rules)
+	}
+
+	var foundAmbient, foundExplicit bool
+	for _, r := range resolved.Rules {
+		if r.Metadata.Name == "ambient-rule" {
+			foundAmbient = true
+			if !r.Spec.Triggers.Always {
+				t.Errorf("expected ambient-rule to have Always=true")
+			}
+		}
+		if r.Metadata.Name == "explicit-rule" {
+			foundExplicit = true
+			if !r.Spec.Triggers.Always {
+				t.Errorf("expected explicit-rule attached to agent to have Always forced to true")
+			}
+		}
+	}
+	if !foundAmbient || !foundExplicit {
+		t.Errorf("expected both ambient and explicit rules, got ambient=%v explicit=%v", foundAmbient, foundExplicit)
+	}
+}
+
+func TestAgent_ExplicitDefaults(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	skill := makeSkillResource(NamespaceWorkspace, "sk1")
+	cmd := makeCommandResource(NamespaceWorkspace, "cmd1")
+	subAg := agentWithSpec(NamespaceWorkspace, "sub1", AgentSpec{})
+
+	reg.Set(skill.QualifiedName(), skill)
+	reg.Set(cmd.QualifiedName(), cmd)
+	reg.Set(subAg.QualifiedName(), subAg)
+
+	// Agent with default (empty) skills/commands/subagents
+	agentDefault := agentWithSpec(NamespaceWorkspace, "ag-default", AgentSpec{})
+	reg.Set(agentDefault.QualifiedName(), agentDefault)
+
+	// Agent with wildcard
+	agentWildcard := agentWithSpec(NamespaceWorkspace, "ag-wildcard", AgentSpec{
+		Skills:    []string{"*"},
+		Commands:  []string{"*"},
+		Subagents: []string{"*"},
+	})
+	reg.Set(agentWildcard.QualifiedName(), agentWildcard)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("validate failed: %v", err)
+	}
+
+	resDef, err := reg.ResolveAgent("workspace/Agent/ag-default")
+	if err != nil {
+		t.Fatalf("ResolveAgent(ag-default) failed: %v", err)
+	}
+	if len(resDef.Skills) != 0 || len(resDef.Commands) != 0 || len(resDef.Subagents) != 0 {
+		t.Errorf("expected 0 skills, commands, subagents for default agent, got skills=%d commands=%d subagents=%d",
+			len(resDef.Skills), len(resDef.Commands), len(resDef.Subagents))
+	}
+
+	resWild, err := reg.ResolveAgent("workspace/Agent/ag-wildcard")
+	if err != nil {
+		t.Fatalf("ResolveAgent(ag-wildcard) failed: %v", err)
+	}
+	if len(resWild.Skills) != 1 || len(resWild.Commands) != 1 || len(resWild.Subagents) != 3 { // ag-default, ag-wildcard, sub1
+		t.Errorf("expected wildcard to resolve all resources, got skills=%d commands=%d subagents=%d",
+			len(resWild.Skills), len(resWild.Commands), len(resWild.Subagents))
+	}
+}
+
+func TestResource_GetPath_GetDir(t *testing.T) {
+	// 1. Explicit path
+	skillWithExplicitPath := &Skill{
+		BaseResource: BaseResource{
+			Directory: "/custom/dir",
+			Path:      "/custom/dir/my-skill-file.md",
+			Metadata:  Metadata{Name: "my-skill"},
+		},
+	}
+	if skillWithExplicitPath.GetDir() != "/custom/dir" {
+		t.Errorf("expected dir /custom/dir, got %q", skillWithExplicitPath.GetDir())
+	}
+	if skillWithExplicitPath.GetPath() != "/custom/dir/my-skill-file.md" {
+		t.Errorf("expected path /custom/dir/my-skill-file.md, got %q", skillWithExplicitPath.GetPath())
+	}
+
+	// 2. Inferred path for Skill/Agent
+	skillInferred := &Skill{
+		BaseResource: BaseResource{
+			Directory: "/custom/dir",
+			Metadata:  Metadata{Name: "inferred-skill"},
+		},
+	}
+	expectedInferred := filepath.Join("/custom/dir", "inferred-skill.md")
+	if skillInferred.GetPath() != expectedInferred {
+		t.Errorf("expected inferred path %q, got %q", expectedInferred, skillInferred.GetPath())
+	}
+
+	// 3. Inferred path for Context
+	ctx := &Context{
+		BaseResource: BaseResource{
+			Directory: "/workspace/project",
+		},
+	}
+	expectedCtxPath := filepath.Join("/workspace/project", ContextFileName)
+	if ctx.GetPath() != expectedCtxPath {
+		t.Errorf("expected context path %q, got %q", expectedCtxPath, ctx.GetPath())
+	}
+
+	// 4. Inferred path for WorkspaceDef
+	wsDef := &WorkspaceDef{
+		BaseResource: BaseResource{
+			Directory: "/workspace",
+		},
+	}
+	expectedWsPath := filepath.Join("/workspace", WorkspaceFileName)
+	if wsDef.GetPath() != expectedWsPath {
+		t.Errorf("expected workspace path %q, got %q", expectedWsPath, wsDef.GetPath())
+	}
+}
+
+func TestResolvedAgent_ToolsForSkill(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	// Tools
+	readFileTool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "read-file"},
+		},
+		Spec: ToolSpec{
+			Annotations: &ToolAnnotation{IsReadOnly: true},
+		},
+	}
+	sqlReadTool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "sql-read"},
+		},
+		Spec: ToolSpec{
+			Annotations: &ToolAnnotation{IsReadOnly: true},
+		},
+	}
+	sqlWriteTool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "sql-write"},
+		},
+		Spec: ToolSpec{
+			Annotations: &ToolAnnotation{IsReadOnly: false},
+		},
+	}
+	rmTool := &Tool{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindTool,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "rm"},
+		},
+		Spec: ToolSpec{
+			Annotations: &ToolAnnotation{IsDangerous: true},
+		},
+	}
+
+	// Skills
+	financeSkill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "finance"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"sql-read", "sql-write", "rm"},
+		},
+	}
+	unattachedSkill := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "unattached"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"sql-read"},
+		},
+	}
+
+	// Agent: Include: ["read-file"], Exclude: ["rm"], ReadOnly: true
+	agent := agentWithSpec(NamespaceWorkspace, "finance-bot", AgentSpec{
+		Skills: []string{"finance"},
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Include:  []string{"read-file"},
+				Exclude:  []string{"rm"},
+				ReadOnly: true,
+			},
+		},
+	})
+
+	reg.Set(readFileTool.QualifiedName(), readFileTool)
+	reg.Set(sqlReadTool.QualifiedName(), sqlReadTool)
+	reg.Set(sqlWriteTool.QualifiedName(), sqlWriteTool)
+	reg.Set(rmTool.QualifiedName(), rmTool)
+	reg.Set(financeSkill.QualifiedName(), financeSkill)
+	reg.Set(unattachedSkill.QualifiedName(), unattachedSkill)
+	reg.Set(agent.QualifiedName(), agent)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("validation failed: %v", err)
+	}
+
+	resolvedAgent, err := reg.ResolveAgent("workspace/Agent/finance-bot")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	// 1. Error when requesting tools for a skill not attached to agent
+	if _, err := resolvedAgent.ToolsForSkill(reg, "unattached"); err == nil {
+		t.Error("expected error when requesting tools for skill not enabled on agent, got nil")
+	}
+
+	// 2. Request tools for attached skill "finance"
+	skillTools, err := resolvedAgent.ToolsForSkill(reg, "finance")
+	if err != nil {
+		t.Fatalf("ToolsForSkill(finance) failed: %v", err)
+	}
+
+	// Should contain sql-read only:
+	// - sql-read is allowed even though not in agent's base include list ["read-file"]
+	// - sql-write is denied because agent policy has ReadOnly: true
+	// - rm is denied because agent policy has Exclude: ["rm"]
+	if len(skillTools) != 1 {
+		t.Fatalf("expected exactly 1 tool for skill (sql-read), got %d tools: %v", len(skillTools), skillTools)
+	}
+	if skillTools[0].Metadata.Name != "sql-read" {
+		t.Errorf("expected sql-read tool, got %s", skillTools[0].Metadata.Name)
 	}
 }

@@ -88,6 +88,20 @@ func (c *Context) DeepCopy() *Context {
 	return out
 }
 
+// GetPath returns the full filesystem path to the context file.
+func (c *Context) GetPath() string {
+	if c == nil {
+		return ""
+	}
+	if c.Path != "" {
+		return c.Path
+	}
+	if c.Directory != "" {
+		return filepath.Join(c.Directory, ContextFileName)
+	}
+	return ""
+}
+
 // ContextSpec contains the configuration details for a Context resource.
 type ContextSpec struct {
 	// Instructions is the directive text populated from the Markdown body of

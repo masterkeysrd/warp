@@ -31,7 +31,7 @@
           "description": "Temperature controls the randomness of the model's output (0.0–2.0)."
         },
         "thinking": {
-          "type": "object",
+          "$ref": "#/$defs/AgentThinking",
           "description": "Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default."
         },
         "skills": {
@@ -39,28 +39,28 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Skills is a list of file paths (relative to the FS root) that reference\nSkill resources this agent is allowed to use."
+          "description": "Skills is a list of Skill references (Qualified or Short Names) or globs\nthis agent is allowed to use."
         },
         "commands": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Commands is a list of file paths (relative to the FS root) that\nreference Command resources this agent can invoke."
+          "description": "Commands is a list of Command references (Qualified or Short Names) or globs\nthis agent can invoke."
         },
         "subagents": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Subagents is a list of Agent references (Qualified or Short Names) this agent\nis allowed to delegate to."
+          "description": "Subagents is a list of Agent references (Qualified or Short Names) or globs\nthis agent is allowed to delegate to."
         },
         "rules": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by."
+          "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by. Attached rules act as always-on rules for this agent."
         },
         "policies": {
           "$ref": "#/$defs/Policies",
@@ -70,6 +70,28 @@
       "additionalProperties": false,
       "type": "object",
       "description": "AgentSpec contains the configuration details for an Agent resource."
+    },
+    "AgentThinking": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "effort": {
+          "type": "string"
+        },
+        "budgetTokens": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "description": "AgentThinking specifies runtime configuration for extended reasoning."
     },
     "Argument": {
       "properties": {
@@ -936,6 +958,9 @@
         "openWorld": {
           "type": "string"
         },
+        "readOnly": {
+          "type": "boolean"
+        },
         "include": {
           "items": {
             "type": "string"
@@ -1207,6 +1232,9 @@
                   "openWorld": {
                     "type": "string"
                   },
+                  "readOnly": {
+                    "type": "boolean"
+                  },
                   "include": {
                     "items": {
                       "type": "string"
@@ -1369,7 +1397,7 @@
                     "description": "Temperature controls the randomness of the model's output (0.0–2.0)."
                   },
                   "thinking": {
-                    "type": "object",
+                    "$ref": "#/$defs/AgentThinking",
                     "description": "Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default."
                   },
                   "skills": {
@@ -1377,28 +1405,28 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Skills is a list of file paths (relative to the FS root) that reference\nSkill resources this agent is allowed to use."
+                    "description": "Skills is a list of Skill references (Qualified or Short Names) or globs\nthis agent is allowed to use."
                   },
                   "commands": {
                     "items": {
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Commands is a list of file paths (relative to the FS root) that\nreference Command resources this agent can invoke."
+                    "description": "Commands is a list of Command references (Qualified or Short Names) or globs\nthis agent can invoke."
                   },
                   "subagents": {
                     "items": {
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Subagents is a list of Agent references (Qualified or Short Names) this agent\nis allowed to delegate to."
+                    "description": "Subagents is a list of Agent references (Qualified or Short Names) or globs\nthis agent is allowed to delegate to."
                   },
                   "rules": {
                     "items": {
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by."
+                    "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by. Attached rules act as always-on rules for this agent."
                   },
                   "policies": {
                     "$ref": "#/$defs/Policies",
@@ -1408,6 +1436,28 @@
                 "additionalProperties": false,
                 "type": "object",
                 "description": "AgentSpec contains the configuration details for an Agent resource."
+              },
+              "AgentThinking": {
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "effort": {
+                    "type": "string"
+                  },
+                  "budgetTokens": {
+                    "type": "integer"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "description": "AgentThinking specifies runtime configuration for extended reasoning."
               },
               "Policies": {
                 "properties": {
@@ -1426,6 +1476,9 @@
                   },
                   "openWorld": {
                     "type": "string"
+                  },
+                  "readOnly": {
+                    "type": "boolean"
                   },
                   "include": {
                     "items": {

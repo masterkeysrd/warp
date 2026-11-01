@@ -249,6 +249,7 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 				Kind:       KindWorkspace,
 				APIVersion: APIVersion,
 				Directory:  workspaceRoot,
+				Path:       filepath.Join(workspaceRoot, WorkspaceFileName),
 				Metadata: Metadata{
 					Name:        filepath.Base(workspaceRoot),
 					DisplayName: filepath.Base(workspaceRoot),
@@ -512,8 +513,10 @@ func loadAgentsDirIntoRegistry(reg *Registry, fsys fs.FS, ns string, basePath st
 			if basePath != "" {
 				// Convert the forward-slash path from fs.FS to OS specific
 				br.Directory = filepath.Join(basePath, filepath.FromSlash(path.Dir(p)))
+				br.Path = filepath.Join(basePath, filepath.FromSlash(p))
 			} else {
 				br.Directory = path.Dir(p)
+				br.Path = p
 			}
 			br.SetNamespace(ns)
 			reg.set(r.QualifiedName(), r)
@@ -536,7 +539,10 @@ func findWorkspace(startDir string) (string, *WorkspaceDef, error) {
 		if err == nil {
 			res, parseErr := Parse(filepath.Base(candidate), string(data))
 			if parseErr == nil && res.Kind == KindWorkspace {
-				return dir, res.Resource.(*WorkspaceDef), nil
+				wsDef := res.Resource.(*WorkspaceDef)
+				wsDef.Directory = dir
+				wsDef.Path = candidate
+				return dir, wsDef, nil
 			}
 			// File exists but is not a valid Workspace resource — skip.
 		}
@@ -641,6 +647,7 @@ func loadContext(projectDir string) (*Context, string) {
 
 	ctx := res.Resource.(*Context)
 	ctx.Directory = projectDir
+	ctx.Path = candidates[0]
 	return ctx, warn
 }
 
@@ -684,49 +691,60 @@ func loadAgentsDir(fsys fs.FS,
 			return nil
 		}
 
-		var dir string
+		var dir, fullPath string
 		if basePath != "" {
 			dir = filepath.Join(basePath, filepath.FromSlash(path.Dir(p)))
+			fullPath = filepath.Join(basePath, filepath.FromSlash(p))
 		} else {
 			dir = path.Dir(p)
+			fullPath = p
 		}
 
 		switch res.Kind {
 		case KindAgent:
 			a := res.Resource.(*Agent)
 			a.Directory = dir
+			a.Path = fullPath
 			agents[p] = a
 		case KindSkill:
 			s := res.Resource.(*Skill)
 			s.Directory = dir
+			s.Path = fullPath
 			skills[p] = s
 		case KindCommand:
 			c := res.Resource.(*Command)
 			c.Directory = dir
+			c.Path = fullPath
 			commands[p] = c
 		case KindDecision:
 			dec := res.Resource.(*Decision)
 			dec.Directory = dir
+			dec.Path = fullPath
 			decisions[p] = dec
 		case KindRule:
 			rl := res.Resource.(*Rule)
 			rl.Directory = dir
+			rl.Path = fullPath
 			rules[p] = rl
 		case KindModelProvider:
 			mp := res.Resource.(*ModelProvider)
 			mp.Directory = dir
+			mp.Path = fullPath
 			providers[p] = mp
 		case KindTool:
 			t := res.Resource.(*Tool)
 			t.Directory = dir
+			t.Path = fullPath
 			tools[p] = t
 		case KindMCP:
 			m := res.Resource.(*MCP)
 			m.Directory = dir
+			m.Path = fullPath
 			mcps[p] = m
 		case KindToolkit:
 			tk := res.Resource.(*Toolkit)
 			tk.Directory = dir
+			tk.Path = fullPath
 			toolkits[p] = tk
 		}
 		// Other kinds (Workspace, Context) found inside an agents dir are

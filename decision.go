@@ -73,7 +73,7 @@ func (d *Decision) Render(opts *DecisionRenderOptions) (string, error) {
 		if opts.Project.Context != nil {
 			tc := TemplateContext{
 				Instructions: opts.Project.Context.Spec.Instructions,
-				Path:         filepath.Join(opts.Project.Context.Directory, ContextFileName),
+				Path:         opts.Project.Context.GetPath(),
 			}
 			mergedGlobals["Context"] = tc
 			mergedGlobals["ContextPath"] = tc.Path

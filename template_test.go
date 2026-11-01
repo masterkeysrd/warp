@@ -41,7 +41,7 @@ func TestTemplateRender_Fields(t *testing.T) {
 		},
 		Spec: AgentSpec{
 			Instructions: "I am $DisplayName. I know {{range .Skills}}{{.}} {{end}}",
-			Skills:       &[]string{"go", "rust"},
+			Skills:       []string{"go", "rust"},
 		},
 	}
 
@@ -271,7 +271,7 @@ func TestSkillRender(t *testing.T) {
 		},
 		Spec: SkillSpec{
 			Tools:        []string{"go_test", "go_build"},
-			Instructions: "Skill: {{.Skill.Name}} | Dir: {{.Skill.Dir}} | Project: {{.Project.Name}} | Invoker: {{.Agent.Name}} | InvokerDesc: {{.Agent.Description}} | Tools: {{range .Skill.Tools}}{{.}} {{end}}",
+			Instructions: "Skill: {{.Skill.Name}} | Dir: {{.Skill.Dir}} | Path: {{.Skill.Path}} | Shorthand Dir: $SkillDir | Shorthand Path: $SkillPath | Project: {{.Project.Name}} | Invoker: {{.Agent.Name}} | InvokerDesc: {{.Agent.Description}} | Tools: {{range .Skill.Tools}}{{.}} {{end}}",
 		},
 	}
 
@@ -286,7 +286,7 @@ func TestSkillRender(t *testing.T) {
 		t.Fatalf("Skill.Render failed: %v", err)
 	}
 
-	expected := "Skill: go-expert | Dir: /Users/user/code/warp/skills | Project: cli | Invoker: researcher | InvokerDesc: Code researcher | Tools: go_test go_build "
+	expected := "Skill: go-expert | Dir: /Users/user/code/warp/skills | Path: /Users/user/code/warp/skills/go-expert.md | Shorthand Dir: /Users/user/code/warp/skills | Shorthand Path: /Users/user/code/warp/skills/go-expert.md | Project: cli | Invoker: researcher | InvokerDesc: Code researcher | Tools: go_test go_build "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}

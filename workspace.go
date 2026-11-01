@@ -1,5 +1,7 @@
 package warp
 
+import "path/filepath"
+
 // WorkspaceRenderOptions holds options for rendering workspace instructions.
 type WorkspaceRenderOptions struct {
 	// Globals are custom runtime variables to inject into the template.
@@ -65,6 +67,20 @@ func (w *WorkspaceDef) DeepCopy() *WorkspaceDef {
 	out.BaseResource = *w.BaseResource.DeepCopy()
 	out.Spec = *w.Spec.DeepCopy()
 	return out
+}
+
+// GetPath returns the full filesystem path to the workspace file.
+func (w *WorkspaceDef) GetPath() string {
+	if w == nil {
+		return ""
+	}
+	if w.Path != "" {
+		return w.Path
+	}
+	if w.Directory != "" {
+		return filepath.Join(w.Directory, WorkspaceFileName)
+	}
+	return ""
 }
 
 // WorkspaceDefSpec contains configuration for a Workspace resource.

@@ -158,6 +158,7 @@ When resolving the prioritized model list for a capability role (`completion`, `
 |-------------|----------|-----------|---------------------------------------------------------------------------------------------------------|
 | `dangerous` | string   | `"ask"`   | Policy for tools with `annotations.isDangerous: true` (`"allow"`, `"ask"`, or `"deny"`).              |
 | `openWorld` | string   | `"allow"` | Policy for tools with `annotations.isOpenWorld: true` (`"allow"`, `"ask"`, or `"deny"`).              |
+| `readOnly`  | boolean  | `false`   | If true, only tools with `annotations.isReadOnly: true` are allowed (all non-read-only tools are denied).|
 | `include`   | string[] | `[]`      | Glob patterns for tools explicitly allowed in the catalog. If set, non-matching tools are denied (filtered out). |
 | `exclude`   | string[] | `[]`      | Glob patterns for tools explicitly denied (filtered out).                                              |
 | `ask`       | string[] | `[]`      | Glob patterns for tools that require user confirmation (`"ask"`) before execution.                      |
@@ -252,13 +253,14 @@ runtime.
 | Field         | Type     | Required | Default | Description                                                                                        |
 |---------------|----------|:--------:|---------|----------------------------------------------------------------------------------------------------|
 | `extends`     | string   |          | —       | Qualified Name (`namespace/Agent/name`) or Short Name of another Agent to extend. When set, the engine merges the parent's `skills` and `policies` blocks. |
-| `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent (e.g. `["human"]`, `["agent"]`, `["system"]`). An empty list means it can be triggered by anything. |
+| `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent: standard values are `"human"`, `"agent"`, `"system"` (custom strings also allowed). An empty list means it can be triggered by anything. |
 | `models`      | string[] |          | `[]`    | A prioritized list of LLM model identifiers (e.g. `["gpt-4o", "claude-3-5-sonnet"]`). The runtime should use the first available model. |
 | `temperature` | float    |          | `0.0`   | Sampling temperature in the range `0.0`–`2.0`. Higher values produce more varied output.          |
-| `thinking`    | object   |          | —       | Runtime configuration for extended reasoning (e.g., `type: effort`, `effort: high`). Overrides the provider's default. |
-| `skills`      | string[] |          | `[]`    | Names or qualified refs of `Skill` resources this agent is allowed to use.                        |
-| `commands`    | string[] |          | `[]`    | Names or qualified refs of `Command` resources this agent can invoke.                             |
-| `subagents`   | string[] |          | `[]`    | Names or qualified refs of `Agent` resources this agent is allowed to delegate to.                |
+| `thinking`    | object   |          | —       | Runtime configuration for extended reasoning (`AgentThinking`: `type`, `enabled`, `effort`, `budgetTokens`). Overrides the provider's default. |
+| `skills`      | string[] |          | `[]`    | Names, qualified refs, or globs of `Skill` resources this agent is allowed to use. Default is `[]` (none). Use `["*"]` to include all effective skills in scope. |
+| `commands`    | string[] |          | `[]`    | Names, qualified refs, or globs of `Command` resources this agent can invoke. Default is `[]` (none). Use `["*"]` to include all effective commands in scope. |
+| `subagents`   | string[] |          | `[]`    | Names, qualified refs, or globs of `Agent` resources this agent is allowed to delegate to. Default is `[]` (none). Use `["*"]` to include all effective agent-triggerable subagents in scope. |
+| `rules`       | string[] |          | `[]`    | Names, qualified refs, or globs of `Rule` resources that apply to this agent. Explicitly attached rules act as always-on (`triggers.always: true`). Ambient rules with `triggers.always: true` in scope are also included automatically. |
 | `policies`    | object   |          | —       | Security and access policies (specifically `tools` execution restrictions) for this agent.         |
 
 > `instructions` is **not** written in the YAML front-matter. It is populated
@@ -271,9 +273,10 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 1. The parent agent is resolved (which may itself extend another agent, forming a chain).
 2. A deep copy of the resolved parent is made as the merge base, with `metadata`, `namespace`, and `directory` updated to reflect the child agent.
 3. Scalar and override fields (`models`, `temperature`, `thinking`, and `triggers`) on the child replace the parent's values when specified (non-empty / non-nil).
-4. The child's `skills`, `commands`, and `subagents` lists are **appended** to the parent's lists.
+4. The child's `skills`, `commands`, `subagents`, and `rules` lists are **appended** to the parent's lists.
 5. The child's `policies` block is merged with the parent's:
    - Action settings (`dangerous`, `openWorld`) in the child override those of the parent if specified (non-empty).
+   - If the child specifies `policies.tools.readOnly: true`, the merged policy sets `readOnly: true`.
    - Slice arrays (`include`, `exclude`, `ask`) are combined using a set union.
 6. The child's Markdown instructions are **concatenated** after the parent's, separated by a blank line.
 7. Circular inheritance chains (including self-extension) are detected and return an error.
@@ -327,10 +330,10 @@ spec:
   models: ["gpt-4o", "claude-3-5-sonnet"]
   temperature: 0.2
   skills:
-    - skills/finance.md
-    - skills/sql.md
+    - finance
+    - sql
   commands:
-    - commands/generate-report.md
+    - generate-report
   subagents:
     - system/Agent/writer
 ---
@@ -350,9 +353,33 @@ conclusion.
 
 ### 3.4 Skill
 
-A `Skill` bundles expertise guidelines for a specific domain. Agents load a skill's instruction
-body to adopt a persona or follow a set of conventions. Skills carry no configuration beyond the
-shared metadata header.
+A `Skill` bundles expertise guidelines, routing hints, parameters, and tools for a specific domain.
+Agents load a skill's instruction body to adopt a persona, follow conventions, or perform specialized
+workflows.
+
+#### Parameterized Skills & Arguments
+
+Skills support runtime parameters via `argumentHint` and `arguments`. Declared parameters are accessible
+inside the skill's instructions as `$name` or `{{.name}}` (as well as positional arguments `$1`, `$2` or `{{index . "1"}}`).
+If an argument declares `required: true` and is omitted upon invocation, rendering returns a validation error.
+Optional arguments can specify fallback values via `default`.
+
+#### Routing Hints
+
+Skills declare how and when the runtime or orchestrator should activate them:
+- `useWhen`: Explicit instructions describing circumstances under which the model or agent should select this skill.
+- `keywords`: Semantic tags indexed for routing, tool discovery, and dynamic prompt construction.
+
+#### Progressive Tool Loading
+
+Skills can declare required or associated Tool and Toolkit references in `spec.tools`. When an agent invokes
+or executes a skill, the runtime progressively loads the skill's declared tools via `resolvedAgent.ToolsForSkill(...)`.
+
+Progressive tool loading is bounded by a two-tier security ceiling:
+1. **Workspace Ceiling**: The skill's declared tools must first pass `workspace.spec.policies.tools`. Any tool denied by workspace policy is omitted.
+2. **Agent Policy Enforcement**: The tools are filtered against the agent's policy restrictions (`exclude`, `dangerous`, `openWorld`, and `readOnly`). However, skill tools are **not** required to match the agent's base `include` list.
+
+This allows agents to maintain minimal ambient tool access while enabling attached skills to safely bring in domain-specific tools as needed.
 
 #### `spec` fields
 
@@ -383,10 +410,29 @@ apiVersion: warp/v1alpha1
 kind: Skill
 metadata:
   name: finance
-  description: Core financial analysis conventions and terminology.
+  description: Financial data extraction and equity valuation analysis.
+spec:
+  useWhen: Use when extracting financial ratios, querying accounting ledgers, or performing valuation modeling.
+  keywords:
+    - finance
+    - valuation
+    - ledger
+  tools:
+    - sql-read
+  argumentHint: "[ticker] [period]"
+  arguments:
+    - name: ticker
+      description: Stock ticker symbol (e.g. AAPL)
+      required: true
+    - name: period
+      description: Fiscal reporting period (e.g. Q1 2026)
+      default: "TTM"
 ---
 
 # Finance Skill
+
+You are executing financial valuation analysis for ticker `$ticker` for period `$period`.
+Refer to templates and guidelines stored in `$SkillDir/templates/valuation.md`.
 
 ## Terminology
 - **EPS** — Earnings per share.
@@ -396,7 +442,7 @@ metadata:
 ## Conventions
 - Always express monetary values in USD unless the user specifies otherwise.
 - Round percentages to two decimal places.
-- Cite the reporting period (e.g. Q1 2026) when quoting financial figures.
+- Use `sql-read` to query the financials ledger.
 ```
 
 ---
@@ -1143,20 +1189,26 @@ loaded Workspace.
 | All `spec.rules` paths resolve    | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
 | Declared `spec.models` support completion | A listed model resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
 
-### 7.3 Workspace-specific
+### 7.3 Skill-specific
+
+| Rule                               | Error condition                                                              |
+|------------------------------------|------------------------------------------------------------------------------|
+| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` or `Toolkit` in the resolution hierarchy. |
+
+### 7.4 Workspace-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | All `spec.projects` paths exist     | A listed path (when not `"*"`) does not exist on the filesystem. |
 | `spec.defaultModels` capabilities match role | A model in `defaultModels` resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
 
-### 7.4 Plugin-specific
+### 7.5 Plugin-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | No structural resources in exports  | The `spec.exports` list matches a resource of kind `Workspace`, `Context`, or `Plugin`. |
 
-### 7.5 Decision-specific
+### 7.6 Decision-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
@@ -1167,7 +1219,7 @@ loaded Workspace.
 | Score levels                        | A `score` question has fewer than 2 `levels` or a level with an empty `label`. |
 | Declared `spec.models` support decision | A listed model resolves to a `ProviderModel` whose `capabilities.decision` is `false`. |
 
-### 7.6 Rule-specific
+### 7.7 Rule-specific
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
@@ -1346,7 +1398,7 @@ The reference implementation uses Go's `text/template` engine, with a preprocess
 You can use shell-style variables directly in your Markdown instructions:
 
 - **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
-- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`
+- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`
 - **Positional Arguments:** `$1`, `$2` (used in `Command`, `Decision`, and `Skill` resources)
 - **Argument References:** When a resource defines arguments (e.g. `arguments: [{name: "ticker"}]`), you can use `$ticker` (or `{{.ticker}}`) to refer to the argument.
 - **Escaping:** Use `$$` to output a literal `$`.
@@ -1373,7 +1425,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Project}}` | `.Name`, `.DisplayName`, `.Dir` | Active project slug, display name, and absolute directory path (also available as `$ProjectDir`). |
 | `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
 | `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`, `[]TemplateRule`) for the agent. |
-| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path. |
+| `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path (also available as `$SkillDir`, `$SkillPath`). |
 | `{{.Rule}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority` | Rule metadata, routing hints, priority, directory, and file path (also available as `$RuleDir`, `$RulePath`). |
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools` | Command metadata, executing agent, context mode, argument definitions, directory, file path, and tools. |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Decision metadata, argument definitions, directory, and file path. |

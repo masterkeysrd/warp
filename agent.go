@@ -79,7 +79,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			Name:        opts.Resolved.Agent.Metadata.Name,
 			Description: opts.Resolved.Agent.Metadata.Description,
 			Dir:         opts.Resolved.Agent.Directory,
-			Path:        filepath.Join(opts.Resolved.Agent.Directory, opts.Resolved.Agent.Metadata.Name+".md"),
+			Path:        opts.Resolved.Agent.GetPath(),
 		}
 		for _, s := range opts.Resolved.Skills {
 			ta.Skills = append(ta.Skills, TemplateSkill{
@@ -91,7 +91,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				ArgumentHint: s.Spec.ArgumentHint,
 				Arguments:    s.Spec.Arguments,
 				Dir:          s.Directory,
-				Path:         filepath.Join(s.Directory, s.Metadata.Name+".md"),
+				Path:         s.GetPath(),
 			})
 		}
 		for _, t := range opts.Resolved.Tools {
@@ -113,7 +113,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				ArgumentHint: cmd.Spec.ArgumentHint,
 				Arguments:    cmd.Spec.Arguments,
 				Dir:          cmd.Directory,
-				Path:         filepath.Join(cmd.Directory, cmd.Metadata.Name+".md"),
+				Path:         cmd.GetPath(),
 			})
 		}
 		for _, sa := range opts.Resolved.Subagents {
@@ -121,7 +121,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				Name:        sa.Metadata.Name,
 				Description: sa.Metadata.Description,
 				Dir:         sa.Directory,
-				Path:        filepath.Join(sa.Directory, sa.Metadata.Name+".md"),
+				Path:        sa.GetPath(),
 			})
 		}
 
@@ -150,7 +150,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 				UseWhen:     rl.Spec.Triggers.UseWhen,
 				Keywords:    rl.Spec.Triggers.Keywords,
 				Dir:         rl.Directory,
-				Path:        filepath.Join(rl.Directory, rl.Metadata.Name+".md"),
+				Path:        rl.GetPath(),
 				Priority:    rl.Spec.Priority,
 			})
 		}
@@ -165,7 +165,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			Name:        a.Metadata.Name,
 			Description: a.Metadata.Description,
 			Dir:         a.Directory,
-			Path:        filepath.Join(a.Directory, a.Metadata.Name+".md"),
+			Path:        a.GetPath(),
 		}
 	}
 	mergedGlobals["Agent"] = ta
@@ -197,6 +197,45 @@ func (a *Agent) DeepCopy() *Agent {
 	return out
 }
 
+// Standard architectural triggers that invoke an agent.
+const (
+	TriggerHuman  = "human"
+	TriggerAgent  = "agent"
+	TriggerSystem = "system"
+)
+
+// ThinkingStrategy defines reasoning configuration strategies.
+type ThinkingStrategy string
+
+const (
+	ThinkingStrategyToggle   ThinkingStrategy = "toggle"
+	ThinkingStrategyEffort   ThinkingStrategy = "effort"
+	ThinkingStrategyBudget   ThinkingStrategy = "budget"
+	ThinkingStrategyAdaptive ThinkingStrategy = "adaptive"
+)
+
+// AgentThinking specifies runtime configuration for extended reasoning.
+type AgentThinking struct {
+	Type         ThinkingStrategy `yaml:"type" json:"type"`
+	Enabled      *bool            `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Effort       string           `yaml:"effort,omitempty" json:"effort,omitempty"`
+	BudgetTokens int              `yaml:"budgetTokens,omitempty" json:"budgetTokens,omitempty"`
+}
+
+// DeepCopy returns a deep copy of the AgentThinking.
+func (in *AgentThinking) DeepCopy() *AgentThinking {
+	if in == nil {
+		return nil
+	}
+	out := new(AgentThinking)
+	*out = *in
+	if in.Enabled != nil {
+		e := *in.Enabled
+		out.Enabled = &e
+	}
+	return out
+}
+
 // AgentSpec contains the configuration details for an Agent resource.
 type AgentSpec struct {
 	// Extends is the Qualified Name or Short Name of another Agent resource to
@@ -218,19 +257,19 @@ type AgentSpec struct {
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature *float64 `yaml:"temperature,omitempty"`
 	// Thinking specifies the runtime configuration for extended reasoning (e.g., type: effort, effort: high). Overrides the provider's default.
-	Thinking map[string]any `yaml:"thinking,omitempty"`
-	// Skills is a list of file paths (relative to the FS root) that reference
-	// Skill resources this agent is allowed to use.
-	Skills *[]string `yaml:"skills,omitempty"`
-	// Commands is a list of file paths (relative to the FS root) that
-	// reference Command resources this agent can invoke.
-	Commands *[]string `yaml:"commands,omitempty"`
-	// Subagents is a list of Agent references (Qualified or Short Names) this agent
-	// is allowed to delegate to.
-	Subagents *[]string `yaml:"subagents,omitempty"`
+	Thinking *AgentThinking `yaml:"thinking,omitempty"`
+	// Skills is a list of Skill references (Qualified or Short Names) or globs
+	// this agent is allowed to use.
+	Skills []string `yaml:"skills,omitempty"`
+	// Commands is a list of Command references (Qualified or Short Names) or globs
+	// this agent can invoke.
+	Commands []string `yaml:"commands,omitempty"`
+	// Subagents is a list of Agent references (Qualified or Short Names) or globs
+	// this agent is allowed to delegate to.
+	Subagents []string `yaml:"subagents,omitempty"`
 	// Rules is an optional list of Rule references (Qualified or Short Names) or
-	// globs this agent is governed by.
-	Rules *[]string `yaml:"rules,omitempty"`
+	// globs this agent is governed by. Attached rules act as always-on rules for this agent.
+	Rules []string `yaml:"rules,omitempty"`
 	// Policies defines security and access policies.
 	Policies *Policies `yaml:"policies,omitempty"`
 }
@@ -255,28 +294,23 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 		out.Temperature = &t
 	}
 	if in.Thinking != nil {
-		out.Thinking = make(map[string]any, len(in.Thinking))
-		maps.Copy(out.Thinking, in.Thinking)
+		out.Thinking = in.Thinking.DeepCopy()
 	}
 	if in.Skills != nil {
-		s := make([]string, len(*in.Skills))
-		copy(s, *in.Skills)
-		out.Skills = &s
+		out.Skills = make([]string, len(in.Skills))
+		copy(out.Skills, in.Skills)
 	}
 	if in.Commands != nil {
-		c := make([]string, len(*in.Commands))
-		copy(c, *in.Commands)
-		out.Commands = &c
+		out.Commands = make([]string, len(in.Commands))
+		copy(out.Commands, in.Commands)
 	}
 	if in.Subagents != nil {
-		sa := make([]string, len(*in.Subagents))
-		copy(sa, *in.Subagents)
-		out.Subagents = &sa
+		out.Subagents = make([]string, len(in.Subagents))
+		copy(out.Subagents, in.Subagents)
 	}
 	if in.Rules != nil {
-		r := make([]string, len(*in.Rules))
-		copy(r, *in.Rules)
-		out.Rules = &r
+		out.Rules = make([]string, len(in.Rules))
+		copy(out.Rules, in.Rules)
 	}
 	if in.Policies != nil {
 		out.Policies = in.Policies.DeepCopy()

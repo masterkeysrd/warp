@@ -1,8 +1,10 @@
 package warp
 
-import "maps"
-
-import "fmt"
+import (
+	"fmt"
+	"maps"
+	"path/filepath"
+)
 
 const (
 	// APIVersion is the expected apiVersion value in all resource front-matter.
@@ -125,6 +127,9 @@ type BaseResource struct {
 	// Directory is the FS path of the directory that contains the resource
 	// file. It is populated by the Loader and is never serialised to YAML.
 	Directory string `yaml:"-"`
+	// Path is the full FS path of the resource file. It is populated by the
+	// Loader and is never serialised to YAML or JSON.
+	Path string `yaml:"-" json:"-"`
 	// Namespace is the registry namespace this resource belongs to.
 	// Set by the assembler; empty for resources loaded via the legacy
 	// filesystem path.
@@ -142,6 +147,28 @@ func (b *BaseResource) GetMetadata() Metadata { return b.Metadata }
 
 // GetNamespace implements Resource.
 func (b *BaseResource) GetNamespace() string { return b.Namespace }
+
+// GetDir implements Resource.
+func (b *BaseResource) GetDir() string {
+	if b == nil {
+		return ""
+	}
+	return b.Directory
+}
+
+// GetPath implements Resource.
+func (b *BaseResource) GetPath() string {
+	if b == nil {
+		return ""
+	}
+	if b.Path != "" {
+		return b.Path
+	}
+	if b.Directory != "" && b.Metadata.Name != "" {
+		return filepath.Join(b.Directory, b.Metadata.Name+".md")
+	}
+	return ""
+}
 
 // SetNamespace sets the namespace of this resource.
 func (b *BaseResource) SetNamespace(ns string) { b.Namespace = ns }
@@ -260,6 +287,7 @@ const (
 type ToolPolicies struct {
 	Dangerous ToolPolicyAction `yaml:"dangerous,omitempty" json:"dangerous,omitempty"`
 	OpenWorld ToolPolicyAction `yaml:"openWorld,omitempty" json:"openWorld,omitempty"`
+	ReadOnly  bool             `yaml:"readOnly,omitempty" json:"readOnly,omitempty"`
 	Include   []string         `yaml:"include,omitempty" json:"include,omitempty"`
 	Exclude   []string         `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 	Ask       []string         `yaml:"ask,omitempty" json:"ask,omitempty"`
@@ -309,6 +337,10 @@ func (p *ToolPolicies) EvaluateTool(tool *Tool) ToolPolicyAction {
 	openWorld := p.OpenWorld
 	if openWorld == "" {
 		openWorld = ToolPolicyAllow
+	}
+
+	if p.ReadOnly && (tool.Spec.Annotations == nil || !tool.Spec.Annotations.IsReadOnly) {
+		return ToolPolicyDeny
 	}
 
 	shortName := tool.Metadata.Name

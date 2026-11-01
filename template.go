@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"text/template"
@@ -177,6 +176,10 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 	data["WorkspacePath"] = ""
 	data["ProjectDir"] = ""
 	data["ContextPath"] = ""
+	data["RuleDir"] = ""
+	data["RulePath"] = ""
+	data["SkillDir"] = ""
+	data["SkillPath"] = ""
 
 	// Add globals first
 	maps.Copy(data, opts.Globals)
@@ -196,7 +199,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 	switch v := res.(type) {
 	case *Context:
 		if _, ok := data["Context"]; !ok {
-			ctxPath := filepath.Join(v.Directory, ContextFileName)
+			ctxPath := v.GetPath()
 			tc := TemplateContext{
 				Path: ctxPath,
 			}
@@ -207,7 +210,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 		if _, ok := data["Workspace"]; !ok {
 			tw := TemplateWorkspace{
 				Dir:  v.Directory,
-				Path: filepath.Join(v.Directory, WorkspaceFileName),
+				Path: v.GetPath(),
 			}
 			data["Workspace"] = tw
 			data["WorkspaceDir"] = tw.Dir
@@ -219,7 +222,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				Name:        v.Metadata.Name,
 				Description: v.Metadata.Description,
 				Dir:         v.Directory,
-				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Path:        v.GetPath(),
 			}
 			data["Agent"] = ta
 		}
@@ -227,32 +230,16 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			data["Models"] = v.Spec.Models
 		}
 		if _, ok := data["Skills"]; !ok {
-			if v.Spec.Skills != nil {
-				data["Skills"] = *v.Spec.Skills
-			} else {
-				data["Skills"] = []string(nil)
-			}
+			data["Skills"] = v.Spec.Skills
 		}
 		if _, ok := data["Commands"]; !ok {
-			if v.Spec.Commands != nil {
-				data["Commands"] = *v.Spec.Commands
-			} else {
-				data["Commands"] = []string(nil)
-			}
+			data["Commands"] = v.Spec.Commands
 		}
 		if _, ok := data["Subagents"]; !ok {
-			if v.Spec.Subagents != nil {
-				data["Subagents"] = *v.Spec.Subagents
-			} else {
-				data["Subagents"] = []string(nil)
-			}
+			data["Subagents"] = v.Spec.Subagents
 		}
 		if _, ok := data["Rules"]; !ok {
-			if v.Spec.Rules != nil {
-				data["Rules"] = *v.Spec.Rules
-			} else {
-				data["Rules"] = []string(nil)
-			}
+			data["Rules"] = v.Spec.Rules
 		}
 		data["Triggers"] = v.Spec.Triggers
 		if v.Spec.Temperature != nil {
@@ -261,20 +248,22 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			data["Temperature"] = 0.0
 		}
 	case *Skill:
+		ts := TemplateSkill{
+			Name:         v.Metadata.Name,
+			Description:  v.Metadata.Description,
+			UseWhen:      v.Spec.UseWhen,
+			Keywords:     v.Spec.Keywords,
+			Tools:        v.Spec.Tools,
+			ArgumentHint: v.Spec.ArgumentHint,
+			Arguments:    v.Spec.Arguments,
+			Dir:          v.Directory,
+			Path:         v.GetPath(),
+		}
 		if _, ok := data["Skill"]; !ok {
-			ts := TemplateSkill{
-				Name:         v.Metadata.Name,
-				Description:  v.Metadata.Description,
-				UseWhen:      v.Spec.UseWhen,
-				Keywords:     v.Spec.Keywords,
-				Tools:        v.Spec.Tools,
-				ArgumentHint: v.Spec.ArgumentHint,
-				Arguments:    v.Spec.Arguments,
-				Dir:          v.Directory,
-				Path:         filepath.Join(v.Directory, v.Metadata.Name+".md"),
-			}
 			data["Skill"] = ts
 		}
+		data["SkillDir"] = ts.Dir
+		data["SkillPath"] = ts.Path
 		data["UseWhen"] = v.Spec.UseWhen
 		data["Keywords"] = v.Spec.Keywords
 		data["Tools"] = v.Spec.Tools
@@ -321,7 +310,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				ArgumentHint: v.Spec.ArgumentHint,
 				Arguments:    v.Spec.Arguments,
 				Dir:          v.Directory,
-				Path:         filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Path:         v.GetPath(),
 			}
 			data["Command"] = tc
 		}
@@ -368,7 +357,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				ArgumentHint: v.Spec.ArgumentHint,
 				Arguments:    v.Spec.Arguments,
 				Dir:          v.Directory,
-				Path:         filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Path:         v.GetPath(),
 			}
 			data["Decision"] = td
 		}
@@ -411,7 +400,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 				UseWhen:     v.Spec.Triggers.UseWhen,
 				Keywords:    v.Spec.Triggers.Keywords,
 				Dir:         v.Directory,
-				Path:        filepath.Join(v.Directory, v.Metadata.Name+".md"),
+				Path:        v.GetPath(),
 				Priority:    v.Spec.Priority,
 			}
 			data["Rule"] = tr

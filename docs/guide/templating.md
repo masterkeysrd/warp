@@ -105,19 +105,19 @@ Skill templates have access to the same foundational view models as Agents:
 In addition, Skills have access to their own metadata, as well as the Agent that invoked them:
 
 #### 1. The `Skill` Object
-Represents the skill being rendered.
+Represents the skill being rendered (also exposes top-level shorthands `$SkillDir`, `$SkillPath`, `$UseWhen`, `$Keywords`, `$Tools`, and `$ArgumentHint`).
 
 | Variable | Description | Example |
 | :--- | :--- | :--- |
 | `{{.Skill.Name}}` | The name of the skill. | `go-expert` |
 | `{{.Skill.Description}}` | The description of the skill. | `Guidelines for writing Go code.` |
-| `{{.Skill.UseWhen}}` | The explicit condition for using the skill. | `Use this when writing tests.` |
+| `{{.Skill.UseWhen}}` | The explicit condition for using the skill (also `$UseWhen`). | `Use this when writing tests.` |
 | `{{.Skill.Keywords}}` | A list of semantic keywords. | `["go", "testing"]` |
 | `{{.Skill.Tools}}` | A list of tool and toolkit names/references required by the skill. | `["git_diff", "git_status"]` |
-| `{{.Skill.ArgumentHint}}` | Single-line hint indicating expected invocation arguments. | `Provide the file path to review` |
+| `{{.Skill.ArgumentHint}}` | Single-line hint indicating expected invocation arguments (also `$ArgumentHint`). | `Provide the file path to review` |
 | `{{.Skill.Arguments}}` | A list of structured parameter definitions accepted by the skill. | `[{{Name: "file", ...}}]` |
-| `{{.Skill.Dir}}` | The absolute path to the directory containing the skill. | `/Users/user/code/warp/skills/go` |
-| `{{.Skill.Path}}` | The absolute path to the skill definition file. | `/Users/user/code/warp/skills/go/SKILL.md` |
+| `{{.Skill.Dir}}` | The absolute path to the directory containing the skill (also `$SkillDir`). | `/Users/user/code/warp/skills/go` |
+| `{{.Skill.Path}}` | The absolute path to the skill definition file (also `$SkillPath`). | `/Users/user/code/warp/skills/go/SKILL.md` |
 
 #### 2. Skill Arguments & Argument Hints
 

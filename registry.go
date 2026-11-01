@@ -2,7 +2,6 @@ package warp
 
 import (
 	"fmt"
-	"maps"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -367,44 +366,46 @@ func (r *Registry) Validate() error {
 					return fmt.Errorf("agent %s: model %q does not support completion capability", name, mRef)
 				}
 			}
-			if agent.Spec.Skills != nil {
-				for _, skillRef := range *agent.Spec.Skills {
-					if hasGlobMeta(skillRef) {
-						continue
-					}
-					if !r.hasKindLocked(ns, KindSkill, skillRef) {
-						return fmt.Errorf("agent %s references missing skill: %s", name, skillRef)
-					}
+			if agent.Spec.Thinking != nil {
+				switch agent.Spec.Thinking.Type {
+				case ThinkingStrategyToggle, ThinkingStrategyEffort, ThinkingStrategyBudget, ThinkingStrategyAdaptive:
+				default:
+					return fmt.Errorf("agent %s: invalid thinking type %q (must be toggle, effort, budget, or adaptive)", name, agent.Spec.Thinking.Type)
+				}
+				if agent.Spec.Thinking.BudgetTokens < 0 {
+					return fmt.Errorf("agent %s: thinking budgetTokens cannot be negative (%d)", name, agent.Spec.Thinking.BudgetTokens)
 				}
 			}
-			if agent.Spec.Commands != nil {
-				for _, cmdRef := range *agent.Spec.Commands {
-					if hasGlobMeta(cmdRef) {
-						continue
-					}
-					if !r.hasKindLocked(ns, KindCommand, cmdRef) {
-						return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
-					}
+			for _, skillRef := range agent.Spec.Skills {
+				if hasGlobMeta(skillRef) {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindSkill, skillRef) {
+					return fmt.Errorf("agent %s references missing skill: %s", name, skillRef)
 				}
 			}
-			if agent.Spec.Subagents != nil {
-				for _, saRef := range *agent.Spec.Subagents {
-					if hasGlobMeta(saRef) {
-						continue
-					}
-					if !r.hasKindLocked(ns, KindAgent, saRef) {
-						return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
-					}
+			for _, cmdRef := range agent.Spec.Commands {
+				if hasGlobMeta(cmdRef) {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindCommand, cmdRef) {
+					return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
 				}
 			}
-			if agent.Spec.Rules != nil {
-				for _, ruleRef := range *agent.Spec.Rules {
-					if hasGlobMeta(ruleRef) {
-						continue
-					}
-					if !r.hasKindLocked(ns, KindRule, ruleRef) {
-						return fmt.Errorf("agent %s references missing rule: %s", name, ruleRef)
-					}
+			for _, saRef := range agent.Spec.Subagents {
+				if hasGlobMeta(saRef) {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindAgent, saRef) {
+					return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
+				}
+			}
+			for _, ruleRef := range agent.Spec.Rules {
+				if hasGlobMeta(ruleRef) {
+					continue
+				}
+				if !r.hasKindLocked(ns, KindRule, ruleRef) {
+					return fmt.Errorf("agent %s references missing rule: %s", name, ruleRef)
 				}
 			}
 		}
@@ -1104,9 +1105,8 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 		t := *ag.Spec.Temperature
 		parent.Spec.Temperature = &t
 	}
-	if len(ag.Spec.Thinking) > 0 {
-		parent.Spec.Thinking = make(map[string]any, len(ag.Spec.Thinking))
-		maps.Copy(parent.Spec.Thinking, ag.Spec.Thinking)
+	if ag.Spec.Thinking != nil {
+		parent.Spec.Thinking = ag.Spec.Thinking.DeepCopy()
 	}
 	if len(ag.Spec.Triggers) > 0 {
 		parent.Spec.Triggers = make([]string, len(ag.Spec.Triggers))
@@ -1114,41 +1114,17 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	}
 
 	// Merge: parent is the base; append child lists and instructions after.
-	if ag.Spec.Skills != nil {
-		if parent.Spec.Skills == nil {
-			s := make([]string, len(*ag.Spec.Skills))
-			copy(s, *ag.Spec.Skills)
-			parent.Spec.Skills = &s
-		} else {
-			*parent.Spec.Skills = append(*parent.Spec.Skills, *ag.Spec.Skills...)
-		}
+	if len(ag.Spec.Skills) > 0 {
+		parent.Spec.Skills = append(parent.Spec.Skills, ag.Spec.Skills...)
 	}
-	if ag.Spec.Commands != nil {
-		if parent.Spec.Commands == nil {
-			c := make([]string, len(*ag.Spec.Commands))
-			copy(c, *ag.Spec.Commands)
-			parent.Spec.Commands = &c
-		} else {
-			*parent.Spec.Commands = append(*parent.Spec.Commands, *ag.Spec.Commands...)
-		}
+	if len(ag.Spec.Commands) > 0 {
+		parent.Spec.Commands = append(parent.Spec.Commands, ag.Spec.Commands...)
 	}
-	if ag.Spec.Subagents != nil {
-		if parent.Spec.Subagents == nil {
-			sa := make([]string, len(*ag.Spec.Subagents))
-			copy(sa, *ag.Spec.Subagents)
-			parent.Spec.Subagents = &sa
-		} else {
-			*parent.Spec.Subagents = append(*parent.Spec.Subagents, *ag.Spec.Subagents...)
-		}
+	if len(ag.Spec.Subagents) > 0 {
+		parent.Spec.Subagents = append(parent.Spec.Subagents, ag.Spec.Subagents...)
 	}
-	if ag.Spec.Rules != nil {
-		if parent.Spec.Rules == nil {
-			r := make([]string, len(*ag.Spec.Rules))
-			copy(r, *ag.Spec.Rules)
-			parent.Spec.Rules = &r
-		} else {
-			*parent.Spec.Rules = append(*parent.Spec.Rules, *ag.Spec.Rules...)
-		}
+	if len(ag.Spec.Rules) > 0 {
+		parent.Spec.Rules = append(parent.Spec.Rules, ag.Spec.Rules...)
 	}
 	switch {
 	case parent.Spec.Instructions != "" && ag.Spec.Instructions != "":
@@ -1430,16 +1406,16 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 1. Resolve Skills
 	var skills []Skill
-	if ag.Spec.Skills == nil || containsWildcard(ag.Spec.Skills) {
+	if containsWildcard(ag.Spec.Skills) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: true})
 		for _, r := range all {
 			if sk, ok := r.(*Skill); ok {
 				skills = append(skills, *sk)
 			}
 		}
-	} else {
+	} else if len(ag.Spec.Skills) > 0 {
 		var allSkills []Resource
-		for _, sRef := range *ag.Spec.Skills {
+		for _, sRef := range ag.Spec.Skills {
 			if hasGlobMeta(sRef) {
 				if allSkills == nil {
 					allSkills = resolver.ListResources(QueryOptions{Kinds: []Kind{KindSkill}, Effective: false})
@@ -1476,16 +1452,16 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 3. Resolve Commands
 	var commands []*Command
-	if ag.Spec.Commands == nil || containsWildcard(ag.Spec.Commands) {
+	if containsWildcard(ag.Spec.Commands) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindCommand}, Effective: true})
 		for _, r := range all {
 			if c, ok := r.(*Command); ok {
 				commands = append(commands, c)
 			}
 		}
-	} else {
+	} else if len(ag.Spec.Commands) > 0 {
 		var allCommands []Resource
-		for _, cRef := range *ag.Spec.Commands {
+		for _, cRef := range ag.Spec.Commands {
 			if hasGlobMeta(cRef) {
 				if allCommands == nil {
 					allCommands = resolver.ListResources(QueryOptions{Kinds: []Kind{KindCommand}, Effective: false})
@@ -1510,7 +1486,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 4. Resolve Subagents
 	var subagents []*Agent
-	if ag.Spec.Subagents == nil || containsWildcard(ag.Spec.Subagents) {
+	if containsWildcard(ag.Spec.Subagents) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: true})
 		for _, r := range all {
 			if a, ok := r.(*Agent); ok {
@@ -1519,9 +1495,9 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 				}
 			}
 		}
-	} else {
+	} else if len(ag.Spec.Subagents) > 0 {
 		var allAgents []Resource
-		for _, saRef := range *ag.Spec.Subagents {
+		for _, saRef := range ag.Spec.Subagents {
 			if hasGlobMeta(saRef) {
 				if allAgents == nil {
 					allAgents = resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: false})
@@ -1548,37 +1524,74 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 
 	// 5. Resolve Rules
 	var rules []Rule
-	if ag.Spec.Rules == nil || containsWildcard(ag.Spec.Rules) {
-		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: true})
-		for _, r := range all {
-			if rl, ok := r.(*Rule); ok {
-				rules = append(rules, *rl)
-			}
+	ruleMap := make(map[string]Rule)
+	var ruleOrder []string
+
+	addRule := func(rl Rule, forceAlways bool) {
+		qn := rl.QualifiedName()
+		if forceAlways {
+			cp := *rl.DeepCopy()
+			cp.Spec.Triggers.Always = true
+			rl = cp
 		}
-	} else {
-		var allRules []Resource
-		for _, rRef := range *ag.Spec.Rules {
-			if hasGlobMeta(rRef) {
-				if allRules == nil {
-					allRules = resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: false})
-				}
-				for _, r := range allRules {
-					if rl, ok := r.(*Rule); ok && matchRefPattern(resolver, rRef, r) {
-						rules = append(rules, *rl)
-					}
-				}
-				continue
+		if existing, ok := ruleMap[qn]; ok {
+			if !existing.Spec.Triggers.Always && rl.Spec.Triggers.Always {
+				ruleMap[qn] = rl
 			}
-			r, ok := resolver.ResolveResource(rRef)
-			if !ok {
-				continue
-			}
+			return
+		}
+		ruleMap[qn] = rl
+		ruleOrder = append(ruleOrder, qn)
+	}
+
+	allEffectiveRules := resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: true})
+
+	// 5a. Always include effective rules in scope whose Spec.Triggers.Always == true
+	for _, r := range allEffectiveRules {
+		if rl, ok := r.(*Rule); ok && rl.Spec.Triggers.Always {
+			addRule(*rl, false)
+		}
+	}
+
+	// 5b. If containsWildcard(ag.Spec.Rules), include all effective rules in scope
+	if containsWildcard(ag.Spec.Rules) {
+		for _, r := range allEffectiveRules {
 			if rl, ok := r.(*Rule); ok {
-				rules = append(rules, *rl)
+				addRule(*rl, false)
 			}
 		}
 	}
-	rules = deduplicateRules(rules)
+
+	// 5c. For any rule explicitly matched by ag.Spec.Rules (via ref or non-"*" glob),
+	// attach a copy with Always = true
+	var allNonEffectiveRules []Resource
+	for _, rRef := range ag.Spec.Rules {
+		if rRef == "*" {
+			continue
+		}
+		if hasGlobMeta(rRef) {
+			if allNonEffectiveRules == nil {
+				allNonEffectiveRules = resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: false})
+			}
+			for _, r := range allNonEffectiveRules {
+				if rl, ok := r.(*Rule); ok && matchRefPattern(resolver, rRef, r) {
+					addRule(*rl, true)
+				}
+			}
+			continue
+		}
+		r, ok := resolver.ResolveResource(rRef)
+		if !ok {
+			continue
+		}
+		if rl, ok := r.(*Rule); ok {
+			addRule(*rl, true)
+		}
+	}
+
+	for _, qn := range ruleOrder {
+		rules = append(rules, ruleMap[qn])
+	}
 
 	return &ResolvedAgent{
 		Agent:           ag,
@@ -1717,6 +1730,53 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 	return tools, nil
 }
 
+// ToolsForSkill returns the tools required or declared by the named skill for this resolved agent.
+// It verifies that the resolved skill is present in ra.Skills (returning an error if not enabled),
+// resolves the skill's tools (expanding toolkits and applying the workspace policy ceiling),
+// and filters the tools against the agent's policy without requiring them to match the agent's
+// base Include list (enforcing Exclude, Dangerous, OpenWorld, and ReadOnly).
+func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
+	if ra == nil {
+		return nil, fmt.Errorf("resolved agent is nil")
+	}
+	res, ok := resolver.ResolveResource(skillRef)
+	if !ok {
+		return nil, fmt.Errorf("skill %q not found", skillRef)
+	}
+	skill, ok := res.(*Skill)
+	if !ok {
+		return nil, fmt.Errorf("resource %q is a %s, not a Skill", skillRef, res.GetKind())
+	}
+
+	found := false
+	for _, s := range ra.Skills {
+		if s.QualifiedName() == skill.QualifiedName() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		agentName := "agent"
+		if ra.Agent != nil && ra.Agent.Metadata.Name != "" {
+			agentName = ra.Agent.Metadata.Name
+		}
+		return nil, fmt.Errorf("skill %q is not enabled for agent %q", skillRef, agentName)
+	}
+
+	tools, err := resolveToolsForSkill(resolver, skillRef)
+	if err != nil {
+		return nil, err
+	}
+
+	if ra.Agent != nil && ra.Agent.Spec.Policies != nil && ra.Agent.Spec.Policies.Tools != nil {
+		agPolicy := ra.Agent.Spec.Policies.Tools.DeepCopy()
+		agPolicy.Include = nil
+		tools = filterTools(tools, agPolicy)
+	}
+
+	return tools, nil
+}
+
 func matchRefPattern(resolver Resolver, pat string, res Resource) bool {
 	if scoped, ok := resolver.(*ScopedRegistry); ok && strings.HasPrefix(pat, NamespaceLocal+"/") {
 		pat = scoped.projectSlug + pat[len(NamespaceLocal):]
@@ -1753,6 +1813,9 @@ func mergePolicies(parent, child *Policies) *Policies {
 	}
 	if child.Tools.OpenWorld != "" {
 		merged.Tools.OpenWorld = child.Tools.OpenWorld
+	}
+	if child.Tools.ReadOnly {
+		merged.Tools.ReadOnly = true
 	}
 
 	// Union parent and child includes/excludes/ask
@@ -1881,7 +1944,7 @@ func canBeTriggeredByAgent(a *Agent) bool {
 		return true
 	}
 	for _, t := range a.Spec.Triggers {
-		if strings.ToLower(t) == "agent" {
+		if strings.ToLower(t) == TriggerAgent {
 			return true
 		}
 	}
@@ -1892,9 +1955,6 @@ func hasGlobMeta(s string) bool {
 	return strings.ContainsAny(s, "*?[")
 }
 
-func containsWildcard(slice *[]string) bool {
-	if slice == nil {
-		return false
-	}
-	return slices.Contains(*slice, "*")
+func containsWildcard(slice []string) bool {
+	return slices.Contains(slice, "*")
 }

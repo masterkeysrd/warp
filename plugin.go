@@ -22,8 +22,8 @@ func (in *Plugin) DeepCopy() *Plugin {
 type PluginSpec struct {
 	// Instructions is the Markdown body of the plugin file.
 	Instructions string       `yaml:"instructions,omitempty"`
-	ResourceDir  string       `yaml:"resourceDir"`     // The relative path within the repository where the loader should look for resources
-	Exports      []string     `yaml:"exports"`         // Glob patterns defining which resources are exposed to consumers
+	ResourceDir string       `yaml:"resourceDir,omitempty" json:"resourceDir,omitempty"` // The relative path within the repository where the loader should look for resources
+	Exports     []string     `yaml:"exports,omitempty" json:"exports,omitempty"`         // Glob patterns defining which resources are exposed to consumers
 	Hooks        *PluginHooks `yaml:"hooks,omitempty"` // Setup and installation hooks
 }
 

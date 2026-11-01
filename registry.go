@@ -19,6 +19,7 @@ type Resolver interface {
 	ResolveModels(role ModelRole, explicit ...string) []ResolvedModel
 	ResolveModel(role ModelRole, explicit ...string) (*ResolvedModel, bool)
 	ResolveRulesForPath(targetPath string) []Rule
+	ResolveRulesForTool(toolName string) []Rule
 }
 
 // QueryOptions controls how ListResources filters and deduplicates results.
@@ -1581,6 +1582,12 @@ func (r *Registry) ResolveRulesForPath(targetPath string) []Rule {
 	return resolveRulesForPath(r, targetPath)
 }
 
+// ResolveRulesForTool returns all rules applicable to the given tool within this registry scope,
+// sorted by Rule priority descending, then by name ascending.
+func (r *Registry) ResolveRulesForTool(toolName string) []Rule {
+	return resolveRulesForTool(r, toolName)
+}
+
 // ToolsForSkill returns the Tool resources required or declared by the named skill within
 // this registry scope.
 func (r *Registry) ToolsForSkill(skillRef string) ([]*Tool, error) {
@@ -1591,6 +1598,12 @@ func (r *Registry) ToolsForSkill(skillRef string) ([]*Tool, error) {
 // sorted by Rule priority descending, then by name ascending.
 func (s *ScopedRegistry) ResolveRulesForPath(targetPath string) []Rule {
 	return resolveRulesForPath(s, targetPath)
+}
+
+// ResolveRulesForTool returns all rules applicable to the given tool within this scoped registry,
+// sorted by Rule priority descending, then by name ascending.
+func (s *ScopedRegistry) ResolveRulesForTool(toolName string) []Rule {
+	return resolveRulesForTool(s, toolName)
 }
 
 // Reload re-reads the workspace from disk and updates the underlying registry in-place.
@@ -1754,6 +1767,19 @@ func resolveRulesForPath(resolver Resolver, targetPath string) []Rule {
 	for _, res := range candidates {
 		if rl, ok := res.(*Rule); ok {
 			if rl.Spec.Triggers.MatchesPath(targetPath) {
+				matched = append(matched, *rl)
+			}
+		}
+	}
+	return deduplicateRules(matched)
+}
+
+func resolveRulesForTool(resolver Resolver, toolName string) []Rule {
+	candidates := resolver.ListResources(QueryOptions{Kinds: []Kind{KindRule}, Effective: true})
+	var matched []Rule
+	for _, res := range candidates {
+		if rl, ok := res.(*Rule); ok {
+			if rl.Spec.Triggers.MatchesTool(toolName) {
 				matched = append(matched, *rl)
 			}
 		}
@@ -2417,6 +2443,36 @@ func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*T
 // and filtering effective tools against the agent's security policies.
 func (ra *ResolvedAgent) ResolveCommand(resolver Resolver, ref string) (*ResolvedCommand, error) {
 	return resolveCommand(resolver, ra, ref)
+}
+
+// RulesForPath returns all rules in the resolved agent that match targetPath,
+// sorted by Rule priority descending, then by name ascending.
+func (ra *ResolvedAgent) RulesForPath(targetPath string) []Rule {
+	if ra == nil {
+		return nil
+	}
+	var matched []Rule
+	for _, rl := range ra.Rules {
+		if rl.Spec.Triggers.MatchesPath(targetPath) {
+			matched = append(matched, rl)
+		}
+	}
+	return deduplicateRules(matched)
+}
+
+// RulesForTool returns all rules in the resolved agent that match toolName,
+// sorted by Rule priority descending, then by name ascending.
+func (ra *ResolvedAgent) RulesForTool(toolName string) []Rule {
+	if ra == nil {
+		return nil
+	}
+	var matched []Rule
+	for _, rl := range ra.Rules {
+		if rl.Spec.Triggers.MatchesTool(toolName) {
+			matched = append(matched, rl)
+		}
+	}
+	return deduplicateRules(matched)
 }
 
 func resolveCommand(resolver Resolver, executingAgent *ResolvedAgent, ref string) (*ResolvedCommand, error) {

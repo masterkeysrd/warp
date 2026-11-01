@@ -1054,6 +1054,23 @@ A `Rule` resource defines ambient constraints, coding standards, security guardr
 
 When a rule links a `Decision` via `triggers.decision`, the referenced `Decision` resource provides the decision model (`spec.models`) and evaluation system prompt/rubric (`instructions`), while the runtime dynamically injects the predicate question derived from the rule's metadata (`metadata.name`, `metadata.description`) and `triggers.useWhen`. If the decision evaluates the predicate to `true` (meeting or exceeding the required threshold and confidence), the rule is activated.
 
+#### Tool-Driven Activation (`triggers.tools`)
+
+Rules can declare tools in `triggers.tools` that trigger the rule whenever an agent executes matching tools:
+- Supports short tool names (e.g., `bash`), qualified names (`workspace/Tool/bash`), and glob patterns (e.g., `github__*`, `db_*`, `*`).
+- Matched case-insensitively and platform-independently via `path.Match`.
+- If `triggers.always` is `true`, the rule matches unconditionally.
+
+#### Runtime Rule Resolution Helpers
+
+The runtime provides high-level helpers to resolve active rules dynamically:
+- **Registry / ScopedRegistry**:
+  - `ResolveRulesForPath(path)`: Returns all effective rules in scope matching the target file path, sorted by `spec.priority` descending, then by name ascending.
+  - `ResolveRulesForTool(toolName)`: Returns all effective rules in scope matching the tool name, sorted by `spec.priority` descending, then by name ascending.
+- **ResolvedAgent**:
+  - `ra.RulesForPath(path)`: Filters the agent's loaded rules to those matching the file path, sorted by `spec.priority` descending.
+  - `ra.RulesForTool(toolName)`: Filters the agent's loaded rules to those matching the tool name, sorted by `spec.priority` descending.
+
 #### Full example (`.agents/rules/go-concurrency.md`)
 
 ```markdown
@@ -1427,8 +1444,9 @@ spec:
 | Field       | Type   | Required | Description                                                                                 |
 |-------------|--------|:--------:|---------------------------------------------------------------------------------------------|
 | `source`    | string | ✅       | Semantic URI of the repository (e.g., `github.com/org/repo`).                               |
-| `version`   | string | ✅       | The git tag, branch, or commit hash to pin (e.g., `v1.2.0`, `main`).                        |
+| `version`   | string |          | The git tag, branch, or commit hash to pin (e.g., `v1.2.0`, `main`). Defaults to `"latest"`. |
 | `namespace` | string |          | Namespace under which these resources are registered. Defaults to the last URI segment.     |
+| `imports`   | object |          | `ResourceFilter` (`include`/`exclude`) controlling which exported resources from the plugin are imported into the workspace. |
 
 ### 9.3 Resolution and the Default Namespace Rule
 

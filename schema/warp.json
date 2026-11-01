@@ -526,10 +526,6 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "required": [
-        "resourceDir",
-        "exports"
-      ],
       "description": "PluginSpec contains the configuration details for a Plugin resource."
     },
     "Policies": {
@@ -2561,10 +2557,6 @@
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "required": [
-                  "resourceDir",
-                  "exports"
-                ],
                 "description": "PluginSpec contains the configuration details for a Plugin resource."
               }
             }

@@ -217,15 +217,75 @@ func (r *RuleTriggers) MatchesPath(targetPath string) bool {
 
 // MatchesTool reports whether the trigger conditions match the given tool name.
 func (r *RuleTriggers) MatchesTool(toolName string) bool {
-	if r == nil || len(r.Tools) == 0 {
+	if r == nil {
 		return false
 	}
-	for _, tool := range r.Tools {
-		if tool == "*" || tool == toolName {
+	if r.Always {
+		return true
+	}
+	if len(r.Tools) == 0 {
+		return false
+	}
+
+	ns, kind, short, isQualified := ParseQualifiedName(toolName)
+
+	for _, pat := range r.Tools {
+		if pat == "*" || pat == toolName {
 			return true
 		}
-		if hasGlobMeta(tool) {
-			if m, _ := filepath.Match(tool, toolName); m {
+		if m, _ := path.Match(pat, toolName); m {
+			return true
+		}
+		if m, _ := path.Match(strings.ToLower(pat), strings.ToLower(toolName)); m {
+			return true
+		}
+
+		if isQualified && kind == KindTool {
+			if matchResourcePattern(pat, short, ns+"/"+short, toolName) {
+				return true
+			}
+			if m, _ := path.Match(pat, short); m {
+				return true
+			}
+			if m, _ := path.Match(strings.ToLower(pat), strings.ToLower(short)); m {
+				return true
+			}
+		}
+
+		// If pat has a "/" while toolName is a short name (e.g., pat is "ns/Tool/bash" or "ns/bash" and toolName is "bash")
+		if strings.Contains(pat, "/") && !strings.Contains(toolName, "/") {
+			if _, patKind, patShort, ok := ParseQualifiedName(pat); ok && patKind == KindTool {
+				if patShort == toolName {
+					return true
+				}
+				if m, _ := path.Match(patShort, toolName); m {
+					return true
+				}
+				if m, _ := path.Match(strings.ToLower(patShort), strings.ToLower(toolName)); m {
+					return true
+				}
+			} else if _, after, ok := strings.Cut(pat, "/"); ok {
+				if after == toolName {
+					return true
+				}
+				if m, _ := path.Match(after, toolName); m {
+					return true
+				}
+				if m, _ := path.Match(strings.ToLower(after), strings.ToLower(toolName)); m {
+					return true
+				}
+			}
+		}
+
+		// Also check short name if toolName contains "/" but is not a qualified name (e.g., "ns/bash")
+		if _, after, ok := strings.Cut(toolName, "/"); ok && !strings.Contains(after, "/") {
+			if pat == after {
+				return true
+			}
+			if m, _ := path.Match(pat, after); m {
+				return true
+			}
+			if m, _ := path.Match(strings.ToLower(pat), strings.ToLower(after)); m {
 				return true
 			}
 		}

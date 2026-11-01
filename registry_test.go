@@ -4373,3 +4373,240 @@ func TestResolvedAgent_MCPs(t *testing.T) {
 			resolved.MCPs[0].Metadata.Name, resolved.MCPs[1].Metadata.Name)
 	}
 }
+
+func TestRule_MatchesTool(t *testing.T) {
+	// 1. Nil RuleTriggers
+	var nilTriggers *RuleTriggers
+	if nilTriggers.MatchesTool("bash") {
+		t.Errorf("nil triggers should not match tool")
+	}
+
+	// 2. Always = true
+	alwaysTriggers := &RuleTriggers{Always: true}
+	if !alwaysTriggers.MatchesTool("any-tool") {
+		t.Errorf("Always=true trigger should match any tool")
+	}
+
+	// 3. Empty tools
+	emptyTriggers := &RuleTriggers{}
+	if emptyTriggers.MatchesTool("bash") {
+		t.Errorf("empty triggers should not match tool")
+	}
+
+	// 4. Exact match & case-insensitivity
+	triggers := &RuleTriggers{
+		Tools: []string{"bash", "github__*", "workspace/Tool/python"},
+	}
+
+	if !triggers.MatchesTool("bash") {
+		t.Errorf("expected match for 'bash'")
+	}
+	if !triggers.MatchesTool("BASH") {
+		t.Errorf("expected case-insensitive match for 'BASH'")
+	}
+	if triggers.MatchesTool("zsh") {
+		t.Errorf("expected no match for 'zsh'")
+	}
+
+	// 5. MCP glob pattern
+	if !triggers.MatchesTool("github__create_issue") {
+		t.Errorf("expected 'github__*' to match 'github__create_issue'")
+	}
+	if !triggers.MatchesTool("GITHUB__CREATE_ISSUE") {
+		t.Errorf("expected 'github__*' to match 'GITHUB__CREATE_ISSUE' case-insensitively")
+	}
+	if triggers.MatchesTool("gitlab__create_issue") {
+		t.Errorf("expected 'github__*' not to match 'gitlab__create_issue'")
+	}
+
+	// 6. Qualified tool name matching short/glob pattern
+	if !triggers.MatchesTool("workspace/Tool/github__create_issue") {
+		t.Errorf("expected qualified tool name to match pattern 'github__*'")
+	}
+	if !triggers.MatchesTool("local/Tool/bash") {
+		t.Errorf("expected qualified tool name to match short pattern 'bash'")
+	}
+
+	// 7. Qualified pattern matching short tool name
+	if !triggers.MatchesTool("python") {
+		t.Errorf("expected pattern 'workspace/Tool/python' to match short tool 'python'")
+	}
+}
+
+func TestRegistry_ResolveRulesForTool(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	rLow := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "catchall-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 10,
+			Triggers: RuleTriggers{Tools: []string{"*"}},
+		},
+	}
+
+	rMCP := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "github-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 90,
+			Triggers: RuleTriggers{Tools: []string{"github__*"}},
+		},
+	}
+
+	rBash := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "bash-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 50,
+			Triggers: RuleTriggers{Tools: []string{"bash"}},
+		},
+	}
+
+	reg.set(rLow.QualifiedName(), rLow)
+	reg.set(rMCP.QualifiedName(), rMCP)
+	reg.set(rBash.QualifiedName(), rBash)
+
+	// 1. Resolve for MCP tool "github__create_issue" -> matches rMCP (prio 90) and rLow (prio 10)
+	rules := reg.ResolveRulesForTool("github__create_issue")
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules for 'github__create_issue', got %d", len(rules))
+	}
+	if rules[0].Metadata.Name != "github-rule" || rules[1].Metadata.Name != "catchall-rule" {
+		t.Errorf("expected rules ordered by priority [github-rule (90), catchall-rule (10)], got [%s, %s]",
+			rules[0].Metadata.Name, rules[1].Metadata.Name)
+	}
+
+	// 2. Resolve for "bash" -> matches rBash (prio 50) and rLow (prio 10)
+	bashRules := reg.ResolveRulesForTool("bash")
+	if len(bashRules) != 2 {
+		t.Fatalf("expected 2 rules for 'bash', got %d", len(bashRules))
+	}
+	if bashRules[0].Metadata.Name != "bash-rule" || bashRules[1].Metadata.Name != "catchall-rule" {
+		t.Errorf("expected rules ordered by priority [bash-rule (50), catchall-rule (10)], got [%s, %s]",
+			bashRules[0].Metadata.Name, bashRules[1].Metadata.Name)
+	}
+
+	// 3. Resolve via ScopedRegistry
+	proj := &Project{Name: "my-app"}
+	reg.AddProject(proj)
+	scoped := reg.Project("my-app")
+
+	scopedRules := scoped.ResolveRulesForTool("github__pull_request")
+	if len(scopedRules) != 2 || scopedRules[0].Metadata.Name != "github-rule" {
+		t.Errorf("expected ScopedRegistry to resolve github-rule for 'github__pull_request'")
+	}
+}
+
+func TestResolvedAgent_RulesForPath_And_RulesForTool(t *testing.T) {
+	ruleGo := Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "go-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 100,
+			Triggers: RuleTriggers{
+				Globs: []string{"**/*.go"},
+				Tools: []string{"go_*"},
+			},
+		},
+	}
+
+	ruleCommon := Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "common-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 80,
+			Triggers: RuleTriggers{
+				Globs: []string{"**/*"},
+				Tools: []string{"*"},
+			},
+		},
+	}
+
+	ruleTS := Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "ts-rule"},
+		},
+		Spec: RuleSpec{
+			Priority: 50,
+			Triggers: RuleTriggers{
+				Globs: []string{"**/*.ts"},
+				Tools: []string{"npm_*"},
+			},
+		},
+	}
+
+	ra := &ResolvedAgent{
+		Rules: []Rule{ruleTS, ruleGo, ruleCommon}, // arbitrary initial order
+	}
+
+	// 1. RulesForPath
+	goPathRules := ra.RulesForPath("pkg/api/handler.go")
+	if len(goPathRules) != 2 {
+		t.Fatalf("expected 2 rules for go path, got %d", len(goPathRules))
+	}
+	if goPathRules[0].Metadata.Name != "go-rule" || goPathRules[1].Metadata.Name != "common-rule" {
+		t.Errorf("expected priority order [go-rule, common-rule], got [%s, %s]",
+			goPathRules[0].Metadata.Name, goPathRules[1].Metadata.Name)
+	}
+
+	tsPathRules := ra.RulesForPath("src/components/button.ts")
+	if len(tsPathRules) != 2 {
+		t.Fatalf("expected 2 rules for ts path, got %d", len(tsPathRules))
+	}
+	if tsPathRules[0].Metadata.Name != "common-rule" || tsPathRules[1].Metadata.Name != "ts-rule" {
+		t.Errorf("expected priority order [common-rule (80), ts-rule (50)], got [%s, %s]",
+			tsPathRules[0].Metadata.Name, tsPathRules[1].Metadata.Name)
+	}
+
+	// 2. RulesForTool
+	goToolRules := ra.RulesForTool("go_test")
+	if len(goToolRules) != 2 {
+		t.Fatalf("expected 2 rules for 'go_test', got %d", len(goToolRules))
+	}
+	if goToolRules[0].Metadata.Name != "go-rule" || goToolRules[1].Metadata.Name != "common-rule" {
+		t.Errorf("expected priority order [go-rule, common-rule], got [%s, %s]",
+			goToolRules[0].Metadata.Name, goToolRules[1].Metadata.Name)
+	}
+
+	npmToolRules := ra.RulesForTool("npm_run")
+	if len(npmToolRules) != 2 {
+		t.Fatalf("expected 2 rules for 'npm_run', got %d", len(npmToolRules))
+	}
+	if npmToolRules[0].Metadata.Name != "common-rule" || npmToolRules[1].Metadata.Name != "ts-rule" {
+		t.Errorf("expected priority order [common-rule, ts-rule], got [%s, %s]",
+			npmToolRules[0].Metadata.Name, npmToolRules[1].Metadata.Name)
+	}
+
+	// 3. Nil ResolvedAgent
+	var nilAgent *ResolvedAgent
+	if nilAgent.RulesForPath("main.go") != nil {
+		t.Errorf("nil agent should return nil for RulesForPath")
+	}
+	if nilAgent.RulesForTool("bash") != nil {
+		t.Errorf("nil agent should return nil for RulesForTool")
+	}
+}

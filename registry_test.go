@@ -961,13 +961,13 @@ func TestMCP_Validation(t *testing.T) {
 	}
 
 	// 6. Valid http and streamable-http MCPs
-	for _, tr := range []string{"http", "streamable-http"} {
+	for _, tr := range []MCPTransport{MCPTransportHTTP, MCPTransportStreamableHTTP} {
 		regOk := NewRegistry(nil)
 		mcpRemote := &MCP{
 			BaseResource: BaseResource{
 				APIVersion: APIVersion,
 				Kind:       KindMCP,
-				Metadata:   Metadata{Name: tr + "-mcp"},
+				Metadata:   Metadata{Name: string(tr) + "-mcp"},
 			},
 			Spec: MCPSpec{
 				Type:     tr,
@@ -989,7 +989,7 @@ func TestMCP_Validation(t *testing.T) {
 			BaseResource: BaseResource{
 				APIVersion: APIVersion,
 				Kind:       KindMCP,
-				Metadata:   Metadata{Name: tr + "-mcp-err"},
+				Metadata:   Metadata{Name: string(tr) + "-mcp-err"},
 			},
 			Spec: MCPSpec{
 				Type: tr,
@@ -2302,6 +2302,207 @@ Updated instructions.
 	}
 	if scopedStats.HasChanges() {
 		t.Errorf("expected no changes on consecutive scoped reload, got %+v", scopedStats)
+	}
+}
+
+func TestRegistry_Reload_PreservesAndRefiltersMCPTools(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "warp-mcp-reload-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	wsMd := `---
+apiVersion: warp/v1alpha1
+kind: Workspace
+metadata:
+  name: test-ws
+spec:
+  projects: ["."]
+---
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	agentsDir := filepath.Join(tmpDir, ".agents")
+	if err := os.Mkdir(agentsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	mcpPath := filepath.Join(agentsDir, "dynamic-mcp.yaml")
+	mcpYaml := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: dynamic-mcp
+spec:
+  type: stdio
+  command: ["run"]
+  annotations:
+    isReadOnly: true
+  policies:
+    tools:
+      include: ["*"]
+      exclude: ["secret"]
+  overrides:
+    fetch:
+      isDangerous: true
+      isReadOnly: false
+`
+	if err := os.WriteFile(mcpPath, []byte(mcpYaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	transientPath := filepath.Join(agentsDir, "transient-mcp.yaml")
+	transientYaml := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: transient-mcp
+spec:
+  type: stdio
+  command: ["run"]
+`
+	if err := os.WriteFile(transientPath, []byte(transientYaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := LoadWorkspace(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace failed: %v", err)
+	}
+
+	// Register tools dynamically with wire annotations
+	err = reg.SetMCPTools("dynamic-mcp", []*Tool{
+		{
+			BaseResource: BaseResource{Metadata: Metadata{Name: "fetch"}},
+			Spec:         ToolSpec{Annotations: &ToolAnnotation{IsReadOnly: true}},
+		},
+		{
+			BaseResource: BaseResource{Metadata: Metadata{Name: "secret"}},
+			Spec:         ToolSpec{Annotations: &ToolAnnotation{IsReadOnly: true}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SetMCPTools failed: %v", err)
+	}
+
+	err = reg.SetMCPTools("transient-mcp", []*Tool{
+		{BaseResource: BaseResource{Metadata: Metadata{Name: "temp_tool"}}},
+	})
+	if err != nil {
+		t.Fatalf("SetMCPTools failed: %v", err)
+	}
+
+	projects := reg.ListProjects()
+	if len(projects) == 0 {
+		t.Fatalf("expected registered project")
+	}
+	scoped := reg.Project(projects[0].Name)
+
+	// Verify tools were registered initially:
+	// dynamic-mcp__fetch is active with override annotation (isDangerous: true, isReadOnly: false)
+	fetchRes, ok := scoped.ResolveResource("dynamic-mcp__fetch")
+	if !ok {
+		t.Errorf("expected dynamic-mcp__fetch to be registered")
+	} else {
+		fetchTool := fetchRes.(*Tool)
+		if fetchTool.Spec.Annotations == nil || !fetchTool.Spec.Annotations.IsDangerous || fetchTool.Spec.Annotations.IsReadOnly {
+			t.Errorf("expected override annotations on dynamic-mcp__fetch initially, got %+v", fetchTool.Spec.Annotations)
+		}
+	}
+	// dynamic-mcp__secret was excluded initially
+	if _, ok := scoped.ResolveResource("dynamic-mcp__secret"); ok {
+		t.Errorf("expected dynamic-mcp__secret to be excluded initially")
+	}
+	if _, ok := scoped.ResolveResource("transient-mcp__temp_tool"); !ok {
+		t.Errorf("expected transient-mcp__temp_tool to be registered")
+	}
+
+	// Update dynamic-mcp on disk to exclude fetch as well
+	updatedMcpYaml := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: dynamic-mcp
+spec:
+  type: stdio
+  command: ["run"]
+  annotations:
+    isReadOnly: true
+  policies:
+    tools:
+      include: ["*"]
+      exclude: ["secret", "fetch"]
+`
+	if err := os.WriteFile(mcpPath, []byte(updatedMcpYaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete transient-mcp from disk
+	if err := os.Remove(transientPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload workspace
+	stats, err := reg.Reload()
+	if err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+	if !stats.HasChanges() {
+		t.Errorf("expected changes in reload stats, got %+v", stats)
+	}
+
+	// dynamic-mcp__fetch should now be excluded by reloaded policies
+	if _, ok := scoped.ResolveResource("dynamic-mcp__fetch"); ok {
+		t.Errorf("expected dynamic-mcp__fetch to be excluded after reload")
+	}
+
+	// transient-mcp and its dynamic tools should be gone
+	if _, ok := scoped.ResolveResource("transient-mcp"); ok {
+		t.Errorf("expected transient-mcp to be removed after reload")
+	}
+	if _, ok := scoped.ResolveResource("transient-mcp__temp_tool"); ok {
+		t.Errorf("expected transient-mcp__temp_tool to be removed after reload")
+	}
+
+	// Now re-enable tools on disk by removing exclusion and removing overrides
+	reopenedMcpYaml := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: dynamic-mcp
+spec:
+  type: stdio
+  command: ["run"]
+  policies:
+    tools:
+      include: ["*"]
+`
+	if err := os.WriteFile(mcpPath, []byte(reopenedMcpYaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload again: both fetch and secret should now appear, and fetch should revert to wire annotations!
+	stats2, err := reg.Reload()
+	if err != nil {
+		t.Fatalf("Second reload failed: %v", err)
+	}
+	if !stats2.HasChanges() {
+		t.Errorf("expected changes in second reload stats, got %+v", stats2)
+	}
+
+	// secret was initially excluded, but should now be active because raw tools were preserved!
+	if _, ok := scoped.ResolveResource("dynamic-mcp__secret"); !ok {
+		t.Errorf("expected dynamic-mcp__secret to be restored and active after removing exclusion")
+	}
+
+	// fetch should now be active and have reverted to its wire annotation (isReadOnly: true, isDangerous: false)
+	fetchRevertedRes, ok := scoped.ResolveResource("dynamic-mcp__fetch")
+	if !ok {
+		t.Errorf("expected dynamic-mcp__fetch to be active after second reload")
+	} else {
+		fetchTool := fetchRevertedRes.(*Tool)
+		if fetchTool.Spec.Annotations == nil || !fetchTool.Spec.Annotations.IsReadOnly || fetchTool.Spec.Annotations.IsDangerous {
+			t.Errorf("expected dynamic-mcp__fetch to revert to wire annotations, got %+v", fetchTool.Spec.Annotations)
+		}
 	}
 }
 
@@ -3632,5 +3833,543 @@ func TestResolveCommand(t *testing.T) {
 	}
 	if scopedResCmd.Command.Metadata.Name != "explicit-cmd" {
 		t.Errorf("expected explicit-cmd from scoped registry, got %s", scopedResCmd.Command.Metadata.Name)
+	}
+}
+
+func TestMCP_ToolName_And_Parse(t *testing.T) {
+	mcp := &MCP{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "github"},
+		},
+	}
+
+	// 1. ToolName
+	if got := mcp.ToolName("search_issues"); got != "github__search_issues" {
+		t.Errorf("expected 'github__search_issues', got %q", got)
+	}
+	if got := mcp.ToolName("github__search_issues"); got != "github__search_issues" {
+		t.Errorf("expected idempotent 'github__search_issues', got %q", got)
+	}
+
+	// 2. ParseMCPToolName
+	mcpName, rawName, ok := ParseMCPToolName("github__search_issues")
+	if !ok || mcpName != "github" || rawName != "search_issues" {
+		t.Errorf("ParseMCPToolName failed, got (%q, %q, %v)", mcpName, rawName, ok)
+	}
+
+	mcpName, rawName, ok = ParseMCPToolName("slack__channel__post")
+	if !ok || mcpName != "slack" || rawName != "channel__post" {
+		t.Errorf("ParseMCPToolName with multiple '__' failed, got (%q, %q, %v)", mcpName, rawName, ok)
+	}
+
+	invalidNames := []string{"", "simple_tool", "__tool", "mcp__", "_single_underscore", "no_delimiter"}
+	for _, inv := range invalidNames {
+		if _, _, ok := ParseMCPToolName(inv); ok {
+			t.Errorf("expected ParseMCPToolName(%q) to return ok=false", inv)
+		}
+	}
+}
+
+func TestMCP_FilteringAndPolicies(t *testing.T) {
+	mcp := &MCP{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "sqlite"},
+		},
+		Spec: MCPSpec{
+			Policies: &MCPPolicies{
+				Tools: &ResourceFilter{
+					Include: []string{"read_*", "query"},
+					Exclude: []string{"read_secrets", "*admin*"},
+				},
+				Prompts: &ResourceFilter{
+					Include: []string{"summarize_*"},
+					Exclude: []string{"*internal*"},
+				},
+				Resources: &ResourceFilter{
+					Include: []string{"file://*"},
+					Exclude: []string{"*.key"},
+				},
+			},
+		},
+	}
+
+	// Tools
+	if !mcp.AllowsTool("query") {
+		t.Errorf("expected 'query' to be allowed")
+	}
+	if !mcp.AllowsTool("read_data") {
+		t.Errorf("expected 'read_data' to be allowed")
+	}
+	if !mcp.AllowsTool("sqlite__read_data") {
+		t.Errorf("expected 'sqlite__read_data' prefixed to be allowed")
+	}
+	if mcp.AllowsTool("delete_table") {
+		t.Errorf("expected 'delete_table' to be excluded (not in include)")
+	}
+	if mcp.AllowsTool("read_secrets") {
+		t.Errorf("expected 'read_secrets' to be excluded (in exclude)")
+	}
+	if mcp.AllowsTool("read_admin_users") {
+		t.Errorf("expected 'read_admin_users' to be excluded (matches *admin*)")
+	}
+
+	// Prompts
+	if !mcp.AllowsPrompt("summarize_code") {
+		t.Errorf("expected 'summarize_code' to be allowed")
+	}
+	if mcp.AllowsPrompt("summarize_internal_report") {
+		t.Errorf("expected 'summarize_internal_report' to be excluded")
+	}
+
+	// Resources
+	if !mcp.AllowsResource("file:///app/data.txt") {
+		t.Errorf("expected resource allowed")
+	}
+	if mcp.AllowsResource("file:///app/secret.key") {
+		t.Errorf("expected resource excluded")
+	}
+
+	// Nil policies -> allows everything
+	mcpOpen := &MCP{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "open"},
+		},
+	}
+	if !mcpOpen.AllowsTool("any_tool") || !mcpOpen.AllowsPrompt("any_prompt") || !mcpOpen.AllowsResource("uri") {
+		t.Errorf("expected open MCP to allow all tools/prompts/resources")
+	}
+}
+
+func TestMCP_EffectiveAnnotation_And_NewTool(t *testing.T) {
+	serverAnnotation := &ToolAnnotation{
+		IsReadOnly:   true,
+		IsIdempotent: true,
+		UserHint:     "Server default hint",
+	}
+
+	overrideDelete := ToolAnnotation{
+		IsDangerous: true,
+		UserHint:    "Dangerous delete",
+	}
+
+	overrideDropPrefixed := ToolAnnotation{
+		IsDangerous: true,
+		UserHint:    "Dangerous drop table",
+	}
+
+	mcp := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  "workspace",
+			Directory:  "/workspace/mcps",
+			Path:       "/workspace/mcps/db.yaml",
+			Metadata:   Metadata{Name: "db"},
+		},
+		Spec: MCPSpec{
+			Annotations: serverAnnotation,
+			Overrides: map[string]ToolAnnotation{
+				"delete":         overrideDelete,
+				"db__drop_table": overrideDropPrefixed,
+			},
+			Policies: &MCPPolicies{
+				Tools: &ResourceFilter{
+					Exclude: []string{"blocked_tool"},
+				},
+			},
+		},
+	}
+
+	// 1. Override for clean name
+	annDel := mcp.EffectiveAnnotation("delete", nil)
+	if annDel == nil || !annDel.IsDangerous || annDel.UserHint != "Dangerous delete" {
+		t.Errorf("expected overrideDelete for 'delete', got %+v", annDel)
+	}
+
+	// 2. Override for prefixed name
+	annDrop := mcp.EffectiveAnnotation("drop_table", nil)
+	if annDrop == nil || !annDrop.IsDangerous || annDrop.UserHint != "Dangerous drop table" {
+		t.Errorf("expected overrideDropPrefixed for 'drop_table', got %+v", annDrop)
+	}
+
+	// 3. Server annotation fallback
+	wireAnn := &ToolAnnotation{IsOpenWorld: true}
+	annQuery := mcp.EffectiveAnnotation("query", wireAnn)
+	if annQuery == nil || !annQuery.IsReadOnly || annQuery.IsOpenWorld {
+		t.Errorf("expected server annotation to override wire annotation, got %+v", annQuery)
+	}
+
+	// 4. Wire annotation fallback when server annotation is nil
+	mcpNoServerAnn := &MCP{
+		BaseResource: BaseResource{Metadata: Metadata{Name: "plain"}},
+	}
+	annWire := mcpNoServerAnn.EffectiveAnnotation("query", wireAnn)
+	if annWire == nil || !annWire.IsOpenWorld {
+		t.Errorf("expected wire annotation when no server annotation, got %+v", annWire)
+	}
+
+	// 5. NewTool allowed
+	schema := map[string]any{"type": "object"}
+	tool, ok := mcp.NewTool("query", "Executes SQL query", schema, wireAnn)
+	if !ok || tool == nil {
+		t.Fatalf("expected NewTool to succeed for allowed tool")
+	}
+	if tool.Metadata.Name != "db__query" {
+		t.Errorf("expected tool name 'db__query', got %q", tool.Metadata.Name)
+	}
+	if tool.Namespace != "workspace" {
+		t.Errorf("expected tool namespace 'workspace', got %q", tool.Namespace)
+	}
+	if tool.Path != "/workspace/mcps/db.yaml" {
+		t.Errorf("expected tool path to match MCP path, got %q", tool.Path)
+	}
+	if tool.Spec.Annotations == nil || !tool.Spec.Annotations.IsReadOnly {
+		t.Errorf("expected effective annotation on tool, got %+v", tool.Spec.Annotations)
+	}
+
+	// 6. NewTool denied by policy
+	toolBlocked, ok := mcp.NewTool("blocked_tool", "Blocked", schema, nil)
+	if ok || toolBlocked != nil {
+		t.Errorf("expected NewTool to return (nil, false) for blocked tool")
+	}
+}
+
+func TestRegistry_SetMCPTools_And_ScopedRegistry(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	mcp := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "git-mcp"},
+		},
+		Spec: MCPSpec{
+			Type:        MCPTransportStdio,
+			Command:     []string{"git-mcp"},
+			Annotations: &ToolAnnotation{IsReadOnly: true},
+			Policies: &MCPPolicies{
+				Tools: &ResourceFilter{
+					Exclude: []string{"push"},
+				},
+			},
+		},
+	}
+	reg.set(mcp.QualifiedName(), mcp)
+
+	tools := []*Tool{
+		{
+			BaseResource: BaseResource{Metadata: Metadata{Name: "status", Description: "Git status"}},
+		},
+		{
+			BaseResource: BaseResource{Metadata: Metadata{Name: "git-mcp__commit", Description: "Git commit"}},
+		},
+		{
+			BaseResource: BaseResource{Metadata: Metadata{Name: "push", Description: "Git push (excluded)"}},
+		},
+	}
+
+	// 1. SetMCPTools by short name
+	if err := reg.SetMCPTools("git-mcp", tools); err != nil {
+		t.Fatalf("SetMCPTools failed: %v", err)
+	}
+
+	// Verify status and commit are registered under git-mcp__*, while push is excluded
+	statusTool, ok := reg.ResolveResource("workspace/Tool/git-mcp__status")
+	if !ok {
+		t.Fatalf("expected git-mcp__status to be registered")
+	}
+	if statusTool.(*Tool).Spec.Annotations == nil || !statusTool.(*Tool).Spec.Annotations.IsReadOnly {
+		t.Errorf("expected IsReadOnly annotation on registered tool")
+	}
+
+	commitTool, ok := reg.ResolveResource("workspace/Tool/git-mcp__commit")
+	if !ok {
+		t.Fatalf("expected git-mcp__commit to be registered")
+	}
+	if commitTool.GetName() != "git-mcp__commit" {
+		t.Errorf("expected tool name 'git-mcp__commit', got %s", commitTool.GetName())
+	}
+
+	if _, ok := reg.ResolveResource("workspace/Tool/git-mcp__push"); ok {
+		t.Errorf("expected git-mcp__push to be filtered out by policies")
+	}
+
+	// 2. Update MCP tools (cleans up previous tools)
+	updatedTools := []*Tool{
+		{
+			BaseResource: BaseResource{Metadata: Metadata{Name: "log", Description: "Git log"}},
+		},
+	}
+	if err := reg.SetMCPTools("git-mcp", updatedTools); err != nil {
+		t.Fatalf("updating SetMCPTools failed: %v", err)
+	}
+
+	if _, ok := reg.ResolveResource("workspace/Tool/git-mcp__status"); ok {
+		t.Errorf("expected old tool git-mcp__status to be removed on update")
+	}
+	if _, ok := reg.ResolveResource("workspace/Tool/git-mcp__log"); !ok {
+		t.Errorf("expected new tool git-mcp__log to be present")
+	}
+
+	// 3. Error on non-existent MCP
+	if err := reg.SetMCPTools("non-existent", updatedTools); err == nil {
+		t.Errorf("expected error for non-existent MCP, got nil")
+	}
+
+	// 4. ScopedRegistry delegation
+	proj := &Project{Name: "my-app"}
+	reg.AddProject(proj)
+	scoped := reg.Project("my-app")
+	if err := scoped.SetMCPTools("git-mcp", updatedTools); err != nil {
+		t.Fatalf("scoped.SetMCPTools failed: %v", err)
+	}
+}
+
+func TestRegistry_OfflineToolValidation_MCPTools(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	mcp := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "github"},
+		},
+		Spec: MCPSpec{
+			Type:    MCPTransportStdio,
+			Command: []string{"gh-mcp"},
+			Policies: &MCPPolicies{
+				Tools: &ResourceFilter{
+					Include: []string{"search_*", "get_*"},
+					Exclude: []string{"*token*"},
+				},
+			},
+		},
+	}
+	reg.set(mcp.QualifiedName(), mcp)
+
+	// 1. Skill referencing allowed MCP tool (without Tool materialization)
+	skillOk := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "searcher"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"github__search_repositories"},
+		},
+	}
+	reg.set(skillOk.QualifiedName(), skillOk)
+
+	// Command referencing allowed MCP tool
+	cmdOk := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "get-issue"},
+		},
+		Spec: CommandSpec{
+			Tools: []string{"github__get_issue"},
+		},
+	}
+	reg.set(cmdOk.QualifiedName(), cmdOk)
+
+	// Rule referencing allowed MCP tool
+	ruleOk := &Rule{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindRule,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "rule-github"},
+		},
+		Spec: RuleSpec{
+			Triggers: RuleTriggers{
+				Tools: []string{"github__get_user"},
+			},
+		},
+	}
+	reg.set(ruleOk.QualifiedName(), ruleOk)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("expected offline validation of valid MCP tools to pass, got: %v", err)
+	}
+
+	// 2. Skill referencing excluded MCP tool
+	skillExcluded := &Skill{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindSkill,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "token-stealer"},
+		},
+		Spec: SkillSpec{
+			Tools: []string{"github__get_token"},
+		},
+	}
+	reg.set(skillExcluded.QualifiedName(), skillExcluded)
+
+	err := reg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "tool \"get_token\" is excluded by MCP \"github\" policies") {
+		t.Fatalf("expected excluded tool error, got: %v", err)
+	}
+
+	// Clean up invalid skill
+	delete(reg.resources, skillExcluded.QualifiedName())
+
+	// 3. Command referencing missing MCP
+	cmdMissingMCP := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "missing-mcp-cmd"},
+		},
+		Spec: CommandSpec{
+			Tools: []string{"nonexistent_mcp__search"},
+		},
+	}
+	reg.set(cmdMissingMCP.QualifiedName(), cmdMissingMCP)
+
+	err = reg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "references missing tool: nonexistent_mcp__search") {
+		t.Fatalf("expected missing tool error, got: %v", err)
+	}
+	delete(reg.resources, cmdMissingMCP.QualifiedName())
+
+	// 4. Qualified & namespace-prefixed MCP tool references
+	mcpExt := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  "ext",
+			Metadata:   Metadata{Name: "slack"},
+		},
+		Spec: MCPSpec{
+			Type:    MCPTransportStdio,
+			Command: []string{"slack-mcp"},
+			Policies: &MCPPolicies{
+				Tools: &ResourceFilter{
+					Include: []string{"post_*"},
+					Exclude: []string{"*admin*"},
+				},
+			},
+		},
+	}
+	reg.set(mcpExt.QualifiedName(), mcpExt)
+
+	// Valid fully-qualified ref: workspace/Tool/github__search_repositories
+	// Valid namespace-prefixed ref: ext/slack__post_message
+	// Valid qualified ref to external MCP: ext/Tool/slack__post_message
+	cmdPrefixedOk := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "prefixed-mcp-cmd"},
+		},
+		Spec: CommandSpec{
+			Tools: []string{
+				"workspace/Tool/github__search_repositories",
+				"ext/slack__post_message",
+				"ext/Tool/slack__post_message",
+				"local/Tool/github__search_repositories",
+			},
+		},
+	}
+	reg.set(cmdPrefixedOk.QualifiedName(), cmdPrefixedOk)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("expected qualified and namespace-prefixed valid MCP tool references to pass, got: %v", err)
+	}
+
+	// Disallowed fully-qualified ref
+	cmdQualifiedExcluded := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "qualified-excluded-cmd"},
+		},
+		Spec: CommandSpec{
+			Tools: []string{"workspace/Tool/github__get_token"},
+		},
+	}
+	reg.set(cmdQualifiedExcluded.QualifiedName(), cmdQualifiedExcluded)
+	err = reg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "tool \"get_token\" is excluded by MCP \"github\" policies") {
+		t.Fatalf("expected excluded tool error for qualified ref, got: %v", err)
+	}
+	delete(reg.resources, cmdQualifiedExcluded.QualifiedName())
+
+	// Disallowed namespace-prefixed ref
+	cmdPrefixedExcluded := &Command{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindCommand,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "prefixed-excluded-cmd"},
+		},
+		Spec: CommandSpec{
+			Tools: []string{"ext/slack__post_admin_alert"},
+		},
+	}
+	reg.set(cmdPrefixedExcluded.QualifiedName(), cmdPrefixedExcluded)
+	err = reg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "tool \"post_admin_alert\" is excluded by MCP \"slack\" policies") {
+		t.Fatalf("expected excluded tool error for namespace-prefixed ref, got: %v", err)
+	}
+	delete(reg.resources, cmdPrefixedExcluded.QualifiedName())
+}
+
+func TestResolvedAgent_MCPs(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	mcpZ := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "z-mcp"},
+		},
+		Spec: MCPSpec{Type: MCPTransportStdio, Command: []string{"z"}},
+	}
+	mcpA := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "a-mcp"},
+		},
+		Spec: MCPSpec{Type: MCPTransportStdio, Command: []string{"a"}},
+	}
+	reg.set(mcpZ.QualifiedName(), mcpZ)
+	reg.set(mcpA.QualifiedName(), mcpA)
+
+	agent := &Agent{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindAgent,
+			Namespace:  "workspace",
+			Metadata:   Metadata{Name: "worker"},
+		},
+	}
+	reg.set(agent.QualifiedName(), agent)
+
+	resolved, err := reg.ResolveAgent("worker")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	if len(resolved.MCPs) != 2 {
+		t.Fatalf("expected 2 MCPs in resolved agent, got %d", len(resolved.MCPs))
+	}
+
+	// Verify deterministic sorting by QualifiedName()
+	if resolved.MCPs[0].Metadata.Name != "a-mcp" || resolved.MCPs[1].Metadata.Name != "z-mcp" {
+		t.Errorf("expected sorted MCPs [a-mcp, z-mcp], got [%s, %s]",
+			resolved.MCPs[0].Metadata.Name, resolved.MCPs[1].Metadata.Name)
 	}
 }

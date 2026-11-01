@@ -108,6 +108,16 @@ type TemplateTool struct {
 	Path        string
 }
 
+// TemplateMCP represents the MCP server view model for templates.
+type TemplateMCP struct {
+	Name        string
+	Description string
+	Type        string
+	Endpoint    string
+	Dir         string
+	Path        string
+}
+
 // Render processes the resource's instructions as a template.
 // It supports both standard Go text/template syntax ({{.Name}}) and a
 // convenient shorthand syntax ($Name, $1).
@@ -191,6 +201,8 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 	data["DecisionPath"] = ""
 	data["ToolDir"] = ""
 	data["ToolPath"] = ""
+	data["MCPDir"] = ""
+	data["MCPPath"] = ""
 
 	// Add globals first
 	maps.Copy(data, opts.Globals)
@@ -465,6 +477,42 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 		data["InputSchema"] = v.Spec.InputSchema
 		data["OutputSchema"] = v.Spec.OutputSchema
 		data["Annotations"] = v.Spec.Annotations
+	case *MCP:
+		var tm TemplateMCP
+		if existing, ok := data["MCP"].(TemplateMCP); ok {
+			tm = existing
+			if tm.Dir == "" {
+				tm.Dir = v.Directory
+			}
+			if tm.Path == "" {
+				tm.Path = v.GetPath()
+			}
+			if tm.Description == "" {
+				tm.Description = v.Metadata.Description
+			}
+			if tm.Type == "" {
+				tm.Type = string(v.Spec.Type)
+			}
+			if tm.Endpoint == "" {
+				tm.Endpoint = v.Spec.Endpoint
+			}
+			data["MCP"] = tm
+		} else {
+			tm = TemplateMCP{
+				Name:        v.Metadata.Name,
+				Description: v.Metadata.Description,
+				Type:        string(v.Spec.Type),
+				Endpoint:    v.Spec.Endpoint,
+				Dir:         v.Directory,
+				Path:        v.GetPath(),
+			}
+			data["MCP"] = tm
+		}
+		data["MCPDir"] = tm.Dir
+		data["MCPPath"] = tm.Path
+		data["Command"] = v.Spec.Command
+		data["Endpoint"] = v.Spec.Endpoint
+		data["Env"] = v.Spec.Env
 	}
 
 	return data, nil
@@ -488,6 +536,8 @@ func getInstructions(res Resource) string {
 		return v.Spec.Instructions
 	case *Tool:
 		return v.Spec.Instructions
+	case *MCP:
+		return ""
 	default:
 		return ""
 	}

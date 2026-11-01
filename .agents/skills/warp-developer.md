@@ -56,7 +56,7 @@ Each resource has specific fields in its `spec` block:
 - **Qualified Name**: `namespace/Kind/name` (e.g., `local/Skill/warp-developer`).
 
 ### 5. Instruction Templating
-All Markdown resources render their `instructions` body via Go `text/template` plus shell-style shorthand (`$Name`, `$DisplayName`, `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`, `$ToolDir`, `$ToolPath`, `$1`, `$2`, and named arguments):
+All Markdown resources render their `instructions` body via Go `text/template` plus shell-style shorthand (`$Name`, `$DisplayName`, `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`, `$ToolDir`, `$ToolPath`, `$MCPDir`, `$MCPPath`, `$1`, `$2`, and named arguments):
 - `{{.Workspace}}`: `.Dir`, `.Path`
 - `{{.Project}}`: `.Name`, `.DisplayName`, `.Dir`
 - `{{.Context}}`: `.Path`, `.Instructions`
@@ -66,6 +66,7 @@ All Markdown resources render their `instructions` body via Go `text/template` p
 - `{{.Command}}`: `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules`
 - `{{.Decision}}`: `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Questions`, `.Dir`, `.Path`
 - `{{.Tool}}`: `.Name`, `.Description`, `.Dir`, `.Path`
+- `{{.MCP}}`: `.Name`, `.Description`, `.Type`, `.Endpoint`, `.Dir`, `.Path`
 
 ## Resource Creation
 

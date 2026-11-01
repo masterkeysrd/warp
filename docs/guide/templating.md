@@ -386,8 +386,11 @@ Represents the tool being rendered (also exposes top-level shorthands `$ToolDir`
 | `{{.Tool.Dir}}` | The absolute path to the directory containing the tool definition (`$ToolDir`). | `/Users/user/code/warp/tools` |
 | `{{.Tool.Path}}` | The absolute path to the tool definition file (`$ToolPath`). | `/Users/user/code/warp/tools/ls.yaml` |
 
-#### 2. Command Argument Substitution
-When executing a tool with `spec.command`, each command element is rendered as a template:
+#### 2. Command Argument Substitution & Execution Contract
+
+When executing a CLI tool with `spec.command`, WARP enforces a two-part execution contract:
+
+1. **Command-line arguments (`argv`)**: Each element in `spec.command` is rendered individually via `tool.RenderCommand(opts)` and passed directly as `argv` to `exec.Command` without invoking a shell (`sh -c`), preventing shell injection:
 
 ```yaml
 spec:
@@ -403,6 +406,53 @@ When the agent calls the tool with `{ "path": "src/" }`:
 - `$path` evaluates to `"src/"`.
 - `Tool.RenderCommand` produces `["ls", "-F", "src/"]`.
 - Built-in path shorthands like `$ToolDir`, `$ProjectDir`, and `$WorkspaceDir` can also be used directly inside `command`.
+
+2. **Standard Input (`stdin`) & Environment (`env`)**: When executing the subprocess, the runtime serializes the raw JSON input arguments object and pipes it directly to the process's `stdin`, while merging `spec.env` into the process environment. Simple CLI tools can consume `$arg` flags from `argv` and ignore `stdin`, while tools accepting complex/nested JSON payloads or multiline text can read the structured JSON directly from `stdin`.
+
+---
+
+## MCP Templating
+
+An `MCP` resource describes a Model Context Protocol server. Both its launch command (`spec.command`) and remote endpoint (`spec.endpoint`) support WARP templating, allowing dynamic configuration based on workspace paths, active project directory, invoking agent, or custom runtime variables.
+
+### Available Context Objects
+
+MCP templates have access to:
+*   `{{.MCP}}`: Metadata about the MCP resource being rendered.
+*   `{{.Project}}`: The project context (if invoked in a project scope).
+*   `{{.Workspace}}`: Root workspace paths.
+*   `{{.Agent}}`: The invoking agent (if available).
+*   `Globals`: Implementor-injected global variables.
+
+#### 1. The `MCP` Object
+Represents the MCP server being rendered (also exposes top-level shorthands `$MCPDir` and `$MCPPath`).
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `{{.MCP.Name}}` | The resource name of the MCP server. | `sqlite` |
+| `{{.MCP.Description}}` | Short summary from `metadata.description`. | `SQLite database MCP server` |
+| `{{.MCP.Type}}` | Transport type (`stdio`, `sse`, `http`, `streamable-http`). | `stdio` |
+| `{{.MCP.Endpoint}}` | Remote server URL template. | `https://api.internal/mcp` |
+| `{{.MCP.Dir}}` | Directory containing the MCP YAML definition (`$MCPDir`). | `/Users/user/code/warp/mcps` |
+| `{{.MCP.Path}}` | Full path to the MCP resource file (`$MCPPath`). | `/Users/user/code/warp/mcps/db.yaml` |
+
+#### 2. Command & Endpoint Templating
+
+##### Local MCP (`stdio`)
+Each element in `spec.command` is rendered individually via `MCP.RenderCommand`:
+```yaml
+spec:
+  type: stdio
+  command: ["uvx", "mcp-server-sqlite", "--db-path", "$MCPDir/data.db", "--ws", "$WorkspaceDir"]
+```
+
+##### Remote MCP (`sse`, `http`, `streamable-http`)
+The `spec.endpoint` URL is rendered via `MCP.RenderEndpoint`:
+```yaml
+spec:
+  type: sse
+  endpoint: "https://$HOST:8080/mcp/{{.MCP.Name}}/sse?proj=$ProjectDir"
+```
 
 ---
 

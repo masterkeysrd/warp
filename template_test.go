@@ -903,3 +903,140 @@ func TestToolRenderCommand(t *testing.T) {
 		t.Errorf("expected (nil, nil) for empty tool command, got (%v, %v)", outEmpty, err)
 	}
 }
+
+func TestMCP_RenderCommandAndEndpoint(t *testing.T) {
+	ws := &Workspace{
+		RootPath: "/workspace",
+	}
+
+	proj := &Project{
+		Name:     "web-app",
+		Path:     "apps/web",
+		RootPath: "/workspace",
+	}
+
+	agent := &Agent{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "dev-bot"},
+		},
+	}
+
+	mcpStdio := &MCP{
+		BaseResource: BaseResource{
+			Directory: "/workspace/mcps",
+			Path:      "/workspace/mcps/sqlite.yaml",
+			Metadata: Metadata{
+				Name:        "sqlite",
+				Description: "SQLite MCP server",
+			},
+		},
+		Spec: MCPSpec{
+			Type: MCPTransportStdio,
+			Command: []string{
+				"uvx",
+				"mcp-server-sqlite",
+				"--db-path",
+				"$MCPDir/data.db",
+				"--proj",
+				"$ProjectDir",
+				"--ws",
+				"$WorkspaceDir",
+				"--agent",
+				"{{.Agent.Name}}",
+				"--server-name",
+				"{{.MCP.Name}}",
+				"--transport",
+				"{{.MCP.Type}}",
+				"--file",
+				"$MCPPath",
+			},
+		},
+	}
+
+	opts := &MCPRenderOptions{
+		Workspace: ws,
+		Project:   proj,
+		Agent:     agent,
+	}
+
+	cmdOut, err := mcpStdio.RenderCommand(opts)
+	if err != nil {
+		t.Fatalf("MCP.RenderCommand failed: %v", err)
+	}
+
+	expectedCmd := []string{
+		"uvx",
+		"mcp-server-sqlite",
+		"--db-path",
+		"/workspace/mcps/data.db",
+		"--proj",
+		"/workspace/apps/web",
+		"--ws",
+		"/workspace",
+		"--agent",
+		"dev-bot",
+		"--server-name",
+		"sqlite",
+		"--transport",
+		"stdio",
+		"--file",
+		"/workspace/mcps/sqlite.yaml",
+	}
+
+	if !slices.Equal(cmdOut, expectedCmd) {
+		t.Errorf("RenderCommand:\nGot:  %v\nWant: %v", cmdOut, expectedCmd)
+	}
+
+	// Remote MCP with Endpoint rendering
+	mcpRemote := &MCP{
+		BaseResource: BaseResource{
+			Directory: "/workspace/mcps",
+			Path:      "/workspace/mcps/remote.yaml",
+			Metadata: Metadata{
+				Name: "cloud-mcp",
+			},
+		},
+		Spec: MCPSpec{
+			Type:     MCPTransportSSE,
+			Endpoint: "https://$HOST:8080/mcp/{{.MCP.Name}}/sse?proj=$ProjectDir",
+		},
+	}
+
+	optsRemote := &MCPRenderOptions{
+		Project: proj,
+		Globals: map[string]any{
+			"HOST": "internal.service.local",
+		},
+	}
+
+	epOut, err := mcpRemote.RenderEndpoint(optsRemote)
+	if err != nil {
+		t.Fatalf("MCP.RenderEndpoint failed: %v", err)
+	}
+
+	expectedEndpoint := "https://internal.service.local:8080/mcp/cloud-mcp/sse?proj=/workspace/apps/web"
+	if epOut != expectedEndpoint {
+		t.Errorf("RenderEndpoint:\nGot:  %q\nWant: %q", epOut, expectedEndpoint)
+	}
+
+	// Nil / empty checks
+	var nilMCP *MCP
+	outNilCmd, err := nilMCP.RenderCommand(nil)
+	if err != nil || outNilCmd != nil {
+		t.Errorf("expected (nil, nil) for nil MCP command, got (%v, %v)", outNilCmd, err)
+	}
+	outNilEp, err := nilMCP.RenderEndpoint(nil)
+	if err != nil || outNilEp != "" {
+		t.Errorf("expected (\"\", nil) for nil MCP endpoint, got (%q, %v)", outNilEp, err)
+	}
+
+	emptyMCP := &MCP{}
+	outEmptyCmd, err := emptyMCP.RenderCommand(nil)
+	if err != nil || outEmptyCmd != nil {
+		t.Errorf("expected (nil, nil) for empty MCP command, got (%v, %v)", outEmptyCmd, err)
+	}
+	outEmptyEp, err := emptyMCP.RenderEndpoint(nil)
+	if err != nil || outEmptyEp != "" {
+		t.Errorf("expected (\"\", nil) for empty MCP endpoint, got (%q, %v)", outEmptyEp, err)
+	}
+}

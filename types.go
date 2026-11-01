@@ -395,6 +395,7 @@ type ResolvedAgent struct {
 	Commands        []*Command
 	Subagents       []*Agent
 	Rules           []Rule
+	MCPs            []*MCP
 	WorkspacePolicy *ToolPolicies
 }
 

@@ -35,6 +35,11 @@ type QueryOptions struct {
 	Filter func(Resource) bool
 }
 
+type mcpToolEntry struct {
+	rawTools   []*Tool
+	activeKeys []string
+}
+
 // Registry is the base resource store, safe for concurrent use. Resources are
 // keyed by their qualified name ("namespace/Kind/name"). Project-local
 // resources are stored using the project slug as their namespace — the "local"
@@ -50,6 +55,7 @@ type Registry struct {
 	projects  map[string]*Project
 	warnings  []string
 	providers []ResourceProvider
+	mcpTools  map[string]mcpToolEntry
 }
 
 // NewRegistry returns an empty Registry bound to the given workspace spec.
@@ -59,6 +65,7 @@ func NewRegistry(ws *Workspace) *Registry {
 		resources: make(map[string]Resource),
 		projects:  make(map[string]*Project),
 		workspace: ws,
+		mcpTools:  make(map[string]mcpToolEntry),
 	}
 }
 
@@ -214,6 +221,28 @@ func (r *Registry) Reload() (*ReloadStats, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Re-apply existing r.mcpTools for any MCP resource that still exists
+	newMCPTools := make(map[string]mcpToolEntry)
+	for mcpQN, entry := range r.mcpTools {
+		res, ok := newReg.resources[mcpQN]
+		if !ok {
+			continue
+		}
+		mcp, ok := res.(*MCP)
+		if !ok {
+			continue
+		}
+		activeTools, activeKeys := materializeMCPTools(mcp, entry.rawTools)
+		for _, t := range activeTools {
+			newReg.resources[t.QualifiedName()] = t
+		}
+		newMCPTools[mcpQN] = mcpToolEntry{
+			rawTools:   entry.rawTools,
+			activeKeys: activeKeys,
+		}
+	}
+	r.mcpTools = newMCPTools
 
 	stats := computeReloadStats(r.resources, newReg.resources)
 
@@ -508,8 +537,11 @@ func (r *Registry) Validate() error {
 				if hasGlobMeta(toolRef) || toolRef == "*" {
 					continue
 				}
-				if !r.hasKindLocked(ns, KindTool, toolRef) {
-					return fmt.Errorf("skill %s references missing tool: %s", name, toolRef)
+				if err := r.validateToolRefLocked(ns, toolRef); err != nil {
+					if strings.Contains(err.Error(), "excluded by MCP") {
+						return fmt.Errorf("skill %s: %w", name, err)
+					}
+					return fmt.Errorf("skill %s %w", name, err)
 				}
 			}
 		}
@@ -546,8 +578,11 @@ func (r *Registry) Validate() error {
 				if hasGlobMeta(toolRef) || toolRef == "*" {
 					continue
 				}
-				if !r.hasKindLocked(ns, KindTool, toolRef) {
-					return fmt.Errorf("command %s references missing tool: %s", name, toolRef)
+				if err := r.validateToolRefLocked(ns, toolRef); err != nil {
+					if strings.Contains(err.Error(), "excluded by MCP") {
+						return fmt.Errorf("command %s: %w", name, err)
+					}
+					return fmt.Errorf("command %s %w", name, err)
 				}
 			}
 			if cmd.Spec.Agent != "" {
@@ -576,14 +611,14 @@ func (r *Registry) Validate() error {
 		if mcp, ok := res.(*MCP); ok {
 			transport := mcp.Spec.Type
 			if transport == "" {
-				transport = "stdio"
+				transport = MCPTransportStdio
 			}
 			switch transport {
-			case "stdio":
+			case MCPTransportStdio:
 				if len(mcp.Spec.Command) == 0 {
 					return fmt.Errorf("mcp %s: command is required for stdio transport", name)
 				}
-			case "sse", "http", "streamable-http":
+			case MCPTransportSSE, MCPTransportHTTP, MCPTransportStreamableHTTP:
 				if mcp.Spec.Endpoint == "" {
 					return fmt.Errorf("mcp %s: endpoint is required for %s transport", name, transport)
 				}
@@ -662,8 +697,11 @@ func (r *Registry) validateRuleLocked(name string, rule *Rule) error {
 		if hasGlobMeta(tRef) || tRef == "*" {
 			continue
 		}
-		if !r.hasKindLocked(ns, KindTool, tRef) {
-			return fmt.Errorf("rule %s: trigger references missing tool: %s", name, tRef)
+		if err := r.validateToolRefLocked(ns, tRef); err != nil {
+			if strings.Contains(err.Error(), "excluded by MCP") {
+				return fmt.Errorf("rule %s: trigger: %w", name, err)
+			}
+			return fmt.Errorf("rule %s: trigger %w", name, err)
 		}
 	}
 	return nil
@@ -1058,10 +1096,67 @@ func (r *Registry) resolveRefLocked(fromNamespace string, kind Kind, ref string)
 	return nil
 }
 
+// resolveKindLocked finds a resource of the expected kind matching ref from fromNamespace.
+// Must be called with r.mu held for reading.
+func (r *Registry) resolveKindLocked(fromNamespace string, kind Kind, ref string) Resource {
+	return r.resolveRefLocked(fromNamespace, kind, ref)
+}
+
 // hasKindLocked reports whether ref resolves to a resource of the expected kind.
 // Must be called with r.mu held for reading.
 func (r *Registry) hasKindLocked(fromNamespace string, kind Kind, ref string) bool {
 	return r.resolveRefLocked(fromNamespace, kind, ref) != nil
+}
+
+// validateToolRefLocked checks if a tool reference resolves to a known Tool or an allowed MCP tool.
+// Must be called with r.mu held for reading.
+func (r *Registry) validateToolRefLocked(fromNamespace, toolRef string) error {
+	if r.hasKindLocked(fromNamespace, KindTool, toolRef) {
+		return nil
+	}
+
+	var mcpRes Resource
+	var rawTool string
+	var mcpName string
+
+	if ns, kind, short, ok := ParseQualifiedName(toolRef); ok && kind == KindTool {
+		if mName, rTool, ok := ParseMCPToolName(short); ok {
+			mcpName = mName
+			rawTool = rTool
+			mcpRef := MakeQualifiedName(ns, KindMCP, mcpName)
+			mcpRes = r.resolveKindLocked(fromNamespace, KindMCP, mcpRef)
+			if mcpRes == nil && ns != fromNamespace {
+				mcpRes = r.resolveKindLocked(ns, KindMCP, mcpName)
+			}
+		}
+	} else if before, after, ok := strings.Cut(toolRef, "/"); ok && !strings.Contains(after, "/") {
+		if mName, rTool, ok := ParseMCPToolName(after); ok {
+			mcpName = mName
+			rawTool = rTool
+			mcpRes = r.resolveKindLocked(fromNamespace, KindMCP, before+"/MCP/"+mcpName)
+			if mcpRes == nil {
+				mcpRes = r.resolveKindLocked(fromNamespace, KindMCP, before+"/"+mcpName)
+			}
+			if mcpRes == nil {
+				mcpRes = r.resolveKindLocked(before, KindMCP, mcpName)
+			}
+		}
+	} else if mName, rTool, ok := ParseMCPToolName(toolRef); ok {
+		mcpName = mName
+		rawTool = rTool
+		mcpRes = r.resolveKindLocked(fromNamespace, KindMCP, mcpName)
+	}
+
+	if mcpRes != nil {
+		if mcp, ok := mcpRes.(*MCP); ok {
+			if mcp.AllowsTool(rawTool) {
+				return nil
+			}
+			return fmt.Errorf("tool %q is excluded by MCP %q policies", rawTool, mcpName)
+		}
+	}
+
+	return fmt.Errorf("references missing tool: %s", toolRef)
 }
 
 // Resources returns all resources stored in the registry across all namespaces,
@@ -1084,17 +1179,19 @@ func (r *Registry) Resources() []Resource {
 // Short names are resolved through global and plugin namespaces; project-specific
 // namespaces are never returned, ensuring workspace-root isolation.
 func (r *Registry) ResolveResource(ref string) (Resource, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.resolveResourceLocked(ref)
+}
+
+func (r *Registry) resolveResourceLocked(ref string) (Resource, bool) {
 	if strings.Contains(ref, "/") {
-		if res, ok := r.get(ref); ok {
+		if res, ok := r.resources[ref]; ok {
 			return res, true
 		}
 		// Fallback for relative file paths like "skills/go.md"
-		r.mu.RLock()
-		defer r.mu.RUnlock()
 		return r.resolvePathFallbackLocked(ref, r.isAllowedInBaseScopeLocked, NamespacePriority)
 	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	var best Resource
 	bestPrio := -1
 	for _, res := range r.resources {
@@ -1502,6 +1599,153 @@ func (s *ScopedRegistry) Reload() (*ReloadStats, error) {
 		return nil, fmt.Errorf("registry is nil")
 	}
 	return s.base.Reload()
+}
+
+// SetMCPTools registers dynamically discovered tools for an MCP server in the registry.
+func (r *Registry) SetMCPTools(mcpRef string, tools []*Tool) error {
+	if r == nil {
+		return fmt.Errorf("registry is nil")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.mcpTools == nil {
+		r.mcpTools = make(map[string]mcpToolEntry)
+	}
+
+	var targetMCP *MCP
+
+	// 1. Check exact qualified name
+	if res, ok := r.resources[mcpRef]; ok {
+		if m, ok := res.(*MCP); ok {
+			targetMCP = m
+		} else {
+			return fmt.Errorf("resource %q is not an MCP (kind: %s)", mcpRef, res.GetKind())
+		}
+	}
+
+	// 2. ResolveResource logic
+	if targetMCP == nil {
+		if res, ok := r.resolveResourceLocked(mcpRef); ok {
+			if m, ok := res.(*MCP); ok {
+				targetMCP = m
+			} else {
+				return fmt.Errorf("resource %q is not an MCP (kind: %s)", mcpRef, res.GetKind())
+			}
+		}
+	}
+
+	// 3. Match *MCP by short name across all resources
+	if targetMCP == nil {
+		var candidates []*MCP
+		for _, res := range r.resources {
+			if res.GetKind() == KindMCP && res.GetName() == mcpRef {
+				if m, ok := res.(*MCP); ok {
+					candidates = append(candidates, m)
+				}
+			}
+		}
+		if len(candidates) == 1 {
+			targetMCP = candidates[0]
+		} else if len(candidates) > 1 {
+			sort.Slice(candidates, func(i, j int) bool {
+				pi := NamespacePriority(candidates[i].GetNamespace())
+				pj := NamespacePriority(candidates[j].GetNamespace())
+				if pi != pj {
+					return pi > pj
+				}
+				return candidates[i].QualifiedName() < candidates[j].QualifiedName()
+			})
+			targetMCP = candidates[0]
+		}
+	}
+
+	if targetMCP == nil {
+		return fmt.Errorf("MCP resource %q not found", mcpRef)
+	}
+
+	mcpQN := targetMCP.QualifiedName()
+
+	// Remove previously registered dynamic tools for this MCP
+	if prev, ok := r.mcpTools[mcpQN]; ok {
+		for _, key := range prev.activeKeys {
+			delete(r.resources, key)
+		}
+		delete(r.mcpTools, mcpQN)
+	}
+
+	var rawCopy []*Tool
+	for _, t := range tools {
+		if t != nil {
+			rawCopy = append(rawCopy, t.DeepCopy())
+		}
+	}
+
+	activeTools, activeKeys := materializeMCPTools(targetMCP, rawCopy)
+	for _, t := range activeTools {
+		r.resources[t.QualifiedName()] = t
+	}
+
+	r.mcpTools[mcpQN] = mcpToolEntry{
+		rawTools:   rawCopy,
+		activeKeys: activeKeys,
+	}
+	return nil
+}
+
+func materializeMCPTools(targetMCP *MCP, rawTools []*Tool) (active []*Tool, activeKeys []string) {
+	for _, rawTool := range rawTools {
+		if rawTool == nil {
+			continue
+		}
+		rawName := rawTool.Metadata.Name
+		if mcpName, raw, ok := ParseMCPToolName(rawName); ok && mcpName == targetMCP.Metadata.Name {
+			rawName = raw
+		} else if strings.HasPrefix(rawName, targetMCP.Metadata.Name+"__") {
+			rawName = strings.TrimPrefix(rawName, targetMCP.Metadata.Name+"__")
+		}
+
+		if !targetMCP.AllowsTool(rawName) {
+			continue
+		}
+
+		t := rawTool.DeepCopy()
+		t.Kind = KindTool
+		t.Namespace = targetMCP.GetNamespace()
+		if t.Namespace == "" {
+			t.Namespace = NamespaceLocal
+		}
+		t.Metadata.Name = targetMCP.ToolName(rawName)
+		if t.APIVersion == "" {
+			if targetMCP.APIVersion != "" {
+				t.APIVersion = targetMCP.APIVersion
+			} else {
+				t.APIVersion = APIVersion
+			}
+		}
+		if t.Directory == "" {
+			t.Directory = targetMCP.Directory
+		}
+		if t.Path == "" {
+			t.Path = targetMCP.GetPath()
+		}
+		t.Spec.Annotations = targetMCP.EffectiveAnnotation(rawName, rawTool.Spec.Annotations)
+
+		active = append(active, t)
+		activeKeys = append(activeKeys, t.QualifiedName())
+	}
+	return active, activeKeys
+}
+
+// SetMCPTools registers dynamically discovered tools for an MCP server in the registry.
+func (s *ScopedRegistry) SetMCPTools(mcpRef string, tools []*Tool) error {
+	if s == nil || s.base == nil {
+		return fmt.Errorf("registry is nil")
+	}
+	if res, ok := s.ResolveResource(mcpRef); ok && res.GetKind() == KindMCP {
+		return s.base.SetMCPTools(res.QualifiedName(), tools)
+	}
+	return s.base.SetMCPTools(mcpRef, tools)
 }
 
 func resolveRulesForPath(resolver Resolver, targetPath string) []Rule {
@@ -2007,6 +2251,18 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		rules = append(rules, ruleMap[qn])
 	}
 
+	// 6. Resolve MCPs
+	var mcps []*MCP
+	mcpRes := resolver.ListResources(QueryOptions{Kinds: []Kind{KindMCP}, Effective: true})
+	for _, r := range mcpRes {
+		if m, ok := r.(*MCP); ok {
+			mcps = append(mcps, m)
+		}
+	}
+	sort.Slice(mcps, func(i, j int) bool {
+		return mcps[i].QualifiedName() < mcps[j].QualifiedName()
+	})
+
 	return &ResolvedAgent{
 		Agent:           ag,
 		Tools:           tools,
@@ -2014,6 +2270,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		Commands:        commands,
 		Subagents:       subagents,
 		Rules:           rules,
+		MCPs:            mcps,
 		WorkspacePolicy: wsPolicy,
 	}, nil
 }

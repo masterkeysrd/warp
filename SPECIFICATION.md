@@ -829,10 +829,13 @@ When `command` is omitted, the `Tool` represents a built-in or host-native tool 
 
 #### Command Argument Substitution & Execution
 
-When `spec.command` is defined, each element in `command` is processed as a template via `Tool.RenderCommand`:
-- Tool call input arguments (defined in `inputSchema`) are injected into the template scope as named variables (e.g. `$path` or `{{.path}}`, as well as `{{.Input.path}}`).
-- Built-in path shorthands are available: `$ToolDir`, `$ToolPath`, `$ProjectDir`, `$WorkspaceDir`.
-- The invoking agent's metadata is accessible via `{{.Agent.Name}}`.
+When `spec.command` is defined, CLI tools adhere to a strict two-part execution contract:
+
+1. **Command-line arguments (`argv`)**: Each element in `spec.command` is rendered individually via `tool.RenderCommand(opts)` and passed directly as `argv` to `exec.Command` without invoking a shell (`sh -c`), preventing shell injection:
+   - Tool call input arguments (defined in `inputSchema.properties`) are injected into the template scope as named variables (e.g. `$path` or `{{.path}}`, as well as `{{.Input.path}}`).
+   - Built-in path shorthands are available: `$ToolDir`, `$ToolPath`, `$ProjectDir`, `$WorkspaceDir`.
+   - The invoking agent's metadata is accessible via `{{.Agent.Name}}`.
+2. **Standard Input (`stdin`) & Environment (`env`)**: When executing the subprocess, the runtime serializes the raw JSON input arguments object and pipes it directly to the process's `stdin`, while merging `spec.env` into the process environment. Simple CLI tools can consume `$arg` flags from `argv` and ignore `stdin`, while tools accepting complex/nested JSON payloads or multiline text can read the structured JSON directly from `stdin`.
 
 #### `ToolAnnotation` fields
 
@@ -866,14 +869,13 @@ spec:
 
 ### 3.9 MCP
 
-An `MCP` resource describes an [Model Context Protocol](https://modelcontextprotocol.io)
-server.
+An `MCP` resource describes a [Model Context Protocol](https://modelcontextprotocol.io) server integration.
 
 #### `spec` fields
 
 | Field         | Type     | Required | Description                                     |
 |---------------|----------|:--------:|-------------------------------------------------|
-| `type`        | string   |          | Transport type: `stdio` (default), `sse`, `http`, or `streamable-http`. |
+| `type`        | string   |          | `MCPTransport` type: `stdio` (default), `sse`, `http`, or `streamable-http`. |
 | `command`     | string[] | *        | Command to start the MCP server (required if `type: stdio`). |
 | `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type` is `sse`, `http`, or `streamable-http`). |
 | `env`         | map      |          | Environment variables for the MCP server.       |
@@ -898,16 +900,75 @@ server.
 | `include` | string[] | Glob patterns for resources to expose.                         |
 | `exclude` | string[] | Glob patterns for resources to block (applied after `include`).|
 
+#### `<mcp_name>__<tool_name>` Naming & Tool Materialization
+
+Tools exposed dynamically by an MCP server are materialized into standard WARP `Tool` resources (`KindTool`) within the MCP's namespace using the double-underscore delimiter convention:
+```
+<mcp_name>__<tool_name>
+```
+
+For example, a tool named `search_repositories` provided by an MCP resource named `github` is exposed to agents, skills, and commands as `github__search_repositories`.
+
+When dynamic tools are discovered via the MCP protocol at runtime:
+1. The host materializes each tool via `mcp.NewTool(rawName, description, inputSchema, wireAnnotations)`.
+2. Materialized tools are registered into the WARP registry using `registry.SetMCPTools(mcpRef, tools)`.
+3. Registered MCP tools are cataloged alongside static tools and participate in resolution and execution.
+4. During registry reloads (`registry.Reload()`), dynamically registered tools are preserved for any MCP server that still exists in the workspace, automatically re-filtering them through reloaded policies and annotations, while dropping tools for removed MCP servers.
+
+#### Multi-Stage Filtering & Safety Annotations Pipeline
+
+Tools exposed by MCP servers pass through a multi-stage security and filtering pipeline:
+
+1. **MCP Server Policies (`mcp.spec.policies.tools`)**:
+   - `include`: Glob patterns defining allowed raw tool names (or `*`).
+   - `exclude`: Glob patterns blocking matching raw tool names (evaluated after `include`).
+   - Tools not permitted by `mcp.AllowsTool(rawName)` are discarded during materialization.
+2. **Safety Annotations & Overrides (`mcp.EffectiveAnnotation`)**:
+   - When dynamic tools report wire safety annotations, WARP establishes the effective `ToolAnnotation` by applying explicit overrides and server defaults according to the following precedence:
+     1. Per-tool override in `mcp.spec.overrides[<raw_name>]` (or `mcp.spec.overrides[<prefixed_name>]`).
+     2. Server-level default profile in `mcp.spec.annotations`.
+     3. Wire annotations provided by the remote MCP server.
+     4. `nil` (default safety posture).
+3. **Workspace Policy Filter (`workspace.spec.policies.tools`)**:
+   - The materialized tools are evaluated against workspace-wide security policies. Tools evaluated as `deny` are excluded from the catalog.
+4. **Agent Policy Filter (`agent.spec.policies.tools`)**:
+   - Tools available to an agent are evaluated against the agent's specific tool policies.
+
+#### Offline Tool Reference Validation
+
+WARP supports authoring skills, commands, and rules referencing `<mcp_name>__<tool_name>` tools offline (even before an MCP server process is spawned):
+- When validating references in `skill.spec.tools`, `command.spec.tools`, and `rule.spec.triggers.tools`, if the referenced tool is not yet materialized as a static `Tool` in the catalog, WARP inspects the prefix `<mcp_name>`.
+- If an `MCP` resource named `<mcp_name>` exists in the namespace and its declared `spec.policies.tools` allows the tool name, the reference is validated successfully.
+- If the tool is explicitly excluded by the MCP's policies, validation fails with an explanatory error.
+
+#### Command & Endpoint Templating
+
+Both `spec.command` and `spec.endpoint` support WARP templating:
+- **`MCP.RenderCommand(opts)`**: Renders each command element, expanding `$MCPDir`, `$MCPPath`, `$ProjectDir`, `$WorkspaceDir`, and `{{.Agent.Name}}`.
+- **`MCP.RenderEndpoint(opts)`**: Renders remote URLs, supporting variable substitution (e.g. `https://$HOST:8080/sse` or `{{.Project.Dir}}`).
+
 #### Full example (`mcps/sqlite.yaml`)
 
 ```yaml
 apiVersion: warp/v1alpha1
 kind: MCP
 metadata:
-  name: sqlite-mcp
+  name: sqlite
 spec:
   type: stdio
-  command: ["npx", "-y", "@modelcontextprotocol/server-sqlite", "--db", "data.db"]
+  command: ["npx", "-y", "@modelcontextprotocol/server-sqlite", "--db", "$MCPDir/data.db"]
+  annotations:
+    isReadOnly: true
+    isIdempotent: true
+  policies:
+    tools:
+      include: ["read_*", "query"]
+      exclude: ["read_secrets"]
+  overrides:
+    query:
+      isReadOnly: true
+      isDangerous: false
+      userHint: "Executes read-only query against local SQLite database"
 ```
 
 #### Full example SSE (`mcps/remote.yaml`)
@@ -919,7 +980,10 @@ metadata:
   name: remote-mcp
 spec:
   type: sse
-  endpoint: "http://localhost:8080/sse"
+  endpoint: "https://$HOST:8080/sse"
+  auth:
+    type: bearer
+    env: MCP_REMOTE_TOKEN
 ```
 
 ---
@@ -1441,7 +1505,7 @@ The reference implementation uses Go's `text/template` engine, with a preprocess
 You can use shell-style variables directly in your Markdown instructions:
 
 - **Named Variables:** `$Name`, `$DisplayName`, `${Description}`
-- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`, `$ToolDir`, `$ToolPath`
+- **Built-in Path Shorthands:** `$WorkspaceDir`, `$WorkspacePath`, `$ProjectDir`, `$ContextPath`, `$RuleDir`, `$RulePath`, `$SkillDir`, `$SkillPath`, `$CommandDir`, `$CommandPath`, `$DecisionDir`, `$DecisionPath`, `$ToolDir`, `$ToolPath`, `$MCPDir`, `$MCPPath`
 - **Positional Arguments:** `$1`, `$2` (used in `Command`, `Decision`, and `Skill` resources)
 - **Argument References:** When a resource defines arguments (e.g. `arguments: [{name: "ticker"}]` or `inputSchema`), you can use `$ticker` (or `{{.ticker}}`) to refer to the argument.
 - **Escaping:** Use `$$` to output a literal `$`.
@@ -1460,7 +1524,7 @@ To minimize boilerplate, the template context lifts common metadata and spec fie
 
 ### Scoped Template Objects
 
-When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`, `Rule.Render`, `Tool.Render`, `Tool.RenderCommand`), structured view models are injected into the template context:
+When rendering resources via their typed `Render` methods (`Workspace.Render`, `Context.Render`, `Agent.Render`, `Skill.Render`, `Command.Render`, `Decision.Render`, `Rule.Render`, `Tool.Render`, `Tool.RenderCommand`, `MCP.Render`, `MCP.RenderCommand`, `MCP.RenderEndpoint`), structured view models are injected into the template context:
 
 | Object | Fields | Description |
 |--------|--------|-------------|
@@ -1473,6 +1537,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules` | Command metadata, executing agent, context mode, argument definitions, directory, file path, effective tools, eager skills, and eager rules (directory and file path also available as `$CommandDir`, `$CommandPath`). |
 | `{{.Decision}}` | `.Name`, `.Description`, `.ArgumentHint`, `.Arguments`, `.Questions`, `.Dir`, `.Path` | Decision metadata, argument definitions, structured questions (also available as `{{.Questions}}`), directory, and file path (directory and file path also available as `$DecisionDir`, `$DecisionPath`). |
 | `{{.Tool}}` | `.Name`, `.Description`, `.Dir`, `.Path` | Tool metadata, directory, and file path (directory and file path also available as `$ToolDir`, `$ToolPath`). |
+| `{{.MCP}}` | `.Name`, `.Description`, `.Type`, `.Endpoint`, `.Dir`, `.Path` | MCP server metadata, transport type, endpoint URL, directory, and file path (directory and file path also available as `$MCPDir`, `$MCPPath`). |
 
 ### Advanced Templating
 

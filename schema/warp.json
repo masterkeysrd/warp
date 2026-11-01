@@ -570,6 +570,13 @@
           "type": "string",
           "description": "Human-friendly label (e.g., \"GPT-4\")"
         },
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Model aliases for @ references"
+        },
         "limits": {
           "$ref": "#/$defs/ProviderModelLimits",
           "description": "Context, output token, and vector dimension limits"
@@ -1118,6 +1125,12 @@
         "defaultModels": {
           "$ref": "#/$defs/ModelDefaults"
         },
+        "modelAliases": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
         "defaultAgent": {
           "type": "string"
         },
@@ -1274,6 +1287,12 @@
                   },
                   "defaultModels": {
                     "$ref": "#/$defs/ModelDefaults"
+                  },
+                  "modelAliases": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
                   },
                   "defaultAgent": {
                     "type": "string"
@@ -2062,6 +2081,13 @@
                   "label": {
                     "type": "string",
                     "description": "Human-friendly label (e.g., \"GPT-4\")"
+                  },
+                  "aliases": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Model aliases for @ references"
                   },
                   "limits": {
                     "$ref": "#/$defs/ProviderModelLimits",

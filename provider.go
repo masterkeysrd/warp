@@ -1,6 +1,9 @@
 package warp
 
-import "maps"
+import (
+	"maps"
+	"strings"
+)
 
 // ModelProvider is a warp resource that describes an LLM provider configuration.
 type ModelProvider struct {
@@ -31,6 +34,18 @@ func (in *ModelProvider) findModel(ref string) *ProviderModel {
 	for i := range in.Spec.Models {
 		if m := &in.Spec.Models[i]; m.ID == ref || (m.Name != "" && m.Name == ref) {
 			return m
+		}
+	}
+	return nil
+}
+
+func (in *ModelProvider) findModelByAlias(alias string) *ProviderModel {
+	if in == nil || alias == "" {
+		return nil
+	}
+	for i := range in.Spec.Models {
+		if in.Spec.Models[i].hasAlias(alias) {
+			return &in.Spec.Models[i]
 		}
 	}
 	return nil
@@ -111,12 +126,13 @@ func (in *ProviderAuth) DeepCopy() *ProviderAuth {
 
 // ProviderModel describes a specific model available from a provider.
 type ProviderModel struct {
-	ID           string                     `yaml:"id"`                     // Unique model ID (e.g., "gpt-4")
-	Name         string                     `yaml:"name"`                   // Model name (e.g., "gpt-4")
-	Label        string                     `yaml:"label"`                  // Human-friendly label (e.g., "GPT-4")
-	Limits       ProviderModelLimits        `yaml:"limits"`                 // Context, output token, and vector dimension limits
-	Capabilities *ProviderModelCapabilities `yaml:"capabilities,omitempty"` // Supported features and configuration boundaries
-	Cost         *ProviderModelCost         `yaml:"cost,omitempty"`         // Token pricing and conditional tiers
+	ID           string                     `yaml:"id"`                                              // Unique model ID (e.g., "gpt-4")
+	Name         string                     `yaml:"name"`                                            // Model name (e.g., "gpt-4")
+	Label        string                     `yaml:"label"`                                           // Human-friendly label (e.g., "GPT-4")
+	Aliases      []string                   `yaml:"aliases,omitempty,flow" json:"aliases,omitempty"` // Model aliases for @ references
+	Limits       ProviderModelLimits        `yaml:"limits"`                                          // Context, output token, and vector dimension limits
+	Capabilities *ProviderModelCapabilities `yaml:"capabilities,omitempty"`                          // Supported features and configuration boundaries
+	Cost         *ProviderModelCost         `yaml:"cost,omitempty"`                                  // Token pricing and conditional tiers
 }
 
 func (in *ProviderModel) DeepCopy() *ProviderModel {
@@ -125,6 +141,10 @@ func (in *ProviderModel) DeepCopy() *ProviderModel {
 	}
 	out := new(ProviderModel)
 	*out = *in
+	if in.Aliases != nil {
+		out.Aliases = make([]string, len(in.Aliases))
+		copy(out.Aliases, in.Aliases)
+	}
 	if in.Capabilities != nil {
 		out.Capabilities = in.Capabilities.DeepCopy()
 	}
@@ -132,6 +152,40 @@ func (in *ProviderModel) DeepCopy() *ProviderModel {
 		out.Cost = in.Cost.DeepCopy()
 	}
 	return out
+}
+
+func normalizeAliasName(s string) string {
+	return strings.TrimPrefix(s, "@")
+}
+
+func isAliasRef(ref string) (providerPrefix string, aliasName string, ok bool) {
+	if after, ok := strings.CutPrefix(ref, "@"); ok {
+		name := after
+		if name != "" {
+			return "", name, true
+		}
+		return "", "", false
+	}
+	if before, after, found := strings.Cut(ref, "/"); found && strings.HasPrefix(after, "@") {
+		name := strings.TrimPrefix(after, "@")
+		if before != "" && name != "" {
+			return before, name, true
+		}
+	}
+	return "", "", false
+}
+
+func (in *ProviderModel) hasAlias(alias string) bool {
+	if in == nil || alias == "" {
+		return false
+	}
+	norm := normalizeAliasName(alias)
+	for _, a := range in.Aliases {
+		if normalizeAliasName(a) == norm {
+			return true
+		}
+	}
+	return false
 }
 
 // ProviderModelLimits defines the token and vector dimension limits for a specific model.

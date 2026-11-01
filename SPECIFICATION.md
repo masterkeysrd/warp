@@ -112,6 +112,7 @@ created automatically with its root set to `$CWD`.
 | `defaultProvider` | string   |          |          | Provider to use when an agent omits `spec.models`. May reference either a `ModelProvider.metadata.name` or `ModelProvider.spec.type`. |
 | `defaultModel`    | string   |          |          | Default completion model to use when an agent omits `spec.models`.                                                            |
 | `defaultModels`   | object   |          | —        | Role-specific default models (`completion`, `decision`, `embedding`) across the workspace.                                    |
+| `modelAliases`    | map      |          | `{}`     | Map of shorthand aliases (e.g. `fast`, `@default`) to target provider-qualified or unqualified model references or aliases.  |
 | `defaultAgent`    | string   |          |          | Default agent to use for this workspace if none is specified.                                                                 |
 | `plugins`         | object[] |          | `[]`     | External repositories to load as plugins into this workspace.                                                                 |
 | `policies`        | object   |          | —        | Security and access policies (e.g., tool execution restrictions).                                                             |
@@ -136,6 +137,14 @@ When resolving the prioritized model list for a capability role (`completion`, `
 - A model reference `<prefix>/<rest>` is treated as already provider-qualified when `<prefix>` matches a registered `ModelProvider` (canonicalizing `<rest>` to `<model.id>` if `<rest>` matches a declared model's `id` or `name`), or when `<prefix>` is not a registered provider and the full string does not match any model `id` or `name` in any effective `ModelProvider` (preserving pass-through references).
 - Model references that are not prefixed by a registered provider—including bare model IDs, model `name` aliases (e.g., `qwen3.8-27b-mlx-serve-4bit`), and model IDs containing `/` (e.g., `ddalcu/Qwen3.8-27B-MLX-Serve-4bit`)—are matched against effective `ModelProvider` catalogs (`defaultProvider` first) by `id` or `name` and canonicalized to `<provider>/<model.id>`. Unlisted bare model names fall back to `<defaultProvider>/<model>` when `workspace.spec.defaultProvider` is configured.
 - `ResolveModels(role, explicit...)` returns `[]ResolvedModel` (each carrying `Provider`, `Model`, `ModelID`, and `QualifiedID`), and `ResolveModel(role, explicit...)` returns `(*ResolvedModel, bool)` for the first candidate backed by a registered `ModelProvider`.
+
+**Model Aliases (`@<alias>` and `<provider>/@<alias>`):**
+- **Syntax**: An alias reference starts with `@` either as a bare alias (e.g., `@fast`, `@default`) or scoped to a provider (e.g., `anthropic/@fast`, `anthropic/@default`). References without `@` only match model IDs and names; they never match aliases.
+- **Provider-Scoped Alias (`<provider>/@<alias>`)**: Resolves against `<provider>`. If `<alias>` is `default`, it resolves to that provider's default model for the requested role (`defaultModels.<role>`, falling back to `defaultModel` for completion, an `@default` alias defined on the provider, or the first capability-matching model). If `<alias>` is any other name, it resolves to the model in that provider declaring the matching alias in its `aliases` list.
+- **Bare Alias (`@<alias>`)**:
+  - If `<alias>` is `default`, it checks `workspace.spec.modelAliases["default"]` (or `"@default"`). If unset, it resolves to the standard Workspace -> Provider role-default hierarchy for that role.
+  - For any other alias name, it first checks workspace-level overrides in `workspace.spec.modelAliases` (matching both `alias` and `@alias`). If mapped, the target reference is recursively resolved.
+  - If not overridden in the workspace, effective `ModelProvider` catalogs are searched in priority order (`defaultProvider` first). In `ResolveModels`, all providers declaring the matching alias in their models' `aliases` list are included. In `ResolveModel`, the first matching provider model is returned.
 
 #### `WorkspacePlugin` fields
 
@@ -197,6 +206,9 @@ spec:
     completion: anthropic/claude-3-7-sonnet
     decision: typesafe/jev-latest
     embedding: openai/text-embedding-3-small
+  modelAliases:
+    fast: anthropic/claude-3-5-haiku
+    smart: anthropic/claude-3-7-sonnet
 ---
 ```
 
@@ -653,6 +665,7 @@ endpoints and default models.
 | `id`           | string   | ✅       | Unique model ID (e.g., `gpt-4`).                |
 | `name`         | string   | ✅       | Model name (e.g., `gpt-4`).                     |
 | `label`        | string   | ✅       | Human-friendly label (e.g., `GPT-4`).           |
+| `aliases`      | string[] |          | Shorthand alias names (e.g., `["fast", "smart"]`) callable via `@<alias>` or `<provider>/@<alias>`. |
 | `limits`       | object   | ✅       | Context, output token, and vector dimension limits. |
 | `capabilities` | object   |          | Supported features and configuration boundaries.|
 | `cost`         | object   |          | Token pricing and conditional tiers.            |
@@ -739,6 +752,7 @@ spec:
     - id: claude-3-7-sonnet
       name: claude-3-7-sonnet-20250219
       label: Claude 3.7 Sonnet
+      aliases: ["smart"]
       capabilities:
         tools: true
         modalities:
@@ -1187,7 +1201,7 @@ loaded Workspace.
 | All `spec.commands` paths resolve | A listed path does not match any loaded `Command` in the resolution hierarchy. |
 | All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
 | All `spec.rules` paths resolve    | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
-| Declared `spec.models` support completion | A listed model resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
+| Declared `spec.models` resolve and support completion | When providers exist, a listed model or alias reference does not resolve to any declared model or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
 
 ### 7.3 Skill-specific
 
@@ -1200,7 +1214,9 @@ loaded Workspace.
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | All `spec.projects` paths exist     | A listed path (when not `"*"`) does not exist on the filesystem. |
-| `spec.defaultModels` capabilities match role | A model in `defaultModels` resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
+| Valid `spec.modelAliases`           | An alias entry has an empty key or an empty target model reference. |
+| `spec.defaultModel` resolves and supports completion | When providers exist, `defaultModel` does not resolve or resolves to a `ProviderModel` lacking completion capability. |
+| `spec.defaultModels` capabilities match role | When providers exist, a model in `defaultModels` does not resolve or resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
 
 ### 7.5 Plugin-specific
 
@@ -1217,7 +1233,7 @@ loaded Workspace.
 | Valid probability bounds            | `threshold` or `minConfidence` is outside `[0.0, 1.0]`.        |
 | Choice options                      | A `choice` question has fewer than 2 `options` or an option with an empty `value`. |
 | Score levels                        | A `score` question has fewer than 2 `levels` or a level with an empty `label`. |
-| Declared `spec.models` support decision | A listed model resolves to a `ProviderModel` whose `capabilities.decision` is `false`. |
+| Declared `spec.models` support decision | When providers exist, a listed model or alias reference does not resolve or resolves to a `ProviderModel` whose `capabilities.decision` is `false`. |
 
 ### 7.7 Rule-specific
 
@@ -1225,6 +1241,14 @@ loaded Workspace.
 |-------------------------------------|----------------------------------------------------------------|
 | Valid `triggers.decision` reference | A declared decision reference does not match any loaded `Decision` in the resolution hierarchy. |
 | Valid `triggers.tools` references   | A declared tool reference does not match any loaded `Tool` or `Toolkit` in the resolution hierarchy. |
+
+### 7.8 ModelProvider-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Valid model `aliases`               | Any model alias in `spec.models[].aliases` is empty.           |
+| Unique model `aliases` per provider | A model alias is defined more than once within the same `ModelProvider`. |
+| No alias collision with model IDs or names | A model alias matches the `id` or `name` of a different model in the same `ModelProvider`. |
 
 ---
 

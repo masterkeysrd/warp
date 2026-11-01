@@ -1,6 +1,9 @@
 package warp
 
-import "path/filepath"
+import (
+	"maps"
+	"path/filepath"
+)
 
 // WorkspaceRenderOptions holds options for rendering workspace instructions.
 type WorkspaceRenderOptions struct {
@@ -88,7 +91,8 @@ type WorkspaceDefSpec struct {
 	Projects        []string          `yaml:"projects,omitempty,flow"`
 	DefaultProvider string            `yaml:"defaultProvider,omitempty"`
 	DefaultModel    string            `yaml:"defaultModel,omitempty"`
-	DefaultModels   *ModelDefaults    `yaml:"defaultModels,omitempty"`
+	DefaultModels   *ModelDefaults    `yaml:"defaultModels,omitempty" json:"defaultModels,omitempty"`
+	ModelAliases    map[string]string `yaml:"modelAliases,omitempty" json:"modelAliases,omitempty"`
 	DefaultAgent    string            `yaml:"defaultAgent,omitempty"`
 	Plugins         []WorkspacePlugin `yaml:"plugins,omitempty"`
 	Policies        *Policies         `yaml:"policies,omitempty"`
@@ -127,6 +131,10 @@ func (in *WorkspaceDefSpec) DeepCopy() *WorkspaceDefSpec {
 	}
 	if in.DefaultModels != nil {
 		out.DefaultModels = in.DefaultModels.DeepCopy()
+	}
+	if in.ModelAliases != nil {
+		out.ModelAliases = make(map[string]string, len(in.ModelAliases))
+		maps.Copy(out.ModelAliases, in.ModelAliases)
 	}
 	if in.Plugins != nil {
 		out.Plugins = make([]WorkspacePlugin, len(in.Plugins))

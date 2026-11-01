@@ -2880,3 +2880,297 @@ func TestResolvedAgent_ToolsForSkill(t *testing.T) {
 		t.Errorf("expected sql-read tool, got %s", skillTools[0].Metadata.Name)
 	}
 }
+
+func TestModelAliases_Resolution(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	anthropic := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "anthropic"},
+		},
+		Spec: ModelProviderSpec{
+			DefaultModel: "claude-3-5-sonnet",
+			Models: []ProviderModel{
+				{
+					ID:           "claude-3-5-haiku",
+					Name:         "haiku",
+					Aliases:      []string{"fast"},
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal, Decision: &falseVal},
+				},
+				{
+					ID:           "claude-3-5-sonnet",
+					Name:         "sonnet",
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal, Decision: &trueVal},
+				},
+			},
+		},
+	}
+
+	openai := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "openai"},
+		},
+		Spec: ModelProviderSpec{
+			DefaultModel: "gpt-4o",
+			Models: []ProviderModel{
+				{
+					ID:           "gpt-4o-mini",
+					Name:         "mini",
+					Aliases:      []string{"@fast"}, // test @ prefix normalization in Aliases
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal, Decision: &falseVal},
+				},
+				{
+					ID:           "gpt-4o",
+					Name:         "gpt-4o",
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal, Decision: &trueVal},
+				},
+			},
+		},
+	}
+
+	wsDef := &WorkspaceDef{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindWorkspace,
+			Directory:  "/workspace",
+			Metadata:   Metadata{Name: "my-ws"},
+		},
+		Spec: WorkspaceDefSpec{
+			DefaultProvider: "anthropic",
+		},
+	}
+
+	reg := NewRegistry(nil)
+	reg.workspace = &Workspace{Def: wsDef, RootPath: "/workspace"}
+	reg.Set(anthropic.QualifiedName(), anthropic)
+	reg.Set(openai.QualifiedName(), openai)
+
+	// 1. Unqualified @fast: returns anthropic (defaultProvider) first, then openai
+	fastModels := reg.ResolveModels(ModelRoleCompletion, "@fast")
+	if len(fastModels) != 2 {
+		t.Fatalf("expected 2 models for @fast, got %d: %v", len(fastModels), fastModels)
+	}
+	if fastModels[0].Provider.Metadata.Name != "anthropic" || fastModels[0].ModelID != "claude-3-5-haiku" {
+		t.Errorf("expected anthropic/claude-3-5-haiku first, got %s/%s", fastModels[0].Provider.Metadata.Name, fastModels[0].ModelID)
+	}
+	if fastModels[1].Provider.Metadata.Name != "openai" || fastModels[1].ModelID != "gpt-4o-mini" {
+		t.Errorf("expected openai/gpt-4o-mini second, got %s/%s", fastModels[1].Provider.Metadata.Name, fastModels[1].ModelID)
+	}
+
+	singleFast, ok := reg.ResolveModel(ModelRoleCompletion, "@fast")
+	if !ok || singleFast.Provider.Metadata.Name != "anthropic" || singleFast.ModelID != "claude-3-5-haiku" {
+		t.Errorf("expected ResolveModel(@fast) to return anthropic/claude-3-5-haiku, got ok=%v %v", ok, singleFast)
+	}
+
+	// 2. Provider-scoped aliases: anthropic/@fast and openai/@fast
+	anthropicFast, ok := reg.ResolveModel(ModelRoleCompletion, "anthropic/@fast")
+	if !ok || anthropicFast.Provider.Metadata.Name != "anthropic" || anthropicFast.ModelID != "claude-3-5-haiku" {
+		t.Errorf("expected anthropic/@fast to resolve, got ok=%v %v", ok, anthropicFast)
+	}
+	openaiFast, ok := reg.ResolveModel(ModelRoleCompletion, "openai/@fast")
+	if !ok || openaiFast.Provider.Metadata.Name != "openai" || openaiFast.ModelID != "gpt-4o-mini" {
+		t.Errorf("expected openai/@fast to resolve, got ok=%v %v", ok, openaiFast)
+	}
+
+	// 3. Workspace modelAliases override: @fast -> openai/gpt-4o-mini
+	wsDef.Spec.ModelAliases = map[string]string{
+		"fast": "openai/@fast",
+	}
+	overriddenFast, ok := reg.ResolveModel(ModelRoleCompletion, "@fast")
+	if !ok || overriddenFast.Provider.Metadata.Name != "openai" || overriddenFast.ModelID != "gpt-4o-mini" {
+		t.Errorf("expected workspace alias override to openai/@fast, got ok=%v %v", ok, overriddenFast)
+	}
+	// Reset alias
+	wsDef.Spec.ModelAliases = nil
+
+	// 4. Built-in magic alias @default and <provider>/@default
+	// Fallback list: ["@fast", "@default"]
+	fallbackList := reg.ResolveModels(ModelRoleCompletion, "@fast", "@default")
+	if len(fallbackList) < 3 {
+		t.Fatalf("expected at least 3 models in fallback list [@fast, @default], got %d", len(fallbackList))
+	}
+	if fallbackList[0].ModelID != "claude-3-5-haiku" {
+		t.Errorf("expected @fast first, got %s", fallbackList[0].ModelID)
+	}
+
+	// Provider-scoped @default: ["openai/@default", "anthropic/@default"]
+	provDefaults := reg.ResolveModels(ModelRoleCompletion, "openai/@default", "anthropic/@default")
+	if len(provDefaults) != 2 {
+		t.Fatalf("expected 2 provider defaults, got %d", len(provDefaults))
+	}
+	if provDefaults[0].Provider.Metadata.Name != "openai" || provDefaults[0].ModelID != "gpt-4o" {
+		t.Errorf("expected openai/gpt-4o first, got %s/%s", provDefaults[0].Provider.Metadata.Name, provDefaults[0].ModelID)
+	}
+	if provDefaults[1].Provider.Metadata.Name != "anthropic" || provDefaults[1].ModelID != "claude-3-5-sonnet" {
+		t.Errorf("expected anthropic/claude-3-5-sonnet second, got %s/%s", provDefaults[1].Provider.Metadata.Name, provDefaults[1].ModelID)
+	}
+}
+
+func TestModelAliases_Validation(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	prov := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "anthropic"},
+		},
+		Spec: ModelProviderSpec{
+			Models: []ProviderModel{
+				{
+					ID:           "claude-3-5-haiku",
+					Aliases:      []string{"fast"},
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal, Decision: &falseVal},
+				},
+				{
+					ID:           "claude-3-5-sonnet",
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal, Decision: &trueVal},
+				},
+			},
+		},
+	}
+
+	// 1. Unknown bare @alias
+	reg1 := NewRegistry(nil)
+	reg1.Set(prov.QualifiedName(), prov)
+	badAgent1 := agentWithSpec(NamespaceWorkspace, "bad-agent-1", AgentSpec{
+		Models: []string{"@non-existent"},
+	})
+	reg1.Set(badAgent1.QualifiedName(), badAgent1)
+	if err := reg1.Validate(); err == nil || !strings.Contains(err.Error(), "unknown model alias \"@non-existent\"") {
+		t.Errorf("expected unknown model alias error, got %v", err)
+	}
+
+	// 2. Unknown provider/@alias: missing provider
+	reg2 := NewRegistry(nil)
+	reg2.Set(prov.QualifiedName(), prov)
+	badAgent2 := agentWithSpec(NamespaceWorkspace, "bad-agent-2", AgentSpec{
+		Models: []string{"missing-prov/@fast"},
+	})
+	reg2.Set(badAgent2.QualifiedName(), badAgent2)
+	if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "references missing provider: missing-prov") {
+		t.Errorf("expected missing provider error, got %v", err)
+	}
+
+	// 2b. Unknown provider/@alias: provider exists, but missing alias
+	reg2b := NewRegistry(nil)
+	reg2b.Set(prov.QualifiedName(), prov)
+	badAgent2b := agentWithSpec(NamespaceWorkspace, "bad-agent-2b", AgentSpec{
+		Models: []string{"anthropic/@slow"},
+	})
+	reg2b.Set(badAgent2b.QualifiedName(), badAgent2b)
+	if err := reg2b.Validate(); err == nil || !strings.Contains(err.Error(), "has no model with alias \"slow\"") {
+		t.Errorf("expected provider has no model with alias error, got %v", err)
+	}
+
+	// 3. Duplicate alias within a provider
+	reg3 := NewRegistry(nil)
+	dupProv := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "dup-prov"},
+		},
+		Spec: ModelProviderSpec{
+			Models: []ProviderModel{
+				{ID: "m1", Aliases: []string{"fast"}},
+				{ID: "m2", Aliases: []string{"@fast"}},
+			},
+		},
+	}
+	reg3.Set(dupProv.QualifiedName(), dupProv)
+	if err := reg3.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate alias") {
+		t.Errorf("expected duplicate alias error, got %v", err)
+	}
+
+	// 4. Alias collides with another model's ID or Name in the same provider
+	reg4 := NewRegistry(nil)
+	collideProv := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "collide-prov"},
+		},
+		Spec: ModelProviderSpec{
+			Models: []ProviderModel{
+				{ID: "gpt-4"},
+				{ID: "m2", Aliases: []string{"gpt-4"}},
+			},
+		},
+	}
+	reg4.Set(collideProv.QualifiedName(), collideProv)
+	if err := reg4.Validate(); err == nil || !strings.Contains(err.Error(), "collides with model \"gpt-4\"") {
+		t.Errorf("expected alias collision error, got %v", err)
+	}
+
+	// 5. Capability mismatch on an @alias
+	reg5 := NewRegistry(nil)
+	reg5.Set(prov.QualifiedName(), prov)
+	badDec := &Decision{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindDecision,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "test-dec"},
+		},
+		Spec: DecisionSpec{
+			Models: []string{"@fast"}, // @fast is haiku which has Decision: false
+			Questions: []DecisionQuestion{
+				{Name: "q1", Type: DecisionQuestionPredicate},
+			},
+		},
+	}
+	reg5.Set(badDec.QualifiedName(), badDec)
+	if err := reg5.Validate(); err == nil || !strings.Contains(err.Error(), "does not support decision capability") {
+		t.Errorf("expected capability mismatch error on @alias, got %v", err)
+	}
+
+	// 6. Empty alias key or target in workspace modelAliases
+	reg6 := NewRegistry(nil)
+	wsBadAlias := &WorkspaceDef{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindWorkspace,
+			Directory:  "/workspace",
+			Metadata:   Metadata{Name: "ws"},
+		},
+		Spec: WorkspaceDefSpec{
+			ModelAliases: map[string]string{
+				"@": "target",
+			},
+		},
+	}
+	reg6.workspace = &Workspace{Def: wsBadAlias}
+	if err := reg6.Validate(); err == nil || !strings.Contains(err.Error(), "alias key cannot be empty") {
+		t.Errorf("expected alias key cannot be empty error, got %v", err)
+	}
+
+	wsBadTarget := &WorkspaceDef{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindWorkspace,
+			Directory:  "/workspace",
+			Metadata:   Metadata{Name: "ws"},
+		},
+		Spec: WorkspaceDefSpec{
+			ModelAliases: map[string]string{
+				"fast": "  ",
+			},
+		},
+	}
+	reg6.workspace = &Workspace{Def: wsBadTarget}
+	if err := reg6.Validate(); err == nil || !strings.Contains(err.Error(), "target model cannot be empty") {
+		t.Errorf("expected target model cannot be empty error, got %v", err)
+	}
+}

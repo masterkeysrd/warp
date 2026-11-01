@@ -320,6 +320,26 @@ func (r *Registry) Validate() error {
 				return fmt.Errorf("workspace defaultProvider references missing provider: %s", dp)
 			}
 		}
+		if r.workspace.Def.Spec.ModelAliases != nil {
+			for k, v := range r.workspace.Def.Spec.ModelAliases {
+				if normalizeAliasName(k) == "" {
+					return fmt.Errorf("workspace modelAliases: alias key cannot be empty")
+				}
+				if strings.TrimSpace(v) == "" {
+					return fmt.Errorf("workspace modelAliases %q: target model cannot be empty", k)
+				}
+			}
+		}
+		if dm := r.workspace.Def.Spec.DefaultModel; dm != "" && len(r.findProvidersLocked()) > 0 {
+			if _, _, isAlias := isAliasRef(dm); isAlias {
+				if err := r.validateAliasModelRefLocked("workspace defaultModel", dm, ModelRoleCompletion); err != nil {
+					return err
+				}
+			}
+			if m := r.findDeclaredModelForRoleLocked(dm, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
+				return fmt.Errorf("workspace defaultModel %q does not support completion capability", dm)
+			}
+		}
 		if dm := r.workspace.Def.Spec.DefaultModels; dm != nil {
 			if err := r.validateModelDefaultsLocked("workspace", dm); err != nil {
 				return err
@@ -362,7 +382,14 @@ func (r *Registry) Validate() error {
 				}
 			}
 			for _, mRef := range agent.Spec.Models {
-				if m := r.findDeclaredModelLocked(mRef); m != nil && !m.Capabilities.SupportsCompletion() {
+				if len(r.findProvidersLocked()) > 0 {
+					if _, _, isAlias := isAliasRef(mRef); isAlias {
+						if err := r.validateAliasModelRefLocked(fmt.Sprintf("agent %s", name), mRef, ModelRoleCompletion); err != nil {
+							return err
+						}
+					}
+				}
+				if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
 					return fmt.Errorf("agent %s: model %q does not support completion capability", name, mRef)
 				}
 			}
@@ -420,6 +447,31 @@ func (r *Registry) Validate() error {
 			}
 		}
 		if mp, ok := res.(*ModelProvider); ok {
+			seenAliases := make(map[string]string)
+			modelIDsAndNames := make(map[string]string)
+			for _, m := range mp.Spec.Models {
+				if m.ID != "" {
+					modelIDsAndNames[normalizeAliasName(m.ID)] = m.ID
+				}
+				if m.Name != "" {
+					modelIDsAndNames[normalizeAliasName(m.Name)] = m.ID
+				}
+			}
+			for _, m := range mp.Spec.Models {
+				for _, a := range m.Aliases {
+					norm := normalizeAliasName(a)
+					if norm == "" {
+						return fmt.Errorf("provider %s model %q: alias cannot be empty", name, m.ID)
+					}
+					if existingID, exists := seenAliases[norm]; exists {
+						return fmt.Errorf("provider %s: duplicate alias %q on models %q and %q", name, a, existingID, m.ID)
+					}
+					seenAliases[norm] = m.ID
+					if collidingID, exists := modelIDsAndNames[norm]; exists && collidingID != m.ID {
+						return fmt.Errorf("provider %s: alias %q on model %q collides with model %q", name, a, m.ID, collidingID)
+					}
+				}
+			}
 			if mp.Spec.DefaultModels != nil {
 				if err := validateProviderDefaultModels(name, mp); err != nil {
 					return err
@@ -437,6 +489,18 @@ func (r *Registry) Validate() error {
 			}
 		}
 		if cmd, ok := res.(*Command); ok {
+			for _, mRef := range cmd.Spec.Models {
+				if len(r.findProvidersLocked()) > 0 {
+					if _, _, isAlias := isAliasRef(mRef); isAlias {
+						if err := r.validateAliasModelRefLocked(fmt.Sprintf("command %s", name), mRef, ModelRoleCompletion); err != nil {
+							return err
+						}
+					}
+				}
+				if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
+					return fmt.Errorf("command %s: model %q does not support completion capability", name, mRef)
+				}
+			}
 			for _, toolRef := range cmd.Spec.Tools {
 				if hasGlobMeta(toolRef) {
 					continue
@@ -548,7 +612,14 @@ func (r *Registry) validateDecisionLocked(name string, dec *Decision) error {
 		}
 	}
 	for _, mRef := range dec.Spec.Models {
-		if m := r.findDeclaredModelLocked(mRef); m != nil && !m.Capabilities.SupportsDecision() {
+		if len(r.findProvidersLocked()) > 0 {
+			if _, _, isAlias := isAliasRef(mRef); isAlias {
+				if err := r.validateAliasModelRefLocked(fmt.Sprintf("decision %s", name), mRef, ModelRoleDecision); err != nil {
+					return err
+				}
+			}
+		}
+		if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleDecision); m != nil && !m.Capabilities.SupportsDecision() {
 			return fmt.Errorf("decision %s: model %q does not support decision capability", name, mRef)
 		}
 	}
@@ -575,31 +646,38 @@ func (r *Registry) validateRuleLocked(name string, rule *Rule) error {
 
 func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) error {
 	hasProviders := len(r.findProvidersLocked()) > 0
-	checkRef := func(role, ref string, checkCap func(*ProviderModelCapabilities) bool) error {
+	checkRef := func(role ModelRole, roleStr, ref string, checkCap func(*ProviderModelCapabilities) bool) error {
 		if ref == "" {
 			return nil
 		}
-		m := r.findDeclaredModelLocked(ref)
+		if hasProviders {
+			if _, _, isAlias := isAliasRef(ref); isAlias {
+				if err := r.validateAliasModelRefLocked(fmt.Sprintf("%s defaultModels.%s", scope, roleStr), ref, role); err != nil {
+					return err
+				}
+			}
+		}
+		m := r.findDeclaredModelForRoleLocked(ref, role)
 		if hasProviders && m == nil {
 			if before, _, ok := strings.Cut(ref, "/"); ok {
 				prov := before
 				if !r.hasProviderLocked(prov) {
-					return fmt.Errorf("%s defaultModels.%s references missing provider: %s", scope, role, prov)
+					return fmt.Errorf("%s defaultModels.%s references missing provider: %s", scope, roleStr, prov)
 				}
 			}
 		}
 		if m != nil && !checkCap(m.Capabilities) {
-			return fmt.Errorf("%s defaultModels.%s %q does not support %s capability", scope, role, ref, role)
+			return fmt.Errorf("%s defaultModels.%s %q does not support %s capability", scope, roleStr, ref, roleStr)
 		}
 		return nil
 	}
-	if err := checkRef("completion", dm.Completion, (*ProviderModelCapabilities).SupportsCompletion); err != nil {
+	if err := checkRef(ModelRoleCompletion, "completion", dm.Completion, (*ProviderModelCapabilities).SupportsCompletion); err != nil {
 		return err
 	}
-	if err := checkRef("decision", dm.Decision, (*ProviderModelCapabilities).SupportsDecision); err != nil {
+	if err := checkRef(ModelRoleDecision, "decision", dm.Decision, (*ProviderModelCapabilities).SupportsDecision); err != nil {
 		return err
 	}
-	if err := checkRef("embedding", dm.Embedding, (*ProviderModelCapabilities).SupportsEmbedding); err != nil {
+	if err := checkRef(ModelRoleEmbedding, "embedding", dm.Embedding, (*ProviderModelCapabilities).SupportsEmbedding); err != nil {
 		return err
 	}
 	return nil
@@ -610,18 +688,24 @@ func validateProviderDefaultModels(name string, mp *ModelProvider) error {
 	if dm == nil || len(mp.Spec.Models) == 0 {
 		return nil
 	}
+	findModelOrAlias := func(ref string) *ProviderModel {
+		if _, alias, ok := isAliasRef(ref); ok {
+			return mp.findModelByAlias(alias)
+		}
+		return mp.findModel(ref)
+	}
 	if dm.Completion != "" {
-		if m := mp.findModel(dm.Completion); m != nil && !m.Capabilities.SupportsCompletion() {
+		if m := findModelOrAlias(dm.Completion); m != nil && !m.Capabilities.SupportsCompletion() {
 			return fmt.Errorf("provider %s: defaultModels.completion %q does not support completion capability", name, dm.Completion)
 		}
 	}
 	if dm.Decision != "" {
-		if m := mp.findModel(dm.Decision); m != nil && !m.Capabilities.SupportsDecision() {
+		if m := findModelOrAlias(dm.Decision); m != nil && !m.Capabilities.SupportsDecision() {
 			return fmt.Errorf("provider %s: defaultModels.decision %q does not support decision capability", name, dm.Decision)
 		}
 	}
 	if dm.Embedding != "" {
-		if m := mp.findModel(dm.Embedding); m != nil && !m.Capabilities.SupportsEmbedding() {
+		if m := findModelOrAlias(dm.Embedding); m != nil && !m.Capabilities.SupportsEmbedding() {
 			return fmt.Errorf("provider %s: defaultModels.embedding %q does not support embedding capability", name, dm.Embedding)
 		}
 	}
@@ -629,9 +713,108 @@ func validateProviderDefaultModels(name string, mp *ModelProvider) error {
 }
 
 func (r *Registry) findDeclaredModelLocked(ref string) *ProviderModel {
+	return r.findDeclaredModelForRoleLocked(ref, ModelRoleCompletion)
+}
+
+func (r *Registry) findDeclaredModelForRoleLocked(ref string, role ModelRole) *ProviderModel {
 	if ref == "" {
 		return nil
 	}
+	if provPrefix, aliasName, ok := isAliasRef(ref); ok {
+		if provPrefix != "" {
+			for _, mp := range r.findProvidersLocked() {
+				if mp.matchesRef(provPrefix) {
+					if aliasName == "default" {
+						if provModel := mp.defaultForRole(role); provModel != "" {
+							return r.findDeclaredModelForRoleLocked(provModel, role)
+						}
+						if m := mp.findModelByAlias("default"); m != nil {
+							return m
+						}
+						for i := range mp.Spec.Models {
+							m := &mp.Spec.Models[i]
+							if m.ID != "" && m.Capabilities.supportsRole(role) {
+								return m
+							}
+						}
+						if len(mp.Spec.Models) > 0 {
+							return &mp.Spec.Models[0]
+						}
+						return nil
+					}
+					return mp.findModelByAlias(aliasName)
+				}
+			}
+			return nil
+		}
+
+		// Bare alias: @<alias>
+		if aliasName == "default" {
+			if r.workspace != nil && r.workspace.Def != nil && r.workspace.Def.Spec.ModelAliases != nil {
+				target := r.workspace.Def.Spec.ModelAliases["default"]
+				if target == "" {
+					target = r.workspace.Def.Spec.ModelAliases["@default"]
+				}
+				if target != "" && target != "@default" && target != "default" {
+					return r.findDeclaredModelForRoleLocked(target, role)
+				}
+			}
+			if r.workspace != nil && r.workspace.Def != nil {
+				wsModel := r.workspace.Def.Spec.DefaultModels.ForRole(role)
+				if wsModel == "" && role == ModelRoleCompletion {
+					wsModel = r.workspace.Def.Spec.DefaultModel
+				}
+				if wsModel != "" && wsModel != "@default" && wsModel != "default" {
+					return r.findDeclaredModelForRoleLocked(wsModel, role)
+				}
+			}
+			var defaultProv string
+			if r.workspace != nil && r.workspace.Def != nil {
+				defaultProv = r.workspace.Def.Spec.DefaultProvider
+			}
+			providers := effectiveProviders(r, r, defaultProv)
+			for _, mp := range providers {
+				if provModel := mp.defaultForRole(role); provModel != "" {
+					return r.findDeclaredModelForRoleLocked(provModel, role)
+				}
+			}
+			for _, mp := range providers {
+				for i := range mp.Spec.Models {
+					m := &mp.Spec.Models[i]
+					if m.ID != "" && m.Capabilities.supportsRole(role) {
+						return m
+					}
+				}
+			}
+			return nil
+		}
+
+		// Non-default bare alias: @<alias>
+		// 1. Check workspace modelAliases
+		if r.workspace != nil && r.workspace.Def != nil && r.workspace.Def.Spec.ModelAliases != nil {
+			target := r.workspace.Def.Spec.ModelAliases[aliasName]
+			if target == "" {
+				target = r.workspace.Def.Spec.ModelAliases["@"+aliasName]
+			}
+			if target != "" && target != "@"+aliasName && target != aliasName {
+				return r.findDeclaredModelForRoleLocked(target, role)
+			}
+		}
+
+		// 2. Providers in priority order
+		var defaultProv string
+		if r.workspace != nil && r.workspace.Def != nil {
+			defaultProv = r.workspace.Def.Spec.DefaultProvider
+		}
+		providers := effectiveProviders(r, r, defaultProv)
+		for _, mp := range providers {
+			if m := mp.findModelByAlias(aliasName); m != nil {
+				return m
+			}
+		}
+		return nil
+	}
+
 	providers := r.findProvidersLocked()
 	if before, after, ok := strings.Cut(ref, "/"); ok {
 		for _, mp := range providers {
@@ -643,6 +826,98 @@ func (r *Registry) findDeclaredModelLocked(ref string) *ProviderModel {
 	for _, mp := range providers {
 		if m := mp.findModel(ref); m != nil {
 			return m
+		}
+	}
+	return nil
+}
+
+func (r *Registry) validateAliasModelRefLocked(contextStr, ref string, role ModelRole) error {
+	provPrefix, aliasName, isAlias := isAliasRef(ref)
+	if !isAlias {
+		return nil
+	}
+	if provPrefix != "" {
+		if !r.hasProviderLocked(provPrefix) {
+			return fmt.Errorf("%s: model %q references missing provider: %s", contextStr, ref, provPrefix)
+		}
+		mp := r.findProviderLocked(provPrefix)
+		if mp == nil {
+			return fmt.Errorf("%s: model %q references missing provider: %s", contextStr, ref, provPrefix)
+		}
+		if aliasName == "default" {
+			if mp.defaultForRole(role) == "" && mp.findModelByAlias("default") == nil {
+				hasRoleModel := false
+				for i := range mp.Spec.Models {
+					if mp.Spec.Models[i].Capabilities.supportsRole(role) {
+						hasRoleModel = true
+						break
+					}
+				}
+				if !hasRoleModel && len(mp.Spec.Models) == 0 {
+					return fmt.Errorf("%s: provider %q has no default or %s model for @default", contextStr, provPrefix, role)
+				}
+			}
+			return nil
+		}
+		if mp.findModelByAlias(aliasName) == nil {
+			return fmt.Errorf("%s: provider %q has no model with alias %q", contextStr, provPrefix, aliasName)
+		}
+		return nil
+	}
+
+	// Bare alias: @<alias>
+	if aliasName == "default" {
+		if r.findDeclaredModelForRoleLocked(ref, role) == nil {
+			return fmt.Errorf("%s: cannot resolve @default, no default or %s model available", contextStr, role)
+		}
+		return nil
+	}
+
+	// Check if alias exists in workspace.spec.modelAliases
+	if r.workspace != nil && r.workspace.Def != nil && r.workspace.Def.Spec.ModelAliases != nil {
+		target := r.workspace.Def.Spec.ModelAliases[aliasName]
+		if target == "" {
+			target = r.workspace.Def.Spec.ModelAliases["@"+aliasName]
+		}
+		if target != "" {
+			if _, _, targetIsAlias := isAliasRef(target); targetIsAlias {
+				return r.validateAliasModelRefLocked(contextStr, target, role)
+			}
+			if before, after, ok := strings.Cut(target, "/"); ok {
+				if !r.hasProviderLocked(before) {
+					return fmt.Errorf("%s: model %q references missing provider: %s", contextStr, target, before)
+				}
+				mp := r.findProviderLocked(before)
+				if mp == nil || mp.findModel(after) == nil {
+					return fmt.Errorf("%s: provider %q has no model %q", contextStr, before, after)
+				}
+				return nil
+			}
+			if r.findDeclaredModelLocked(target) == nil {
+				return fmt.Errorf("%s: unknown model %q", contextStr, target)
+			}
+			return nil
+		}
+	}
+
+	// Check if any provider has model with this alias
+	foundInProvider := false
+	for _, mp := range r.findProvidersLocked() {
+		if mp.findModelByAlias(aliasName) != nil {
+			foundInProvider = true
+			break
+		}
+	}
+	if !foundInProvider {
+		return fmt.Errorf("%s: unknown model alias %q", contextStr, ref)
+	}
+	return nil
+}
+
+func (r *Registry) findProviderLocked(ref string) *ModelProvider {
+	for _, mp := range r.findProvidersLocked() {
+		if mp.matchesRef(ref) {
+			return mp
 		}
 	}
 	return nil
@@ -1252,7 +1527,126 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 	}
 	defaultMP := findProvider(defaultProv)
 
-	qualify := func(ref string, owner *ModelProvider) ResolvedModel {
+	var qualify func(ref string, owner *ModelProvider) ResolvedModel
+	var resolveAlias func(ref string, visited map[string]bool) []ResolvedModel
+
+	resolveAlias = func(ref string, visited map[string]bool) []ResolvedModel {
+		if visited[ref] {
+			return nil
+		}
+		visited[ref] = true
+
+		provPrefix, aliasName, isAlias := isAliasRef(ref)
+		if !isAlias {
+			return nil
+		}
+
+		if provPrefix != "" {
+			mp := findProvider(provPrefix)
+			if mp == nil {
+				return []ResolvedModel{newResolvedModel(nil, ref, provPrefix)}
+			}
+			if aliasName == "default" {
+				if provModel := mp.defaultForRole(role); provModel != "" {
+					return []ResolvedModel{qualify(provModel, mp)}
+				}
+				if m := mp.findModelByAlias("default"); m != nil {
+					return []ResolvedModel{newResolvedModel(mp, m.ID, defaultProv)}
+				}
+				for i := range mp.Spec.Models {
+					m := &mp.Spec.Models[i]
+					if m.ID != "" && m.Capabilities.supportsRole(role) {
+						return []ResolvedModel{newResolvedModel(mp, m.ID, defaultProv)}
+					}
+				}
+				return []ResolvedModel{newResolvedModel(nil, ref, provPrefix)}
+			}
+			if m := mp.findModelByAlias(aliasName); m != nil {
+				return []ResolvedModel{newResolvedModel(mp, m.ID, defaultProv)}
+			}
+			return []ResolvedModel{newResolvedModel(nil, ref, provPrefix)}
+		}
+
+		// Bare alias: @<alias>
+		if aliasName == "default" {
+			// Check workspace modelAliases override
+			if wsSpec.ModelAliases != nil {
+				target := wsSpec.ModelAliases["default"]
+				if target == "" {
+					target = wsSpec.ModelAliases["@default"]
+				}
+				if target != "" && target != "@default" && target != "default" {
+					if _, _, ok := isAliasRef(target); ok {
+						return resolveAlias(target, visited)
+					}
+					return []ResolvedModel{qualify(target, nil)}
+				}
+			}
+			wsModel := wsSpec.DefaultModels.ForRole(role)
+			if wsModel == "" && role == ModelRoleCompletion {
+				wsModel = wsSpec.DefaultModel
+			}
+			if wsModel != "" && wsModel != "@default" && wsModel != "default" {
+				if _, _, ok := isAliasRef(wsModel); ok {
+					return resolveAlias(wsModel, visited)
+				}
+				return []ResolvedModel{qualify(wsModel, nil)}
+			}
+			for _, mp := range providers {
+				if provModel := mp.defaultForRole(role); provModel != "" {
+					return []ResolvedModel{qualify(provModel, mp)}
+				}
+			}
+			var defModels []ResolvedModel
+			for _, mp := range providers {
+				for i := range mp.Spec.Models {
+					m := &mp.Spec.Models[i]
+					if m.ID != "" && m.Capabilities.supportsRole(role) {
+						defModels = append(defModels, newResolvedModel(mp, m.ID, defaultProv))
+					}
+				}
+			}
+			if len(defModels) > 0 {
+				return defModels
+			}
+			return []ResolvedModel{newResolvedModel(nil, ref, "")}
+		}
+
+		// Non-default bare alias: @<alias>
+		// 1. Check workspace ModelAliases
+		if wsSpec.ModelAliases != nil {
+			target := wsSpec.ModelAliases[aliasName]
+			if target == "" {
+				target = wsSpec.ModelAliases["@"+aliasName]
+			}
+			if target != "" {
+				if _, _, ok := isAliasRef(target); ok {
+					return resolveAlias(target, visited)
+				}
+				return []ResolvedModel{qualify(target, nil)}
+			}
+		}
+
+		// 2. Providers in priority order
+		var aliasModels []ResolvedModel
+		for _, mp := range providers {
+			if m := mp.findModelByAlias(aliasName); m != nil {
+				aliasModels = append(aliasModels, newResolvedModel(mp, m.ID, defaultProv))
+			}
+		}
+		if len(aliasModels) > 0 {
+			return aliasModels
+		}
+		return []ResolvedModel{newResolvedModel(nil, ref, "")}
+	}
+
+	qualify = func(ref string, owner *ModelProvider) ResolvedModel {
+		if _, _, ok := isAliasRef(ref); ok {
+			rms := resolveAlias(ref, make(map[string]bool))
+			if len(rms) > 0 {
+				return rms[0]
+			}
+		}
 		if before, after, ok := strings.Cut(ref, "/"); ok {
 			if mp := findProvider(before); mp != nil {
 				return newResolvedModel(mp, after, before)
@@ -1276,7 +1670,11 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 	var out []ResolvedModel
 	for _, m := range explicit {
 		if m != "" {
-			out = append(out, qualify(m, nil))
+			if _, _, ok := isAliasRef(m); ok {
+				out = append(out, resolveAlias(m, make(map[string]bool))...)
+			} else {
+				out = append(out, qualify(m, nil))
+			}
 		}
 	}
 	if len(out) > 0 {
@@ -1289,6 +1687,9 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 		wsModel = wsSpec.DefaultModel
 	}
 	if wsModel != "" {
+		if _, _, ok := isAliasRef(wsModel); ok {
+			return resolveAlias(wsModel, make(map[string]bool))
+		}
 		return []ResolvedModel{qualify(wsModel, nil)}
 	}
 

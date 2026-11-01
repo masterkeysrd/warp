@@ -44,7 +44,7 @@ Each resource has specific fields in its `spec` block:
 
 ### 3. Directory Layout
 - `.agents/`: The standard location for resources.
-  - `defs/` or `agents/`: Markdown files for Agents.
+  - `agents/`: Markdown files for Agents.
   - `skills/`: Markdown files for Skills.
   - `commands/`: Markdown files for Commands.
   - `decisions/`: Markdown files for Decisions.

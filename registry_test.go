@@ -1512,7 +1512,7 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 			APIVersion: APIVersion,
 			Kind:       KindAgent,
 			Namespace:  NamespaceWorkspace,
-			Directory:  "/workspace/.agents/defs",
+			Directory:  "/workspace/.agents/agents",
 			Metadata: Metadata{
 				Name:        "custom-agent",
 				Description: "Child description",
@@ -1543,7 +1543,7 @@ func TestAgent_Inheritance_ScalarAndOverrideFields(t *testing.T) {
 	if ag.Namespace != NamespaceWorkspace {
 		t.Errorf("expected child namespace %q, got %q", NamespaceWorkspace, ag.Namespace)
 	}
-	if ag.Directory != "/workspace/.agents/defs" {
+	if ag.Directory != "/workspace/.agents/agents" {
 		t.Errorf("expected child directory, got %q", ag.Directory)
 	}
 	if !slicesEqual(ag.Spec.Models, []string{"claude-3-7-sonnet"}) {

@@ -118,7 +118,7 @@ by kind into sub-directories:
 WORKSPACE.md          # Optional workspace manifest
 AGENTS.md             # Project context instructions (kind: Context)
 .agents/
-├── agents/           # Agent definitions (or defs/)
+├── agents/           # Agent definitions
 │   └── analyst.md    # kind: Agent
 ├── commands/         # Command definitions
 │   └── report.md     # kind: Command

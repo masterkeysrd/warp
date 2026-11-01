@@ -1278,7 +1278,7 @@ A typical multi-project workspace:
 ```
 WORKSPACE.md              # Root Authority — defines projects
 .agents/                  # Workspace-global resources
-│   ├── defs/
+│   ├── agents/
 │   │   └── analyst.md
 │   ├── skills/
 │   │   └── coding.md

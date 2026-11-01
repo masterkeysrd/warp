@@ -247,7 +247,7 @@ spec:
 	}
 
 	provider := NewFSResourceProvider(fstest.MapFS{
-		"defs/developer.md": {
+		"agents/developer.md": {
 			Data: []byte(`---
 apiVersion: warp/v1alpha1
 kind: Agent
@@ -303,7 +303,7 @@ spec:
 		t.Fatal(err)
 	}
 
-	globalAgents := filepath.Join(tmpDir, ".agents", "defs")
+	globalAgents := filepath.Join(tmpDir, ".agents", "agents")
 	if err := os.MkdirAll(globalAgents, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ metadata:
 	}
 
 	provider := NewFSResourceProvider(fstest.MapFS{
-		"defs/developer.md": {
+		"agents/developer.md": {
 			Data: []byte(`---
 apiVersion: warp/v1alpha1
 kind: Agent

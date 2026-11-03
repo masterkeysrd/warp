@@ -33,7 +33,7 @@ Each resource has specific fields in its `spec` block:
 |------|----------------|
 | **Workspace** | `projects` (string[]), `defaultProvider` (string), `defaultModels` (ModelDefaults), `defaultAgent` (string), `plugins` (WorkspacePlugin[]), `policies` (Policies) |
 | **Context** | — (instructions in Markdown body) |
-| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (AgentThinking), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `policies` (Policies) |
+| **Agent** | `extends` (string), `triggers` (string[]), `models` (string[]), `temperature` (float), `thinking` (AgentThinking), `skills` (string[]), `commands` (string[]), `subagents` (string[]), `rules` (string[]), `tools` (string[]), `policies` (Policies) |
 | **Skill** | `useWhen` (string), `keywords` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Command** | `agent` (string), `context` (string: `inline`, `fork`, `clean`), `models` (string[]), `skills` (string[]), `rules` (string[]), `tools` (string[]), `argumentHint` (string), `arguments` (Argument[]) |
 | **Decision** | `models` (string[]), `argumentHint` (string), `arguments` (Argument[]), `questions` (DecisionQuestion[]) |

@@ -215,6 +215,54 @@ Instructions for policy agent.
 	}
 }
 
+func TestAgentSpecToolsRoundTrip(t *testing.T) {
+	content := `---
+apiVersion: warp/v1alpha1
+kind: Agent
+metadata:
+  name: tools-agent
+spec:
+  tools:
+    - read-file
+    - workspace/Tool/git-status
+    - git-*
+---
+Instructions for tools agent.
+`
+	res, err := Parse("tools-agent.md", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	ag, ok := res.Resource.(*Agent)
+	if !ok {
+		t.Fatalf("Expected *Agent, got %T", res.Resource)
+	}
+
+	if !slices.Equal(ag.Spec.Tools, []string{"read-file", "workspace/Tool/git-status", "git-*"}) {
+		t.Errorf("expected Tools == [read-file, workspace/Tool/git-status, git-*], got %v", ag.Spec.Tools)
+	}
+
+	formatted, err := Format(ag)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	res2, err := Parse("tools-agent.md", string(formatted))
+	if err != nil {
+		t.Fatalf("Second parse failed: %v", err)
+	}
+
+	ag2, ok := res2.Resource.(*Agent)
+	if !ok {
+		t.Fatalf("Expected *Agent, got %T", res2.Resource)
+	}
+
+	if !reflect.DeepEqual(ag.Spec.Tools, ag2.Spec.Tools) {
+		t.Errorf("Round-trip failed: tools mismatch: %v vs %v", ag.Spec.Tools, ag2.Spec.Tools)
+	}
+}
+
 func TestMCPSseRoundTrip(t *testing.T) {
 	content := `apiVersion: warp/v1alpha1
 kind: MCP

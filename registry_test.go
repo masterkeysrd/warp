@@ -381,6 +381,7 @@ func TestAgent_ResolvedAgent_ToolFiltering(t *testing.T) {
 
 	// Agent policy
 	agent := agentWithSpec(NamespaceWorkspace, "my-agent", AgentSpec{
+		Tools: []string{"*"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Dangerous: ToolPolicyDeny,
@@ -408,6 +409,7 @@ func TestAgent_ResolvedAgent_ToolFiltering(t *testing.T) {
 
 	// Now allow open world and dangerous (by removing exclude, allowing dangerous)
 	agent2 := agentWithSpec(NamespaceWorkspace, "my-agent-2", AgentSpec{
+		Tools: []string{"*"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Dangerous: ToolPolicyAllow,
@@ -448,6 +450,7 @@ func TestAgent_NamespaceMatching(t *testing.T) {
 
 	// Namespace/name matching (e.g. "workspace/*" should match workspace/Tool/git-clone and workspace/Tool/http-get, but not system/Tool/sys-tool)
 	agent1 := agentWithSpec(NamespaceWorkspace, "agent-ns-matching", AgentSpec{
+		Tools: []string{"*"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Include: []string{"workspace/*"},
@@ -520,7 +523,9 @@ func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
 
 	// 2. Agent with no policies: receives the tools allowed by workspace policy ceiling
 	// Expected: git-status, read-file
-	agentDefault := agentWithSpec(NamespaceWorkspace, "agent-default", AgentSpec{})
+	agentDefault := agentWithSpec(NamespaceWorkspace, "agent-default", AgentSpec{
+		Tools: []string{"*"},
+	})
 	reg.Set(agentDefault.QualifiedName(), agentDefault)
 
 	resDefault, err := reg.ResolveAgent("workspace/Agent/agent-default")
@@ -540,6 +545,7 @@ func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
 	// 3. Workspace excludes a tool (`exclude: ["bash"]`) and Agent includes it (`include: ["bash", "read-file"]`)
 	// Only `read-file` should be in resolved.Tools.
 	agentBashAndRead := agentWithSpec(NamespaceWorkspace, "agent-bash-read", AgentSpec{
+		Tools: []string{"*"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Include: []string{"bash", "read-file"},
@@ -564,6 +570,7 @@ func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
 	// 4. Workspace sets `dangerous: deny` and Agent sets `dangerous: allow`
 	// Dangerous tool (git-push) must still be filtered out because workspace is the ceiling.
 	agentWantDangerous := agentWithSpec(NamespaceWorkspace, "agent-dangerous", AgentSpec{
+		Tools: []string{"*"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Dangerous: ToolPolicyAllow,
@@ -594,6 +601,7 @@ func TestWorkspaceAndAgent_ToolPolicy_Intersection(t *testing.T) {
 	// 5. Workspace sets `include: ["git-*", "read-file"]` and Agent sets `include: ["git-status", "http-get"]`
 	// Only `git-status` is in resolved.Tools (http-get was blocked by workspace, git-push was blocked by dangerous/not in agent, read-file was not in agent).
 	agentGitAndHTTP := agentWithSpec(NamespaceWorkspace, "agent-git-http", AgentSpec{
+		Tools: []string{"*"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
 				Include: []string{"git-status", "http-get"},
@@ -1186,6 +1194,7 @@ func TestAgentResolution_GlobCapabilities(t *testing.T) {
 	agent := agentWithSpec("app", "dev-agent", AgentSpec{
 		Skills:   []string{"warp-dev/*"},
 		Commands: []string{"warp-dev/Command/*"},
+		Tools:    []string{"*"},
 	})
 	reg.Set(agent.QualifiedName(), agent)
 
@@ -1219,6 +1228,187 @@ func TestAgentResolution_GlobCapabilities(t *testing.T) {
 	}
 	if resolved.Tools[0].Metadata.Description != "Echo tool" {
 		t.Errorf("expected echo-tool description to be populated, got %q", resolved.Tools[0].Metadata.Description)
+	}
+}
+
+// TestAgent_SpecTools_Resolution verifies that agent.spec.tools resolves ambient
+// tools from the default (empty), wildcard, glob patterns, and explicit refs.
+func TestAgent_SpecTools_Resolution(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	gitStatus := makeToolResource(NamespaceWorkspace, "git-status")
+	gitClone := makeToolResource(NamespaceWorkspace, "git-clone")
+	readFile := makeToolResource(NamespaceWorkspace, "read-file")
+	httpGet := makeToolResource(NamespaceWorkspace, "http-get")
+	sysTool := makeToolResource(NamespaceSystem, "sys-tool")
+
+	reg.Set(gitStatus.QualifiedName(), gitStatus)
+	reg.Set(gitClone.QualifiedName(), gitClone)
+	reg.Set(readFile.QualifiedName(), readFile)
+	reg.Set(httpGet.QualifiedName(), httpGet)
+	reg.Set(sysTool.QualifiedName(), sysTool)
+
+	toolNames := func(tools []*Tool) []string {
+		var names []string
+		for _, tl := range tools {
+			names = append(names, tl.Metadata.Name)
+		}
+		slices.Sort(names)
+		return names
+	}
+
+	// 1. Default empty spec.tools => 0 ambient tools.
+	emptyAgent := agentWithSpec(NamespaceWorkspace, "empty-agent", AgentSpec{})
+	reg.Set(emptyAgent.QualifiedName(), emptyAgent)
+	emptyResolved, err := reg.ResolveAgent("workspace/Agent/empty-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent(empty-agent): %v", err)
+	}
+	if got := toolNames(emptyResolved.Tools); len(got) != 0 {
+		t.Errorf("expected 0 ambient tools for empty spec.tools, got %v", got)
+	}
+
+	// 2. Wildcard ["*"] => all effective tools in scope.
+	wildAgent := agentWithSpec(NamespaceWorkspace, "wild-agent", AgentSpec{
+		Tools: []string{"*"},
+	})
+	reg.Set(wildAgent.QualifiedName(), wildAgent)
+	wildResolved, err := reg.ResolveAgent("workspace/Agent/wild-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent(wild-agent): %v", err)
+	}
+	if got := toolNames(wildResolved.Tools); !slicesEqual(got, []string{"git-clone", "git-status", "http-get", "read-file", "sys-tool"}) {
+		t.Errorf("expected all 5 tools for wildcard spec.tools, got %v", got)
+	}
+
+	// 3. Glob patterns "git-*" and "workspace/*" => matching tools (deduped).
+	globAgent := agentWithSpec(NamespaceWorkspace, "glob-agent", AgentSpec{
+		Tools: []string{"git-*", "workspace/*"},
+	})
+	reg.Set(globAgent.QualifiedName(), globAgent)
+	globResolved, err := reg.ResolveAgent("workspace/Agent/glob-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent(glob-agent): %v", err)
+	}
+	// git-* matches git-clone, git-status; workspace/* matches all workspace tools.
+	// sys-tool (system namespace) is not matched by either pattern.
+	if got := toolNames(globResolved.Tools); !slicesEqual(got, []string{"git-clone", "git-status", "http-get", "read-file"}) {
+		t.Errorf("expected glob-resolved tools [git-clone, git-status, http-get, read-file], got %v", got)
+	}
+
+	// 4. Explicit refs (short name + qualified name).
+	explicitAgent := agentWithSpec(NamespaceWorkspace, "explicit-agent", AgentSpec{
+		Tools: []string{"read-file", "workspace/Tool/git-clone"},
+	})
+	reg.Set(explicitAgent.QualifiedName(), explicitAgent)
+	explicitResolved, err := reg.ResolveAgent("workspace/Agent/explicit-agent")
+	if err != nil {
+		t.Fatalf("ResolveAgent(explicit-agent): %v", err)
+	}
+	if got := toolNames(explicitResolved.Tools); !slicesEqual(got, []string{"git-clone", "read-file"}) {
+		t.Errorf("expected explicit tools [git-clone, read-file], got %v", got)
+	}
+}
+
+// TestAgent_SpecTools_Inheritance verifies that child agent.spec.tools are
+// appended to the parent's spec.tools during inheritance merging.
+func TestAgent_SpecTools_Inheritance(t *testing.T) {
+	reg := NewRegistry(nil)
+
+	gitStatus := makeToolResource(NamespaceWorkspace, "git-status")
+	readFile := makeToolResource(NamespaceWorkspace, "read-file")
+	httpGet := makeToolResource(NamespaceWorkspace, "http-get")
+	reg.Set(gitStatus.QualifiedName(), gitStatus)
+	reg.Set(readFile.QualifiedName(), readFile)
+	reg.Set(httpGet.QualifiedName(), httpGet)
+
+	// Parent declares git-status and read-file.
+	parent := agentWithSpec(NamespaceSystem, "base", AgentSpec{
+		Tools: []string{"git-status", "read-file"},
+	})
+	reg.Set(parent.QualifiedName(), parent)
+
+	// Child extends parent and adds http-get.
+	child := agentWithSpec(NamespaceWorkspace, "child", AgentSpec{
+		Extends: "system/Agent/base",
+		Tools:   []string{"http-get"},
+	})
+	reg.Set(child.QualifiedName(), child)
+
+	merged, err := reg.ResolveAgent("workspace/Agent/child")
+	if err != nil {
+		t.Fatalf("ResolveAgent: %v", err)
+	}
+
+	// Parent tools come first, then child tools.
+	if !slicesEqual(merged.Agent.Spec.Tools, []string{"git-status", "read-file", "http-get"}) {
+		t.Errorf("expected merged spec.tools [git-status, read-file, http-get], got %v", merged.Agent.Spec.Tools)
+	}
+
+	// Resolved ambient tools should include all three, deduped and sorted.
+	var names []string
+	for _, tl := range merged.Tools {
+		names = append(names, tl.Metadata.Name)
+	}
+	slices.Sort(names)
+	if !slicesEqual(names, []string{"git-status", "http-get", "read-file"}) {
+		t.Errorf("expected merged ambient tools [git-status, http-get, read-file], got %v", names)
+	}
+}
+
+// TestAgent_SpecTools_Validation verifies that Registry.Validate() rejects
+// agent.spec.tools references that are missing, point to the wrong kind, or
+// reference an MCP tool excluded by mcp.spec.policies.tools.
+func TestAgent_SpecTools_Validation(t *testing.T) {
+	// 1. Missing tool reference.
+	reg1 := NewRegistry(nil)
+	badAgent := agentWithSpec(NamespaceWorkspace, "bad-agent", AgentSpec{
+		Tools: []string{"nonexistent-tool"},
+	})
+	reg1.Set(badAgent.QualifiedName(), badAgent)
+	if err := reg1.Validate(); err == nil || !strings.Contains(err.Error(), "references missing tool") {
+		t.Fatalf("expected missing tool validation error, got: %v", err)
+	}
+
+	// 2. Referencing a non-Tool resource kind (a Skill where a Tool is expected).
+	reg2 := NewRegistry(nil)
+	skill := makeSkillResource(NamespaceWorkspace, "not-a-tool")
+	reg2.Set(skill.QualifiedName(), skill)
+	kindAgent := agentWithSpec(NamespaceWorkspace, "kind-agent", AgentSpec{
+		Tools: []string{"not-a-tool"},
+	})
+	reg2.Set(kindAgent.QualifiedName(), kindAgent)
+	if err := reg2.Validate(); err == nil {
+		t.Error("expected Validate() to fail when tool ref points to a non-Tool resource")
+	}
+
+	// 3. MCP tool excluded by mcp.spec.policies.tools.
+	reg3 := NewRegistry(nil)
+	mcp := &MCP{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindMCP,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "github"},
+		},
+		Spec: MCPSpec{
+			Type:    MCPTransportStdio,
+			Command: []string{"gh-mcp"},
+			Policies: &MCPPolicies{
+				Tools: &ResourceFilter{
+					Include: []string{"search_*"},
+					Exclude: []string{"*token*"},
+				},
+			},
+		},
+	}
+	reg3.set(mcp.QualifiedName(), mcp)
+	mcpAgent := agentWithSpec(NamespaceWorkspace, "mcp-agent", AgentSpec{
+		Tools: []string{"github__get_token"},
+	})
+	reg3.Set(mcpAgent.QualifiedName(), mcpAgent)
+	if err := reg3.Validate(); err == nil || !strings.Contains(err.Error(), "excluded by MCP") {
+		t.Fatalf("expected excluded MCP tool validation error, got: %v", err)
 	}
 }
 
@@ -3136,8 +3326,88 @@ func TestResolvedAgent_ToolsForSkill(t *testing.T) {
 		},
 	}
 
-	// Agent: Include: ["read-file"], Exclude: ["rm"], ReadOnly: true
-	agent := agentWithSpec(NamespaceWorkspace, "finance-bot", AgentSpec{
+	reg.Set(readFileTool.QualifiedName(), readFileTool)
+	reg.Set(sqlReadTool.QualifiedName(), sqlReadTool)
+	reg.Set(sqlWriteTool.QualifiedName(), sqlWriteTool)
+	reg.Set(rmTool.QualifiedName(), rmTool)
+	reg.Set(financeSkill.QualifiedName(), financeSkill)
+	reg.Set(unattachedSkill.QualifiedName(), unattachedSkill)
+
+	toolNames := func(tools []*Tool) []string {
+		var names []string
+		for _, t := range tools {
+			names = append(names, t.Metadata.Name)
+		}
+		slices.Sort(names)
+		return names
+	}
+
+	// --- Progressive Disclosure ---
+	// An agent with ambient Tools: ["read-file"] and a policy that allows sql-read
+	// (via Include) does NOT have sql-read in its ambient resolved.Tools, but DOES
+	// receive sql-read when calling ToolsForSkill.
+	allowAgent := agentWithSpec(NamespaceWorkspace, "finance-bot", AgentSpec{
+		Tools:  []string{"read-file"},
+		Skills: []string{"finance"},
+		Policies: &Policies{
+			Tools: &ToolPolicies{
+				Include:  []string{"read-file", "sql-*"},
+				Exclude:  []string{"rm"},
+				ReadOnly: true,
+			},
+		},
+	})
+	reg.Set(allowAgent.QualifiedName(), allowAgent)
+
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("validation failed: %v", err)
+	}
+
+	allowResolved, err := reg.ResolveAgent("workspace/Agent/finance-bot")
+	if err != nil {
+		t.Fatalf("ResolveAgent failed: %v", err)
+	}
+
+	// 1. Error when requesting tools for a skill not attached to agent
+	if _, err := allowResolved.ToolsForSkill(reg, "unattached"); err == nil {
+		t.Error("expected error when requesting tools for skill not enabled on agent, got nil")
+	}
+
+	// 2. Ambient resolved.Tools must NOT include sql-read (progressive disclosure:
+	// sql-read is not in the agent's ambient spec.tools).
+	if got := toolNames(allowResolved.Tools); !slicesEqual(got, []string{"read-file"}) {
+		t.Errorf("expected ambient resolved.Tools to be [read-file], got %v", got)
+	}
+
+	// 3. ToolsForSkill unlocks sql-read even though it is not ambient.
+	// - sql-read is allowed by Include ["read-file", "sql-*"]
+	// - sql-write is denied because agent policy has ReadOnly: true
+	// - rm is denied because agent policy has Exclude: ["rm"]
+	skillTools, err := allowResolved.ToolsForSkill(reg, "finance")
+	if err != nil {
+		t.Fatalf("ToolsForSkill(finance) failed: %v", err)
+	}
+	if got := toolNames(skillTools); !slicesEqual(got, []string{"sql-read"}) {
+		t.Errorf("expected ToolsForSkill(finance) to unlock [sql-read], got %v", got)
+	}
+
+	// Consistency: the unlocked tool's ToolAction must be Allow.
+	if act := allowResolved.ToolAction(sqlReadTool); act != ToolPolicyAllow {
+		t.Errorf("expected ToolAction(sql-read) == Allow, got %v", act)
+	}
+	if act := allowResolved.ToolAction(sqlWriteTool); act != ToolPolicyDeny {
+		t.Errorf("expected ToolAction(sql-write) == Deny (ReadOnly), got %v", act)
+	}
+	if act := allowResolved.ToolAction(rmTool); act != ToolPolicyDeny {
+		t.Errorf("expected ToolAction(rm) == Deny (Exclude), got %v", act)
+	}
+
+	// --- Strict Policy Ceiling (including Include) ---
+	// If agent.Spec.Policies.Tools.Include is non-empty and does not match a
+	// skill tool, that tool is denied/filtered out of ToolsForSkill, consistent
+	// with ToolAction == Deny.
+	strictAgent := agentWithSpec(NamespaceWorkspace, "finance-bot-strict", AgentSpec{
+		Tools:  []string{"read-file"},
 		Skills: []string{"finance"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
@@ -3147,44 +3417,24 @@ func TestResolvedAgent_ToolsForSkill(t *testing.T) {
 			},
 		},
 	})
+	reg.Set(strictAgent.QualifiedName(), strictAgent)
 
-	reg.Set(readFileTool.QualifiedName(), readFileTool)
-	reg.Set(sqlReadTool.QualifiedName(), sqlReadTool)
-	reg.Set(sqlWriteTool.QualifiedName(), sqlWriteTool)
-	reg.Set(rmTool.QualifiedName(), rmTool)
-	reg.Set(financeSkill.QualifiedName(), financeSkill)
-	reg.Set(unattachedSkill.QualifiedName(), unattachedSkill)
-	reg.Set(agent.QualifiedName(), agent)
-
-	if err := reg.Validate(); err != nil {
-		t.Fatalf("validation failed: %v", err)
-	}
-
-	resolvedAgent, err := reg.ResolveAgent("workspace/Agent/finance-bot")
+	strictResolved, err := reg.ResolveAgent("workspace/Agent/finance-bot-strict")
 	if err != nil {
-		t.Fatalf("ResolveAgent failed: %v", err)
+		t.Fatalf("ResolveAgent(finance-bot-strict) failed: %v", err)
 	}
 
-	// 1. Error when requesting tools for a skill not attached to agent
-	if _, err := resolvedAgent.ToolsForSkill(reg, "unattached"); err == nil {
-		t.Error("expected error when requesting tools for skill not enabled on agent, got nil")
-	}
-
-	// 2. Request tools for attached skill "finance"
-	skillTools, err := resolvedAgent.ToolsForSkill(reg, "finance")
+	strictSkillTools, err := strictResolved.ToolsForSkill(reg, "finance")
 	if err != nil {
-		t.Fatalf("ToolsForSkill(finance) failed: %v", err)
+		t.Fatalf("ToolsForSkill(finance) on strict agent failed: %v", err)
 	}
-
-	// Should contain sql-read only:
-	// - sql-read is allowed even though not in agent's base include list ["read-file"]
-	// - sql-write is denied because agent policy has ReadOnly: true
-	// - rm is denied because agent policy has Exclude: ["rm"]
-	if len(skillTools) != 1 {
-		t.Fatalf("expected exactly 1 tool for skill (sql-read), got %d tools: %v", len(skillTools), skillTools)
+	// sql-read is NOT in Include ["read-file"], so it is denied by the ceiling.
+	// sql-write is denied by ReadOnly, rm is excluded. Result: no tools.
+	if got := toolNames(strictSkillTools); len(got) != 0 {
+		t.Errorf("expected strict ceiling to filter out all skill tools, got %v", got)
 	}
-	if skillTools[0].Metadata.Name != "sql-read" {
-		t.Errorf("expected sql-read tool, got %s", skillTools[0].Metadata.Name)
+	if act := strictResolved.ToolAction(sqlReadTool); act != ToolPolicyDeny {
+		t.Errorf("expected ToolAction(sql-read) == Deny under strict Include, got %v", act)
 	}
 }
 
@@ -3664,6 +3914,9 @@ func TestResolveCommand(t *testing.T) {
 	toolExcluded := makeToolResource(NamespaceWorkspace, "tool-excluded")
 	reg.Set(toolExcluded.QualifiedName(), toolExcluded)
 
+	toolUnlisted := makeToolResource(NamespaceWorkspace, "tool-unlisted")
+	reg.Set(toolUnlisted.QualifiedName(), toolUnlisted)
+
 	// Setup skills
 	skillDoc := &Skill{
 		BaseResource: BaseResource{
@@ -3673,7 +3926,7 @@ func TestResolveCommand(t *testing.T) {
 			Metadata:   Metadata{Name: "doc-skill"},
 		},
 		Spec: SkillSpec{
-			Tools: []string{"tool-skill", "tool-dangerous"},
+			Tools: []string{"tool-skill", "tool-dangerous", "tool-unlisted"},
 		},
 	}
 	reg.Set(skillDoc.QualifiedName(), skillDoc)
@@ -3707,14 +3960,15 @@ func TestResolveCommand(t *testing.T) {
 	reg.Set(ruleHigh.QualifiedName(), ruleHigh)
 
 	// Setup agent with policies:
-	// - Include contains only unrelated tool (testing that Include is not enforced on command dynamic tools)
+	// - Include allows the command's dynamic tools (tool-cmd, tool-skill) that are
+	//   unlocked via progressive disclosure (not part of the agent's ambient spec.tools)
 	// - Dangerous is denied
 	// - Exclude contains "tool-excluded"
 	agentWithPolicies := agentWithSpec(NamespaceWorkspace, "strict-agent", AgentSpec{
 		Commands: []string{"agent-cmd"},
 		Policies: &Policies{
 			Tools: &ToolPolicies{
-				Include:   []string{"unrelated-tool"},
+				Include:   []string{"tool-cmd", "tool-skill"},
 				Exclude:   []string{"tool-excluded"},
 				Dangerous: ToolPolicyDeny,
 			},
@@ -3734,7 +3988,7 @@ func TestResolveCommand(t *testing.T) {
 			Agent:  "strict-agent",
 			Skills: []string{"doc-skill"},
 			Rules:  []string{"rule-low", "rule-high"},
-			Tools:  []string{"tool-cmd", "tool-excluded"},
+			Tools:  []string{"tool-cmd", "tool-excluded", "tool-unlisted"},
 		},
 	}
 	reg.Set(cmdExplicitAgent.QualifiedName(), cmdExplicitAgent)
@@ -4322,6 +4576,26 @@ func TestRegistry_OfflineToolValidation_MCPTools(t *testing.T) {
 		t.Fatalf("expected excluded tool error for namespace-prefixed ref, got: %v", err)
 	}
 	delete(reg.resources, cmdPrefixedExcluded.QualifiedName())
+
+	// Agent referencing an allowed MCP tool (offline)
+	agentOk := agentWithSpec(NamespaceWorkspace, "mcp-agent-ok", AgentSpec{
+		Tools: []string{"github__search_repositories"},
+	})
+	reg.Set(agentOk.QualifiedName(), agentOk)
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("expected agent referencing allowed MCP tool to pass, got: %v", err)
+	}
+
+	// Agent referencing an excluded MCP tool
+	agentExcluded := agentWithSpec(NamespaceWorkspace, "mcp-agent-excluded", AgentSpec{
+		Tools: []string{"github__get_token"},
+	})
+	reg.set(agentExcluded.QualifiedName(), agentExcluded)
+	err = reg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "excluded by MCP") {
+		t.Fatalf("expected excluded MCP tool error for agent, got: %v", err)
+	}
+	delete(reg.resources, agentExcluded.QualifiedName())
 }
 
 func TestResolvedAgent_MCPs(t *testing.T) {

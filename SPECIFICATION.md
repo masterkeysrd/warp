@@ -277,6 +277,7 @@ runtime.
 | `commands`    | string[] |          | `[]`    | Names, qualified refs, or globs of `Command` resources this agent can invoke. Default is `[]` (none). Use `["*"]` to include all effective commands in scope. |
 | `subagents`   | string[] |          | `[]`    | Names, qualified refs, or globs of `Agent` resources this agent is allowed to delegate to. Default is `[]` (none). Use `["*"]` to include all effective agent-triggerable subagents in scope. |
 | `rules`       | string[] |          | `[]`    | Names, qualified refs, or globs of `Rule` resources that apply to this agent. Explicitly attached rules act as always-on (`triggers.always: true`). Ambient rules with `triggers.always: true` in scope are also included automatically. |
+| `tools`       | string[] |          | `[]`    | Names, qualified refs, or globs of `Tool` resources loaded into the agent's base context. Default is `[]` (none). Use `["*"]` to include all effective tools in scope. |
 | `policies`    | object   |          | —       | Security and access policies (specifically `tools` execution restrictions) for this agent.         |
 
 > `instructions` is **not** written in the YAML front-matter. It is populated
@@ -289,7 +290,7 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 1. The parent agent is resolved (which may itself extend another agent, forming a chain).
 2. A deep copy of the resolved parent is made as the merge base, with `metadata`, `namespace`, and `directory` updated to reflect the child agent.
 3. Scalar and override fields (`models`, `temperature`, `thinking`, and `triggers`) on the child replace the parent's values when specified (non-empty / non-nil).
-4. The child's `skills`, `commands`, `subagents`, and `rules` lists are **appended** to the parent's lists.
+4. The child's `skills`, `commands`, `subagents`, `rules`, and `tools` lists are **appended** to the parent's lists.
 5. The child's `policies` block is merged with the parent's:
    - Action settings (`dangerous`, `openWorld`) in the child override those of the parent if specified (non-empty).
    - If the child specifies `policies.tools.readOnly: true`, the merged policy sets `readOnly: true`.
@@ -299,10 +300,14 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 
 #### Tool Access Resolution and Policy Filtering
 
-To support secure tool execution, the engine performs a two-stage sequential filtering (intersection / ceiling) process during agent resolution:
-1. **Workspace Policy Filter (Ceiling)**: The complete list of effective tools is first evaluated against `workspace.spec.policies.tools` (if defined). Tools evaluating to `deny` are filtered out.
-2. **Agent Policy Filter (Narrowing)**: The remaining tools are evaluated against the agent's merged `spec.policies.tools` (if defined). Tools evaluating to `deny` are omitted from `ResolvedAgent.Tools`.
+To support secure tool execution, the engine performs a sequential filtering (intersection / ceiling) process during agent resolution:
+
+0. **Base Tool Selection**: The agent's ambient tools are first resolved from `agent.spec.tools` (default `[]`, meaning no ambient tools). A value of `["*"]` loads all effective `KindTool` resources in scope; exact references (`read-file`, `workspace/Tool/read-file`) and glob patterns (`git-*`, `workspace/*`) resolve the matching tools. If `agent.spec.tools` is empty, the agent starts with no ambient tools.
+1. **Workspace Policy Filter (Ceiling)**: The resolved base tools are first evaluated against `workspace.spec.policies.tools` (if defined). Tools evaluating to `deny` are filtered out.
+2. **Agent Policy Filter (Ceiling)**: The remaining tools are evaluated against the agent's merged `spec.policies.tools` (if defined). Tools evaluating to `deny` are omitted from `ResolvedAgent.Tools`.
 3. **Effective Tool Action**: For each exposed tool, the runtime inspects `ra.ToolAction(tool)`, which returns the stricter of the workspace evaluation and agent evaluation following the strictness hierarchy `allow < ask < deny`. An agent can narrow access (e.g. requiring confirmation for a tool allowed by workspace policy), but can never widen permissions blocked or guarded by the workspace (e.g., if the workspace sets `dangerous: ask` or excludes `bash`, an agent that declares `dangerous: allow` or includes `bash` still cannot bypass the workspace ceiling).
+
+Both `workspace.spec.policies.tools` and `agent.spec.policies.tools` act as strict, non-bypassable ceilings. Progressive disclosure via `ToolsForSkill` and `ResolveCommand` (see [Capability Unlocking](#123-capability-unlocking-toolsskill-and-resolvecommand)) can unlock tools that are **not** in the agent's ambient `agent.spec.tools`, but can never inject tools that violate either policy ceiling, including `agent.spec.policies.tools.include`.
 
 #### Global Override Example
 
@@ -393,9 +398,11 @@ or executes a skill, the runtime progressively loads the skill's declared tools 
 
 Progressive tool loading is bounded by a two-tier security ceiling:
 1. **Workspace Ceiling**: The skill's declared tools must first pass `workspace.spec.policies.tools`. Any tool denied by workspace policy is omitted.
-2. **Agent Policy Enforcement**: The tools are filtered against the agent's policy restrictions (`exclude`, `dangerous`, `openWorld`, and `readOnly`). However, skill tools are **not** required to match the agent's base `include` list.
+2. **Agent Policy Ceiling**: The tools are filtered against the agent's **full** `agent.spec.policies.tools`, including `include`, `exclude`, `dangerous`, `openWorld`, and `readOnly`.
 
-This allows agents to maintain minimal ambient tool access while enabling attached skills to safely bring in domain-specific tools as needed.
+Tools declared in `skill.spec.tools` do **not** need to be part of the agent's ambient `agent.spec.tools` list, which allows progressive disclosure. However, they **must** pass both `workspace.spec.policies.tools` and the full `agent.spec.policies.tools` (including `include`); a skill cannot inject a tool that the agent's policy ceiling denies.
+
+This allows agents to maintain minimal ambient tool access while enabling attached skills to safely bring in domain-specific tools as needed, without ever bypassing the agent's security ceiling.
 
 #### `spec` fields
 
@@ -489,7 +496,7 @@ When a command is executed, a conforming runtime or `ResolveCommand(ref)` prepar
 1. **Executing Agent**: If `spec.agent` is defined, the named agent is resolved via `ResolveAgent`. If invoked by an existing `ResolvedAgent` without an explicit `spec.agent`, the invoking agent executes the command (verifying that the command is declared in its enabled commands list).
 2. **Eager Skills**: Skills declared in `spec.skills` (supporting exact references, wildcards `*`, and glob patterns) are eagerly resolved into `ResolvedCommand.Skills`.
 3. **Eager Rules**: Rules declared in `spec.rules` (supporting exact references, wildcards `*`, and glob patterns) are eagerly resolved into `ResolvedCommand.Rules`. Every rule matched by a command has its `spec.triggers.always` set to `true`, ensuring it applies unconditionally during command execution. Rules are sorted by priority descending.
-4. **Effective Tools & Policy Ceiling**: The toolset for the command combines tools explicitly listed in `cmd.spec.tools` (including wildcards and globs) and tools declared on all eagerly resolved skills (`skill.spec.tools`). The combined tools are deduplicated, filtered against the workspace tool policy ceiling (`workspace.spec.policies.tools`), and narrowed by the executing agent's security policies (enforcing `exclude`, `dangerous`, `openWorld`, and `readOnly` restrictions without requiring the command's dynamic tools to be present in the agent's base `include` list).
+4. **Effective Tools & Policy Ceiling**: The toolset for the command combines tools explicitly listed in `cmd.spec.tools` (including wildcards and globs) and tools declared on all eagerly resolved skills (`skill.spec.tools`). The combined tools are deduplicated, filtered against the workspace tool policy ceiling (`workspace.spec.policies.tools`), and then filtered against the executing agent's **full** security policies (`agent.spec.policies.tools`), enforcing `include`, `exclude`, `dangerous`, `openWorld`, and `readOnly` restrictions. Command tools do **not** need to be present in the executing agent's ambient `agent.spec.tools` list (allowing progressive disclosure), but they **must** pass both `workspace.spec.policies.tools` and the executing agent's full `agent.spec.policies.tools` (including `include`); a command cannot inject a tool that either policy ceiling denies.
 
 #### Full example
 
@@ -942,8 +949,8 @@ Tools exposed by MCP servers pass through a multi-stage security and filtering p
 
 #### Offline Tool Reference Validation
 
-WARP supports authoring skills, commands, and rules referencing `<mcp_name>__<tool_name>` tools offline (even before an MCP server process is spawned):
-- When validating references in `skill.spec.tools`, `command.spec.tools`, and `rule.spec.triggers.tools`, if the referenced tool is not yet materialized as a static `Tool` in the catalog, WARP inspects the prefix `<mcp_name>`.
+WARP supports authoring agents, skills, commands, and rules referencing `<mcp_name>__<tool_name>` tools offline (even before an MCP server process is spawned):
+- When validating references in `agent.spec.tools`, `skill.spec.tools`, `command.spec.tools`, and `rule.spec.triggers.tools`, if the referenced tool is not yet materialized as a static `Tool` in the catalog, WARP inspects the prefix `<mcp_name>`.
 - If an `MCP` resource named `<mcp_name>` exists in the namespace and its declared `spec.policies.tools` allows the tool name, the reference is validated successfully.
 - If the tool is explicitly excluded by the MCP's policies, validation fails with an explanatory error.
 
@@ -1124,6 +1131,7 @@ The following table summarizes all cross-referencing fields supported across WAR
 | `Agent` | `spec.commands` | `Command` | Commands or wildcard/glob patterns executable by this agent. |
 | `Agent` | `spec.subagents` | `Agent` | Subagents or wildcard/glob patterns this agent can delegate tasks to. |
 | `Agent` | `spec.rules` | `Rule` | Rules or wildcard/glob patterns evaluated for this agent. |
+| `Agent` | `spec.tools` | `Tool` | Tools or wildcard/glob patterns loaded into the agent's base context. |
 | `Agent` | `spec.extends` | `Agent` | Base agent reference from which this agent inherits instructions, skills, commands, rules, and configuration. |
 | `Command` | `spec.agent` | `Agent` | Preferred or required agent reference to execute this command. |
 | `Command` | `spec.skills` | `Skill` | Skills or glob patterns eagerly loaded into context when this command executes. |
@@ -1335,6 +1343,7 @@ loaded Workspace.
 | All `spec.commands` paths resolve | A listed path does not match any loaded `Command` in the resolution hierarchy. |
 | All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
 | All `spec.rules` paths resolve    | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
+| All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy (or, in offline validation for `<mcp_name>__<tool_name>` references, `<mcp_name>` does not match any loaded `MCP` resource or `<tool_name>` is excluded by that MCP's policies). |
 | Declared `spec.models` resolve and support completion | When providers exist, a listed model or alias reference does not resolve to any declared model or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
 | Valid `spec.thinking` strategy | `spec.thinking.type` is not one of `toggle`, `effort`, `budget`, or `adaptive`, or `budgetTokens < 0`. |
 | Thinking capability match | When `spec.thinking` is declared, every resolved model in `spec.models` that defines thinking capabilities must support `spec.thinking.type`, allowed effort levels (`spec.thinking.effort`), and maximum budget tokens (`spec.thinking.budgetTokens <= maxBudgetTokens`). |
@@ -1717,8 +1726,8 @@ When determining the effective policy for a candidate tool call, the runtime cas
 #### Capability Unlocking (`ToolsForSkill` and `ResolveCommand`)
 
 WARP empowers agents to dynamically acquire tools when executing specific tasks without granting broad, persistent tool access:
-- When an agent activates a `Skill` or executes a `Command`, tools declared on that skill (`skill.spec.tools`) or command (`command.spec.tools`) are unlocked for that operation, even if omitted from the agent's base `policies.tools.include` list.
-- However, security boundaries are immutable: capability unlocking **cannot** override workspace policy ceilings or the agent's explicit `exclude`, `dangerous`, `openWorld`, or `readOnly` rules.
+- When an agent activates a `Skill` (via `ToolsForSkill`) or executes a `Command` (via `ResolveCommand`), tools declared on that skill (`skill.spec.tools`) or command (`command.spec.tools`) are unlocked for that operation, even if omitted from the agent's ambient `agent.spec.tools` list.
+- However, security boundaries are immutable: capability unlocking strictly enforces both the workspace policy ceiling (`workspace.spec.policies.tools`) and the agent policy ceiling (`agent.spec.policies.tools`), including `policies.tools.include`, `exclude`, `dangerous`, `openWorld`, and `readOnly`. A skill or command can never inject a tool that either policy ceiling denies.
 
 ### 12.4 Tool & MCP Execution Contracts
 

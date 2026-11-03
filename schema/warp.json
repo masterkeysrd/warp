@@ -62,6 +62,13 @@
           "type": "array",
           "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by. Attached rules act as always-on rules for this agent."
         },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Tools is a list of Tool references (Qualified or Short Names) or globs\nloaded into the agent's base context. Default is [] (none). Use [\"*\"] to\ninclude all effective tools in scope."
+        },
         "policies": {
           "$ref": "#/$defs/Policies",
           "description": "Policies defines security and access policies."
@@ -1365,6 +1372,13 @@
                     },
                     "type": "array",
                     "description": "Rules is an optional list of Rule references (Qualified or Short Names) or\nglobs this agent is governed by. Attached rules act as always-on rules for this agent."
+                  },
+                  "tools": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Tools is a list of Tool references (Qualified or Short Names) or globs\nloaded into the agent's base context. Default is [] (none). Use [\"*\"] to\ninclude all effective tools in scope."
                   },
                   "policies": {
                     "$ref": "#/$defs/Policies",

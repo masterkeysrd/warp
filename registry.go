@@ -481,6 +481,17 @@ func (r *Registry) Validate() error {
 					return fmt.Errorf("agent %s references missing rule: %s", name, ruleRef)
 				}
 			}
+			for _, toolRef := range agent.Spec.Tools {
+				if hasGlobMeta(toolRef) || toolRef == "*" {
+					continue
+				}
+				if err := r.validateToolRefLocked(ns, toolRef); err != nil {
+					if strings.Contains(err.Error(), "excluded by MCP") {
+						return fmt.Errorf("agent %s: %w", name, err)
+					}
+					return fmt.Errorf("agent %s %w", name, err)
+				}
+			}
 		}
 		if rule, ok := res.(*Rule); ok {
 			if err := r.validateRuleLocked(name, rule); err != nil {
@@ -1510,6 +1521,9 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	if len(ag.Spec.Rules) > 0 {
 		parent.Spec.Rules = append(parent.Spec.Rules, ag.Spec.Rules...)
 	}
+	if len(ag.Spec.Tools) > 0 {
+		parent.Spec.Tools = append(parent.Spec.Tools, ag.Spec.Tools...)
+	}
 	switch {
 	case parent.Spec.Instructions != "" && ag.Spec.Instructions != "":
 		parent.Spec.Instructions = parent.Spec.Instructions + "\n\n" + ag.Spec.Instructions
@@ -1714,8 +1728,8 @@ func materializeMCPTools(targetMCP *MCP, rawTools []*Tool) (active []*Tool, acti
 		rawName := rawTool.Metadata.Name
 		if mcpName, raw, ok := ParseMCPToolName(rawName); ok && mcpName == targetMCP.Metadata.Name {
 			rawName = raw
-		} else if strings.HasPrefix(rawName, targetMCP.Metadata.Name+"__") {
-			rawName = strings.TrimPrefix(rawName, targetMCP.Metadata.Name+"__")
+		} else if after, ok0 := strings.CutPrefix(rawName, targetMCP.Metadata.Name+"__"); ok0 {
+			rawName = after
 		}
 
 		if !targetMCP.AllowsTool(rawName) {
@@ -2123,7 +2137,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	}
 
 	// 2. Resolve Tools
-	tools := resolveTools(resolver)
+	tools := resolveToolsFromRefs(resolver, ag.Spec.Tools)
 
 	// Apply tool policy filter
 	wsPolicy := workspaceToolPolicy(resolver)
@@ -2301,7 +2315,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	}, nil
 }
 
-func resolveTools(resolver Resolver) []*Tool {
+func resolveToolsFromRefs(resolver Resolver, toolRefs []string) []*Tool {
 	var tools []*Tool
 	seen := make(map[string]bool)
 	addTool := func(t *Tool) {
@@ -2315,52 +2329,16 @@ func resolveTools(resolver Resolver) []*Tool {
 		}
 	}
 
-	allTools := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
-	for _, r := range allTools {
-		if t, ok := r.(*Tool); ok {
-			addTool(t)
-		}
-	}
-
-	sort.Slice(tools, func(i, j int) bool {
-		return tools[i].QualifiedName() < tools[j].QualifiedName()
-	})
-	return tools
-}
-
-func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
-	res, ok := resolver.ResolveResource(skillRef)
-	if !ok {
-		return nil, fmt.Errorf("skill %q not found", skillRef)
-	}
-	skill, ok := res.(*Skill)
-	if !ok {
-		return nil, fmt.Errorf("resource %q is a %s, not a Skill", skillRef, res.GetKind())
-	}
-
-	var tools []*Tool
-	seen := make(map[string]bool)
-	addTool := func(t *Tool) {
-		if t == nil {
-			return
-		}
-		qn := t.QualifiedName()
-		if !seen[qn] {
-			seen[qn] = true
-			tools = append(tools, t)
-		}
-	}
-
-	if containsWildcard(skill.Spec.Tools) {
+	if containsWildcard(toolRefs) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
 		for _, r := range all {
 			if t, ok := r.(*Tool); ok {
 				addTool(t)
 			}
 		}
-	} else if len(skill.Spec.Tools) > 0 {
+	} else if len(toolRefs) > 0 {
 		var allTools []Resource
-		for _, tRef := range skill.Spec.Tools {
+		for _, tRef := range toolRefs {
 			if hasGlobMeta(tRef) {
 				if allTools == nil {
 					allTools = resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: false})
@@ -2385,6 +2363,20 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 	sort.Slice(tools, func(i, j int) bool {
 		return tools[i].QualifiedName() < tools[j].QualifiedName()
 	})
+	return tools
+}
+
+func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
+	res, ok := resolver.ResolveResource(skillRef)
+	if !ok {
+		return nil, fmt.Errorf("skill %q not found", skillRef)
+	}
+	skill, ok := res.(*Skill)
+	if !ok {
+		return nil, fmt.Errorf("resource %q is a %s, not a Skill", skillRef, res.GetKind())
+	}
+
+	tools := resolveToolsFromRefs(resolver, skill.Spec.Tools)
 	if wsPolicy := workspaceToolPolicy(resolver); wsPolicy != nil {
 		tools = filterTools(tools, wsPolicy)
 	}
@@ -2393,9 +2385,10 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 
 // ToolsForSkill returns the tools required or declared by the named skill for this resolved agent.
 // It verifies that the resolved skill is present in ra.Skills (returning an error if not enabled),
-// resolves the skill's tools (applying the workspace policy ceiling),
-// and filters the tools against the agent's policy without requiring them to match the agent's
-// base Include list (enforcing Exclude, Dangerous, OpenWorld, and ReadOnly).
+// resolves the skill's tools (applying the workspace policy ceiling), and filters the tools against
+// the agent's full policy ceiling. Skill tools do not need to be part of the agent's ambient
+// spec.tools, but they are still filtered against agent.spec.policies.tools (including Include,
+// Exclude, Dangerous, OpenWorld, and ReadOnly).
 func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 	if ra == nil {
 		return nil, fmt.Errorf("resolved agent is nil")
@@ -2430,9 +2423,7 @@ func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*T
 	}
 
 	if ra.Agent != nil && ra.Agent.Spec.Policies != nil && ra.Agent.Spec.Policies.Tools != nil {
-		agPolicy := ra.Agent.Spec.Policies.Tools.DeepCopy()
-		agPolicy.Include = nil
-		tools = filterTools(tools, agPolicy)
+		tools = filterTools(tools, ra.Agent.Spec.Policies.Tools)
 	}
 
 	return tools, nil
@@ -2587,69 +2578,18 @@ func resolveCommand(resolver Resolver, executingAgent *ResolvedAgent, ref string
 	rules = deduplicateRules(rules)
 
 	// 3. Eagerly resolve Tools (cmd.Spec.Tools + skill.Spec.Tools)
-	var tools []*Tool
-	seenTools := make(map[string]bool)
-	addTool := func(t *Tool) {
-		if t == nil {
-			return
-		}
-		qn := t.QualifiedName()
-		if !seenTools[qn] {
-			seenTools[qn] = true
-			tools = append(tools, t)
-		}
-	}
-
-	collectToolsFromRefs := func(toolRefs []string) {
-		if containsWildcard(toolRefs) {
-			all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: true})
-			for _, r := range all {
-				if t, ok := r.(*Tool); ok {
-					addTool(t)
-				}
-			}
-		} else if len(toolRefs) > 0 {
-			var allTools []Resource
-			for _, tRef := range toolRefs {
-				if hasGlobMeta(tRef) {
-					if allTools == nil {
-						allTools = resolver.ListResources(QueryOptions{Kinds: []Kind{KindTool}, Effective: false})
-					}
-					for _, r := range allTools {
-						if t, ok := r.(*Tool); ok && matchRefPattern(resolver, tRef, r) {
-							addTool(t)
-						}
-					}
-					continue
-				}
-				tRes, ok := resolver.ResolveResource(tRef)
-				if !ok {
-					continue
-				}
-				if t, ok := tRes.(*Tool); ok {
-					addTool(t)
-				}
-			}
-		}
-	}
-
-	collectToolsFromRefs(cmd.Spec.Tools)
+	combinedToolRefs := slices.Clone(cmd.Spec.Tools)
 	for _, sk := range skills {
-		collectToolsFromRefs(sk.Spec.Tools)
+		combinedToolRefs = append(combinedToolRefs, sk.Spec.Tools...)
 	}
-
-	sort.Slice(tools, func(i, j int) bool {
-		return tools[i].QualifiedName() < tools[j].QualifiedName()
-	})
+	tools := resolveToolsFromRefs(resolver, combinedToolRefs)
 
 	if wsPolicy := workspaceToolPolicy(resolver); wsPolicy != nil {
 		tools = filterTools(tools, wsPolicy)
 	}
 
 	if executingAgent != nil && executingAgent.Agent != nil && executingAgent.Agent.Spec.Policies != nil && executingAgent.Agent.Spec.Policies.Tools != nil {
-		agPolicy := executingAgent.Agent.Spec.Policies.Tools.DeepCopy()
-		agPolicy.Include = nil
-		tools = filterTools(tools, agPolicy)
+		tools = filterTools(tools, executingAgent.Agent.Spec.Policies.Tools)
 	}
 
 	return &ResolvedCommand{

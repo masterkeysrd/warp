@@ -145,6 +145,12 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 		}
 		mergedGlobals["Commands"] = cmdNames
 
+		var toolNames []string
+		for _, t := range opts.Resolved.Tools {
+			toolNames = append(toolNames, t.Metadata.Name)
+		}
+		mergedGlobals["Tools"] = toolNames
+
 		for _, rl := range opts.Resolved.Rules {
 			ta.Rules = append(ta.Rules, TemplateRule{
 				Name:        rl.Metadata.Name,
@@ -272,6 +278,10 @@ type AgentSpec struct {
 	// Rules is an optional list of Rule references (Qualified or Short Names) or
 	// globs this agent is governed by. Attached rules act as always-on rules for this agent.
 	Rules []string `yaml:"rules,omitempty"`
+	// Tools is a list of Tool references (Qualified or Short Names) or globs
+	// loaded into the agent's base context. Default is [] (none). Use ["*"] to
+	// include all effective tools in scope.
+	Tools []string `yaml:"tools,omitempty"`
 	// Policies defines security and access policies.
 	Policies *Policies `yaml:"policies,omitempty"`
 }
@@ -313,6 +323,10 @@ func (in *AgentSpec) DeepCopy() *AgentSpec {
 	if in.Rules != nil {
 		out.Rules = make([]string, len(in.Rules))
 		copy(out.Rules, in.Rules)
+	}
+	if in.Tools != nil {
+		out.Tools = make([]string, len(in.Tools))
+		copy(out.Tools, in.Tools)
 	}
 	if in.Policies != nil {
 		out.Policies = in.Policies.DeepCopy()

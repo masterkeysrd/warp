@@ -78,6 +78,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 		ta = TemplateAgent{
 			Name:        opts.Resolved.Agent.Metadata.Name,
 			Description: opts.Resolved.Agent.Metadata.Description,
+			Models:      opts.Resolved.Agent.Spec.Models,
 			Dir:         opts.Resolved.Agent.Directory,
 			Path:        opts.Resolved.Agent.GetPath(),
 		}
@@ -122,6 +123,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 			ta.Subagents = append(ta.Subagents, TemplateAgent{
 				Name:        sa.Metadata.Name,
 				Description: sa.Metadata.Description,
+				Models:      sa.Spec.Models,
 				Dir:         sa.Directory,
 				Path:        sa.GetPath(),
 			})
@@ -172,6 +174,7 @@ func (a *Agent) Render(opts *AgentRenderOptions) (string, error) {
 		ta = TemplateAgent{
 			Name:        a.Metadata.Name,
 			Description: a.Metadata.Description,
+			Models:      a.Spec.Models,
 			Dir:         a.Directory,
 			Path:        a.GetPath(),
 		}
@@ -258,9 +261,10 @@ type AgentSpec struct {
 	// (e.g., "human", "agent"). An empty list means the agent can be triggered
 	// by anything.
 	Triggers []string `yaml:"triggers,omitempty,flow"`
-	// Models is a prioritized list of LLM model identifiers to use (e.g.,
-	// ["gpt-4o", "claude-3-5-sonnet"]). The runtime should attempt to use the
-	// first available model.
+	// Models is a prioritized list of allowed LLM model identifiers or aliases
+	// (e.g., ["@default", "@fast"] or ["gpt-4o", "claude-3-5-sonnet"]). The
+	// runtime uses the first available model by default, and when non-empty,
+	// restricts caller-requested model overrides to this list.
 	Models []string `yaml:"models,omitempty,flow"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature *float64 `yaml:"temperature,omitempty"`

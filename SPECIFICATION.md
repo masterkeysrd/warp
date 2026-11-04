@@ -270,7 +270,7 @@ runtime.
 |---------------|----------|:--------:|---------|----------------------------------------------------------------------------------------------------|
 | `extends`     | string   |          | —       | Qualified Name (`namespace/Agent/name`) or Short Name of another Agent to extend. When set, the engine merges the parent's `skills` and `policies` blocks. |
 | `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent: standard values are `"human"`, `"agent"`, `"system"` (custom strings also allowed). An empty list means it can be triggered by anything. |
-| `models`      | string[] |          | `[]`    | A prioritized list of LLM model identifiers (e.g. `["gpt-4o", "claude-3-5-sonnet"]`). The runtime should use the first available model. |
+| `models`      | string[] |          | `[]`    | A prioritized list of allowed LLM model identifiers or aliases (e.g. `["@default", "@fast"]` or `["gpt-4o", "claude-3-5-sonnet"]`). The runtime uses the first available model by default, and when non-empty, restricts caller-requested model overrides to this list. |
 | `temperature` | float    |          | `0.0`   | Sampling temperature in the range `0.0`–`2.0`. Higher values produce more varied output.          |
 | `thinking`    | object   |          | —       | Runtime configuration for extended reasoning (`AgentThinking`: `type`, `enabled`, `effort`, `budgetTokens`). Overrides the provider's default. |
 | `skills`      | string[] |          | `[]`    | Names, qualified refs, or globs of `Skill` resources this agent is allowed to use. Default is `[]` (none). Use `["*"]` to include all effective skills in scope. |
@@ -1613,7 +1613,7 @@ When rendering resources via their typed `Render` methods (`Workspace.Render`, `
 | `{{.Workspace}}` | `.Dir`, `.Path` | Workspace root directory and path to `WORKSPACE.md` (also available as `$WorkspaceDir`, `$WorkspacePath`). |
 | `{{.Project}}` | `.Name`, `.DisplayName`, `.Dir` | Active project slug, display name, and absolute directory path (also available as `$ProjectDir`). |
 | `{{.Context}}` | `.Path`, `.Instructions` | Path to the project's `AGENTS.md` file and its raw instructions (path also available as `$ContextPath`). |
-| `{{.Agent}}` | `.Name`, `.Description`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules` | Hydrated metadata and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`, `[]TemplateRule`) for the agent. |
+| `{{.Agent}}` | `.Name`, `.Description`, `.Models`, `.Dir`, `.Path`, `.Skills`, `.Tools`, `.Commands`, `.Subagents`, `.Rules` | Hydrated metadata, allowed model references (`[]string`), and resolved capabilities (`[]TemplateSkill`, `[]TemplateTool`, `[]TemplateCommand`, `[]TemplateAgent`, `[]TemplateRule`) for the agent. |
 | `{{.Skill}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path` | Skill metadata, routing hints, tools, argument definitions, directory, and file path (also available as `$SkillDir`, `$SkillPath`). |
 | `{{.Rule}}` | `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Dir`, `.Path`, `.Priority` | Rule metadata, routing hints, priority, directory, and file path (also available as `$RuleDir`, `$RulePath`). |
 | `{{.Command}}` | `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, `.Path`, `.Tools`, `.Skills`, `.Rules` | Command metadata, executing agent, context mode, argument definitions, directory, file path, effective tools, eager skills, and eager rules (directory and file path also available as `$CommandDir`, `$CommandPath`). |
@@ -1691,7 +1691,7 @@ To avoid saturating the LLM context window while retaining access to large tools
 - **Advised Capabilities (Progressive Disclosure)**:
   - **Skills (`agent.spec.skills`)**: Rather than inlining full skill bodies into the system prompt, runtimes expose skills as an advised capability catalog (`Name`, `Description`, `ArgumentHint`, and `UseWhen`/`Keywords`). The agent reasons about when a skill is needed; only when a skill is activated are its detailed instructions and associated tools (`skill.spec.tools`) loaded into conversational context.
   - **Commands (`agent.spec.commands`)**: Declared commands are presented as compact invocation definitions (`Name`, `Description`, `ArgumentHint`, and arguments). Full command instructions are held out until invoked.
-  - **Subagents (`agent.spec.subagents`)**: Declared subagents are presented with their names, descriptions, and delegable scopes. Instead of merging subagent instructions into the primary session, delegation occurs via subagent handoff or structured subagent invocation calls.
+  - **Subagents (`agent.spec.subagents`)**: Declared subagents are presented with their names, descriptions, allowed models (`Models`), and delegable scopes. Instead of merging subagent instructions into the primary session, delegation occurs via subagent handoff (`ra.ResolveSubagent`) or structured subagent invocation calls (using `subagent.ResolveModel` to validate any caller-requested model or alias against `subagent.spec.models`).
 
 - **Eager Injection**:
   - **Always-on Rules**: Rules with `spec.triggers.always: true` are unconditionally materialized into the system prompt during session bootstrap.

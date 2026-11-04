@@ -427,7 +427,8 @@ func TestAgentRender(t *testing.T) {
 			},
 		},
 		Spec: AgentSpec{
-			Instructions: "Agent: {{.Agent.Name}} | Dir: {{.Agent.Dir}} | Project: {{.Project.Name}} | Skills: {{range .Skills}}{{.}} {{end}}| Tools: {{range .Agent.Tools}}{{.Name}}{{end}} | Commands: {{range .Commands}}{{.}} {{end}}| Subagents: {{range .Subagents}}{{.}} {{end}}| RichSubagents: {{range .Agent.Subagents}}{{.Name}} {{end}}",
+			Models:       []string{"@default", "@smart"},
+			Instructions: "Agent: {{.Agent.Name}} | Models: {{range .Agent.Models}}{{.}} {{end}}| Dir: {{.Agent.Dir}} | Project: {{.Project.Name}} | Skills: {{range .Skills}}{{.}} {{end}}| Tools: {{range .Agent.Tools}}{{.Name}}{{end}} | Commands: {{range .Commands}}{{.}} {{end}}| Subagents: {{range .Subagents}}{{.}} {{end}}| RichSubagents: {{range .Agent.Subagents}}{{.Name}}({{range .Models}}{{.}} {{end}}) {{end}}",
 		},
 	}
 
@@ -459,6 +460,9 @@ func TestAgentRender(t *testing.T) {
 				BaseResource: BaseResource{
 					Metadata: Metadata{Name: "writer"},
 				},
+				Spec: AgentSpec{
+					Models: []string{"@fast", "@default"},
+				},
 			},
 		},
 	}
@@ -474,7 +478,7 @@ func TestAgentRender(t *testing.T) {
 		t.Fatalf("Agent.Render failed: %v", err)
 	}
 
-	expected := "Agent: researcher | Dir: /Users/user/code/warp/.agents | Project: cli | Skills: go-expert | Tools: view_file | Commands: run-tests | Subagents: writer | RichSubagents: writer "
+	expected := "Agent: researcher | Models: @default @smart | Dir: /Users/user/code/warp/.agents | Project: cli | Skills: go-expert | Tools: view_file | Commands: run-tests | Subagents: writer | RichSubagents: writer(@fast @default ) "
 	if res != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, res)
 	}

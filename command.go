@@ -97,6 +97,7 @@ func (c *Command) Render(opts *CommandRenderOptions) (string, error) {
 		ta := TemplateAgent{
 			Name:        ag.Metadata.Name,
 			Description: ag.Metadata.Description,
+			Models:      ag.Spec.Models,
 			Dir:         ag.Directory,
 			Path:        ag.GetPath(),
 		}

@@ -41,6 +41,7 @@ type TemplateContext struct {
 type TemplateAgent struct {
 	Name        string
 	Description string
+	Models      []string
 	Dir         string
 	Path        string
 	Skills      []TemplateSkill
@@ -244,6 +245,7 @@ func buildTemplateData(res Resource, opts *RenderOptions) (map[string]any, error
 			ta := TemplateAgent{
 				Name:        v.Metadata.Name,
 				Description: v.Metadata.Description,
+				Models:      v.Spec.Models,
 				Dir:         v.Directory,
 				Path:        v.GetPath(),
 			}

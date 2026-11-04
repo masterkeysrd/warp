@@ -24,7 +24,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Models is a prioritized list of LLM model identifiers to use (e.g.,\n[\"gpt-4o\", \"claude-3-5-sonnet\"]). The runtime should attempt to use the\nfirst available model."
+          "description": "Models is a prioritized list of allowed LLM model identifiers or aliases\n(e.g., [\"@default\", \"@fast\"] or [\"gpt-4o\", \"claude-3-5-sonnet\"]). The\nruntime uses the first available model by default, and when non-empty,\nrestricts caller-requested model overrides to this list."
         },
         "temperature": {
           "type": "number",
@@ -1335,7 +1335,7 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Models is a prioritized list of LLM model identifiers to use (e.g.,\n[\"gpt-4o\", \"claude-3-5-sonnet\"]). The runtime should attempt to use the\nfirst available model."
+                    "description": "Models is a prioritized list of allowed LLM model identifiers or aliases\n(e.g., [\"@default\", \"@fast\"] or [\"gpt-4o\", \"claude-3-5-sonnet\"]). The\nruntime uses the first available model by default, and when non-empty,\nrestricts caller-requested model overrides to this list."
                   },
                   "temperature": {
                     "type": "number",

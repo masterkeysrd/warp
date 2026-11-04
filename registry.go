@@ -2183,13 +2183,26 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	}
 
 	// 4. Resolve Subagents
+	resolveCandidateSubagent := func(a *Agent) *Agent {
+		if a == nil {
+			return nil
+		}
+		if a.Spec.Extends != "" {
+			if merged, err := resolveAgentChain(resolver, a.QualifiedName(), make(map[string]struct{})); err == nil {
+				return merged
+			}
+		}
+		return a
+	}
+
 	var subagents []*Agent
 	if containsWildcard(ag.Spec.Subagents) {
 		all := resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: true})
 		for _, r := range all {
 			if a, ok := r.(*Agent); ok {
-				if canBeTriggeredByAgent(a) {
-					subagents = append(subagents, a)
+				candidate := resolveCandidateSubagent(a)
+				if canBeTriggeredByAgent(candidate) {
+					subagents = append(subagents, candidate)
 				}
 			}
 		}
@@ -2201,8 +2214,11 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 					allAgents = resolver.ListResources(QueryOptions{Kinds: []Kind{KindAgent}, Effective: false})
 				}
 				for _, r := range allAgents {
-					if a, ok := r.(*Agent); ok && canBeTriggeredByAgent(a) && matchRefPattern(resolver, saRef, r) {
-						subagents = append(subagents, a)
+					if a, ok := r.(*Agent); ok && matchRefPattern(resolver, saRef, r) {
+						candidate := resolveCandidateSubagent(a)
+						if canBeTriggeredByAgent(candidate) {
+							subagents = append(subagents, candidate)
+						}
 					}
 				}
 				continue
@@ -2212,8 +2228,9 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 				continue
 			}
 			if a, ok := r.(*Agent); ok {
-				if canBeTriggeredByAgent(a) {
-					subagents = append(subagents, a)
+				candidate := resolveCandidateSubagent(a)
+				if canBeTriggeredByAgent(candidate) {
+					subagents = append(subagents, candidate)
 				}
 			}
 		}
@@ -2303,8 +2320,12 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		return mcps[i].QualifiedName() < mcps[j].QualifiedName()
 	})
 
+	// 7. Resolve Models
+	models := resolver.ResolveModels(ModelRoleCompletion, ag.Spec.Models...)
+
 	return &ResolvedAgent{
 		Agent:           ag,
+		Models:          models,
 		Tools:           tools,
 		Skills:          skills,
 		Commands:        commands,
@@ -2434,6 +2455,123 @@ func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*T
 // and filtering effective tools against the agent's security policies.
 func (ra *ResolvedAgent) ResolveCommand(resolver Resolver, ref string) (*ResolvedCommand, error) {
 	return resolveCommand(resolver, ra, ref)
+}
+
+// ResolveSubagent resolves a subagent for this resolved agent, verifying that the
+// referenced agent is present in ra.Subagents (and can be triggered by an agent)
+// before returning the fully merged and policy-filtered *ResolvedAgent.
+func (ra *ResolvedAgent) ResolveSubagent(resolver Resolver, ref string) (*ResolvedAgent, error) {
+	if ra == nil {
+		return nil, fmt.Errorf("resolved agent is nil")
+	}
+	res, ok := resolver.ResolveResource(ref)
+	if !ok {
+		return nil, fmt.Errorf("subagent %q not found", ref)
+	}
+	target, ok := res.(*Agent)
+	if !ok {
+		return nil, fmt.Errorf("resource %q is a %s, not an Agent", ref, res.GetKind())
+	}
+
+	found := false
+	for _, sa := range ra.Subagents {
+		if sa != nil && sa.QualifiedName() == target.QualifiedName() {
+			found = true
+			break
+		}
+	}
+	if !found {
+		agentName := "agent"
+		if ra.Agent != nil && ra.Agent.Metadata.Name != "" {
+			agentName = ra.Agent.Metadata.Name
+		}
+		return nil, fmt.Errorf("subagent %q is not enabled for agent %q", ref, agentName)
+	}
+
+	return resolveExecutableAgent(resolver, target.QualifiedName())
+}
+
+// ResolveModels returns the prioritized list of resolved completion models for this
+// agent. When requested is empty, it resolves ra.Agent.Spec.Models (falling back to
+// workspace/provider completion defaults). When requested is non-empty and the agent
+// declares a non-empty spec.models list, every requested model or alias must be
+// permitted by ra.Agent.Spec.Models (either by direct reference/alias match or by
+// resolving to one of the agent's allowed models).
+func (ra *ResolvedAgent) ResolveModels(resolver Resolver, requested ...string) ([]ResolvedModel, error) {
+	if ra == nil || ra.Agent == nil {
+		return nil, fmt.Errorf("resolved agent is nil")
+	}
+
+	var req []string
+	for _, m := range requested {
+		if m != "" {
+			req = append(req, m)
+		}
+	}
+
+	if len(req) == 0 {
+		return resolver.ResolveModels(ModelRoleCompletion, ra.Agent.Spec.Models...), nil
+	}
+
+	if len(ra.Agent.Spec.Models) == 0 {
+		return resolver.ResolveModels(ModelRoleCompletion, req...), nil
+	}
+
+	allowedResolved := resolver.ResolveModels(ModelRoleCompletion, ra.Agent.Spec.Models...)
+	allowedQualified := make(map[string]bool, len(allowedResolved))
+	for _, am := range allowedResolved {
+		if am.QualifiedID != "" {
+			allowedQualified[am.QualifiedID] = true
+		}
+	}
+
+	agentName := ra.Agent.Metadata.Name
+	if agentName == "" {
+		agentName = "agent"
+	}
+
+	var out []ResolvedModel
+	for _, rRef := range req {
+		candidates := resolver.ResolveModels(ModelRoleCompletion, rRef)
+		if slices.Contains(ra.Agent.Spec.Models, rRef) {
+			out = append(out, candidates...)
+			continue
+		}
+		var matched []ResolvedModel
+		for _, c := range candidates {
+			if allowedQualified[c.QualifiedID] {
+				matched = append(matched, c)
+			}
+		}
+		if len(matched) == 0 {
+			return nil, fmt.Errorf("model %q is not allowed for agent %q (allowed: %v)", rRef, agentName, ra.Agent.Spec.Models)
+		}
+		out = append(out, matched...)
+	}
+
+	return out, nil
+}
+
+// ResolveModel resolves a single completion model for this agent (using the agent's
+// default priority order when requested is empty, or validating requested against
+// ra.Agent.Spec.Models when provided), returning the first candidate backed by a
+// registered ModelProvider.
+func (ra *ResolvedAgent) ResolveModel(resolver Resolver, requested ...string) (*ResolvedModel, error) {
+	models, err := ra.ResolveModels(resolver, requested...)
+	if err != nil {
+		return nil, err
+	}
+	for i := range models {
+		if models[i].Provider != nil {
+			rm := models[i]
+			return &rm, nil
+		}
+	}
+	agentName := "agent"
+	if ra != nil && ra.Agent != nil && ra.Agent.Metadata.Name != "" {
+		agentName = ra.Agent.Metadata.Name
+	}
+	return nil, fmt.Errorf("no registered model provider found for agent %q", agentName)
 }
 
 // RulesForPath returns all rules in the resolved agent that match targetPath,

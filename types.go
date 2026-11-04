@@ -390,6 +390,7 @@ func (p *ToolPolicies) EvaluateTool(tool *Tool) ToolPolicyAction {
 // and capabilities resolved and filtered by policies.
 type ResolvedAgent struct {
 	Agent           *Agent
+	Models          []ResolvedModel
 	Tools           []*Tool
 	Skills          []Skill
 	Commands        []*Command

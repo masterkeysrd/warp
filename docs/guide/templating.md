@@ -48,12 +48,13 @@ The agent has access to its own metadata, which is useful for creating generic, 
 | :--- | :--- | :--- |
 | `{{.Agent.Name}}` | The name of the agent. | `codebase-researcher` |
 | `{{.Agent.Description}}` | The description of the agent. | `Explores project codebases.` |
+| `{{.Agent.Models}}` | The prioritized list of allowed model identifiers or aliases configured for the agent. | `["@default", "@fast"]` |
 | `{{.Agent.Dir}}` | The absolute filesystem path to the directory containing the agent definition. | `/Users/user/code/warp/.agents` |
 | `{{.Agent.Path}}` | The absolute filesystem path to the agent definition file. | `/Users/user/code/warp/.agents/researcher.md` |
 | `{{.Agent.Skills}}` | A list of skill objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Keywords`, `.UseWhen`, `.Tools`, `.ArgumentHint`, `.Arguments`, `.Dir`, and `.Path`. | `{{range .Agent.Skills}}{{.Name}}: {{.Description}}{{end}}` |
 | `{{.Agent.Tools}}` | A list of tool objects the agent has access to. Each object exposes `.Name`, `.Description`, `.Dir`, and `.Path`. | `{{range .Agent.Tools}}{{.Name}}: {{.Description}} ({{.Path}}){{end}}` |
 | `{{.Agent.Commands}}` | A list of command objects the agent can invoke. Each object exposes `.Name`, `.Description`, `.Agent`, `.Context`, `.ArgumentHint`, `.Arguments`, `.Dir`, and `.Path`. | `{{range .Agent.Commands}}{{.Name}}: {{.Description}}{{end}}` |
-| `{{.Agent.Subagents}}` | A list of subagent objects the agent can delegate to. Each object exposes `.Name`, `.Description`, `.Dir`, and `.Path`. | `{{range .Agent.Subagents}}{{.Name}}: {{.Description}}{{end}}` |
+| `{{.Agent.Subagents}}` | A list of subagent objects the agent can delegate to. Each object exposes `.Name`, `.Description`, `.Models`, `.Dir`, and `.Path`. | `{{range .Agent.Subagents}}{{.Name}} (models: {{.Models}}): {{.Description}}{{end}}` |
 | `{{.Agent.Rules}}` | A list of rule objects governing the agent (sorted by priority descending). Each object exposes `.Name`, `.Description`, `.UseWhen`, `.Keywords`, `.Priority`, `.Dir`, and `.Path`. | `{{range .Agent.Rules}}{{.Name}} (P{{.Priority}}): {{.UseWhen}}{{end}}` |
 
 #### 5. Global Variables (Implementor Scope)

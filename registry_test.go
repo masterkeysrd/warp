@@ -4884,3 +4884,148 @@ func TestResolvedAgent_RulesForPath_And_RulesForTool(t *testing.T) {
 		t.Errorf("nil agent should return nil for RulesForTool")
 	}
 }
+
+func TestResolvedAgent_ResolveSubagent_And_ResolveModels(t *testing.T) {
+	trueVal := true
+	anthropic := &ModelProvider{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindModelProvider,
+			Namespace:  NamespaceWorkspace,
+			Metadata:   Metadata{Name: "anthropic"},
+		},
+		Spec: ModelProviderSpec{
+			DefaultModels: &ModelDefaults{
+				Completion: "claude-3-7-sonnet",
+			},
+			Models: []ProviderModel{
+				{
+					ID:           "claude-3-5-haiku",
+					Aliases:      []string{"fast"},
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal},
+				},
+				{
+					ID:           "claude-3-7-sonnet",
+					Aliases:      []string{"smart"},
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal},
+				},
+				{
+					ID:           "claude-3-opus",
+					Aliases:      []string{"heavy"},
+					Capabilities: &ProviderModelCapabilities{Completion: &trueVal},
+				},
+			},
+		},
+	}
+
+	wsDef := &WorkspaceDef{
+		BaseResource: BaseResource{
+			APIVersion: APIVersion,
+			Kind:       KindWorkspace,
+			Metadata:   Metadata{Name: "ws"},
+		},
+		Spec: WorkspaceDefSpec{
+			DefaultProvider: "anthropic",
+		},
+	}
+
+	reg := NewRegistry(&Workspace{Def: wsDef})
+	reg.Set(anthropic.QualifiedName(), anthropic)
+
+	// Base subagent with models ["@default", "@fast"]
+	baseSubagent := agentWithSpec(NamespaceWorkspace, "base-researcher", AgentSpec{
+		Triggers: []string{"agent"},
+		Models:   []string{"@default", "@fast"},
+	})
+	// Child subagent inheriting models from base-researcher
+	childSubagent := agentWithSpec(NamespaceWorkspace, "researcher", AgentSpec{
+		Extends: "base-researcher",
+	})
+	// Unrestricted subagent (empty models -> any model allowed)
+	flexibleSubagent := agentWithSpec(NamespaceWorkspace, "flexible", AgentSpec{
+		Triggers: []string{"agent"},
+	})
+	// Non-enabled subagent
+	secretSubagent := agentWithSpec(NamespaceWorkspace, "secret", AgentSpec{
+		Triggers: []string{"agent"},
+	})
+	// Parent orchestrator agent
+	orchestrator := agentWithSpec(NamespaceWorkspace, "orchestrator", AgentSpec{
+		Models:    []string{"@smart"},
+		Subagents: []string{"researcher", "flexible"},
+	})
+
+	reg.Set(baseSubagent.QualifiedName(), baseSubagent)
+	reg.Set(childSubagent.QualifiedName(), childSubagent)
+	reg.Set(flexibleSubagent.QualifiedName(), flexibleSubagent)
+	reg.Set(secretSubagent.QualifiedName(), secretSubagent)
+	reg.Set(orchestrator.QualifiedName(), orchestrator)
+
+	resolvedOrch, err := reg.ResolveAgent("orchestrator")
+	if err != nil {
+		t.Fatalf("ResolveAgent(orchestrator) failed: %v", err)
+	}
+
+	// 1. ResolvedAgent.Models populated on ResolveAgent
+	if len(resolvedOrch.Models) != 1 || resolvedOrch.Models[0].QualifiedID != "anthropic/claude-3-7-sonnet" {
+		t.Errorf("expected orchestrator Models [anthropic/claude-3-7-sonnet], got %v", resolvedOrch.Models)
+	}
+
+	// 2. Subagent in resolvedOrch.Subagents has inherited Models from base-researcher
+	var foundResearcher *Agent
+	for _, sa := range resolvedOrch.Subagents {
+		if sa.Metadata.Name == "researcher" {
+			foundResearcher = sa
+			break
+		}
+	}
+	if foundResearcher == nil {
+		t.Fatalf("expected researcher in orchestrator.Subagents")
+	}
+	if !slicesEqual(foundResearcher.Spec.Models, []string{"@default", "@fast"}) {
+		t.Errorf("expected researcher subagent to inherit models [@default @fast], got %v", foundResearcher.Spec.Models)
+	}
+
+	// 3. ResolveSubagent succeeds for enabled subagent and fails for unenabled/missing
+	resolvedRes, err := resolvedOrch.ResolveSubagent(reg, "researcher")
+	if err != nil {
+		t.Fatalf("ResolveSubagent(researcher) failed: %v", err)
+	}
+	if _, err := resolvedOrch.ResolveSubagent(reg, "secret"); err == nil {
+		t.Errorf("expected ResolveSubagent(secret) to fail when not enabled on orchestrator")
+	}
+	if _, err := resolvedOrch.ResolveSubagent(reg, "non-existent"); err == nil {
+		t.Errorf("expected ResolveSubagent(non-existent) to fail")
+	}
+
+	// 4. ResolveModel with no override picks the first model in spec.models (@default -> claude-3-7-sonnet)
+	defModel, err := resolvedRes.ResolveModel(reg)
+	if err != nil || defModel == nil || defModel.QualifiedID != "anthropic/claude-3-7-sonnet" {
+		t.Errorf("expected default model anthropic/claude-3-7-sonnet, got %v (err: %v)", defModel, err)
+	}
+
+	// 5. ResolveModel with allowed alias (@fast) or concrete model ID (claude-3-5-haiku) succeeds
+	fastModel, err := resolvedRes.ResolveModel(reg, "@fast")
+	if err != nil || fastModel == nil || fastModel.QualifiedID != "anthropic/claude-3-5-haiku" {
+		t.Errorf("expected @fast -> anthropic/claude-3-5-haiku, got %v (err: %v)", fastModel, err)
+	}
+	directHaiku, err := resolvedRes.ResolveModel(reg, "claude-3-5-haiku")
+	if err != nil || directHaiku == nil || directHaiku.QualifiedID != "anthropic/claude-3-5-haiku" {
+		t.Errorf("expected claude-3-5-haiku -> anthropic/claude-3-5-haiku, got %v (err: %v)", directHaiku, err)
+	}
+
+	// 6. ResolveModel with disallowed alias (@heavy) fails
+	if _, err := resolvedRes.ResolveModel(reg, "@heavy"); err == nil {
+		t.Errorf("expected @heavy to be rejected for researcher (allowed: [@default @fast])")
+	}
+
+	// 7. Unrestricted subagent (spec.models: []) allows any model override
+	resolvedFlex, err := resolvedOrch.ResolveSubagent(reg, "flexible")
+	if err != nil {
+		t.Fatalf("ResolveSubagent(flexible) failed: %v", err)
+	}
+	heavyModel, err := resolvedFlex.ResolveModel(reg, "@heavy")
+	if err != nil || heavyModel == nil || heavyModel.QualifiedID != "anthropic/claude-3-opus" {
+		t.Errorf("expected unrestricted subagent to allow @heavy, got %v (err: %v)", heavyModel, err)
+	}
+}

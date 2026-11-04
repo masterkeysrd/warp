@@ -77,6 +77,7 @@ func (s *Skill) Render(opts *SkillRenderOptions) (string, error) {
 		ta := TemplateAgent{
 			Name:        opts.Agent.Metadata.Name,
 			Description: opts.Agent.Metadata.Description,
+			Models:      opts.Agent.Spec.Models,
 			Dir:         opts.Agent.Directory,
 			Path:        opts.Agent.GetPath(),
 		}

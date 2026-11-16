@@ -24,7 +24,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Models is a prioritized list of allowed LLM model identifiers or aliases\n(e.g., [\"@default\", \"@fast\"] or [\"gpt-4o\", \"claude-3-5-sonnet\"]). The\nruntime uses the first available model by default, and when non-empty,\nrestricts caller-requested model overrides to this list."
+          "description": "Models is a prioritized list of allowed LLM model identifiers, aliases,\nreserved \"@inherit\", or glob/negation patterns (e.g., [\"@default\", \"@fast\"],\n[\"@inherit\", \"*\"], or [\"@fast\", \"ollama/*\", \"!*/expensive-*\"]). The runtime\nuses the first available concrete model/alias by default (skipping globs and\nunresolved \"@inherit\"), and when non-empty, restricts caller-requested model\noverrides to entries matched by this list."
         },
         "temperature": {
           "type": "number",
@@ -1389,7 +1389,7 @@
                       "type": "string"
                     },
                     "type": "array",
-                    "description": "Models is a prioritized list of allowed LLM model identifiers or aliases\n(e.g., [\"@default\", \"@fast\"] or [\"gpt-4o\", \"claude-3-5-sonnet\"]). The\nruntime uses the first available model by default, and when non-empty,\nrestricts caller-requested model overrides to this list."
+                    "description": "Models is a prioritized list of allowed LLM model identifiers, aliases,\nreserved \"@inherit\", or glob/negation patterns (e.g., [\"@default\", \"@fast\"],\n[\"@inherit\", \"*\"], or [\"@fast\", \"ollama/*\", \"!*/expensive-*\"]). The runtime\nuses the first available concrete model/alias by default (skipping globs and\nunresolved \"@inherit\"), and when non-empty, restricts caller-requested model\noverrides to entries matched by this list."
                   },
                   "temperature": {
                     "type": "number",

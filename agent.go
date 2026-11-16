@@ -261,10 +261,12 @@ type AgentSpec struct {
 	// (e.g., "human", "agent"). An empty list means the agent can be triggered
 	// by anything.
 	Triggers []string `yaml:"triggers,omitempty,flow"`
-	// Models is a prioritized list of allowed LLM model identifiers or aliases
-	// (e.g., ["@default", "@fast"] or ["gpt-4o", "claude-3-5-sonnet"]). The
-	// runtime uses the first available model by default, and when non-empty,
-	// restricts caller-requested model overrides to this list.
+	// Models is a prioritized list of allowed LLM model identifiers, aliases,
+	// reserved "@inherit", or glob/negation patterns (e.g., ["@default", "@fast"],
+	// ["@inherit", "*"], or ["@fast", "ollama/*", "!*/expensive-*"]). The runtime
+	// uses the first available concrete model/alias by default (skipping globs and
+	// unresolved "@inherit"), and when non-empty, restricts caller-requested model
+	// overrides to entries matched by this list.
 	Models []string `yaml:"models,omitempty,flow"`
 	// Temperature controls the randomness of the model's output (0.0–2.0).
 	Temperature *float64 `yaml:"temperature,omitempty"`

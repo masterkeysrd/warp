@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -367,8 +368,104 @@ func (in *ProviderModel) DeepCopy() *ProviderModel {
 	return out
 }
 
+// ModelAliasInherit is the reserved alias representing the delegating
+// parent/caller session's active model during subagent invocation.
+const ModelAliasInherit = "@inherit"
+
 func normalizeAliasName(s string) string {
 	return strings.TrimPrefix(s, "@")
+}
+
+func isInheritAlias(ref string) bool {
+	return strings.EqualFold(strings.TrimSpace(ref), ModelAliasInherit)
+}
+
+func isReservedInheritAliasName(name string) bool {
+	return strings.EqualFold(normalizeAliasName(strings.TrimSpace(name)), "inherit")
+}
+
+func stripModelNegation(pat string) (pattern string, negated bool) {
+	if after, ok := strings.CutPrefix(pat, "!"); ok {
+		return after, true
+	}
+	return pat, false
+}
+
+func isModelGlobEntry(ref string) bool {
+	if ref == "*" {
+		return true
+	}
+	if _, negated := stripModelNegation(ref); negated {
+		return true
+	}
+	return hasGlobMeta(ref)
+}
+
+// compileModelGlob compiles a model glob pattern (without leading '!') into a
+// regular expression. Unlike file path globs, '*' matches across '/' so
+// patterns like "ollama/*" match provider-qualified model IDs containing slashes.
+func compileModelGlob(pattern string) (*regexp.Regexp, error) {
+	if pattern == "" {
+		return nil, fmt.Errorf("empty model pattern")
+	}
+	var sb strings.Builder
+	sb.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch c {
+		case '*':
+			sb.WriteString(".*")
+		case '?':
+			sb.WriteByte('.')
+		case '[':
+			end := i + 1
+			if end < len(pattern) && pattern[end] == '!' {
+				end++
+			}
+			if end < len(pattern) && pattern[end] == ']' {
+				end++
+			}
+			for end < len(pattern) && pattern[end] != ']' {
+				end++
+			}
+			if end >= len(pattern) {
+				return nil, fmt.Errorf("unclosed character class in model glob %q", pattern)
+			}
+			cls := pattern[i+1 : end]
+			sb.WriteByte('[')
+			if strings.HasPrefix(cls, "!") {
+				sb.WriteByte('^')
+				cls = cls[1:]
+			}
+			sb.WriteString(cls)
+			sb.WriteByte(']')
+			i = end
+		case '.', '+', '(', ')', '|', '{', '}', '^', '$', '\\':
+			sb.WriteByte('\\')
+			sb.WriteByte(c)
+		default:
+			sb.WriteByte(c)
+		}
+	}
+	sb.WriteString("$")
+	return regexp.Compile(sb.String())
+}
+
+func matchModelGlob(pattern, qualifiedID, modelID, rawRef string) bool {
+	rx, err := compileModelGlob(pattern)
+	if err != nil {
+		return false
+	}
+	if qualifiedID != "" && rx.MatchString(qualifiedID) {
+		return true
+	}
+	if !strings.Contains(pattern, "/") && modelID != "" && rx.MatchString(modelID) {
+		return true
+	}
+	if rawRef != "" && rx.MatchString(rawRef) {
+		return true
+	}
+	return false
 }
 
 func isAliasRef(ref string) (providerPrefix string, aliasName string, ok bool) {

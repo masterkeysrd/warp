@@ -361,8 +361,14 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 				if normalizeAliasName(k) == "" {
 					return fmt.Errorf("workspace modelAliases: alias key cannot be empty")
 				}
+				if isReservedInheritAliasName(k) {
+					return fmt.Errorf("workspace modelAliases: %q is a reserved alias", k)
+				}
 				if strings.TrimSpace(v) == "" {
 					return fmt.Errorf("workspace modelAliases %q: target model cannot be empty", k)
+				}
+				if err := rejectReservedInheritRef(fmt.Sprintf("workspace modelAliases %q", k), v); err != nil {
+					return err
 				}
 			}
 		}
@@ -408,6 +414,19 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 				}
 			}
 			for _, mRef := range agent.Spec.Models {
+				if isInheritAlias(mRef) {
+					continue
+				}
+				if _, aliasName, isAlias := isAliasRef(mRef); isAlias && strings.EqualFold(aliasName, "inherit") {
+					return fmt.Errorf("agent %s: %q cannot be provider-prefixed; use %q", name, mRef, ModelAliasInherit)
+				}
+				if isModelGlobEntry(mRef) {
+					pat, _ := stripModelNegation(mRef)
+					if _, err := compileModelGlob(pat); err != nil {
+						return fmt.Errorf("agent %s: invalid model glob %q: %w", name, mRef, err)
+					}
+					continue
+				}
 				if len(r.findProvidersLocked()) > 0 {
 					if _, _, isAlias := isAliasRef(mRef); isAlias {
 						if err := r.validateAliasModelRefLocked(fmt.Sprintf("agent %s", name), mRef, ModelRoleCompletion); err != nil {
@@ -535,6 +554,9 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 					if norm == "" {
 						return fmt.Errorf("provider %s model %q: alias cannot be empty", name, m.ID)
 					}
+					if isReservedInheritAliasName(a) {
+						return fmt.Errorf("provider %s model %q: alias %q is reserved", name, m.ID, a)
+					}
 					if existingID, exists := seenAliases[norm]; exists {
 						return fmt.Errorf("provider %s: duplicate alias %q on models %q and %q", name, a, existingID, m.ID)
 					}
@@ -570,6 +592,9 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 		}
 		if cmd, ok := res.(*Command); ok {
 			for _, mRef := range cmd.Spec.Models {
+				if err := rejectReservedInheritRef(fmt.Sprintf("command %s", name), mRef); err != nil {
+					return err
+				}
 				if len(r.findProvidersLocked()) > 0 {
 					if _, _, isAlias := isAliasRef(mRef); isAlias {
 						if err := r.validateAliasModelRefLocked(fmt.Sprintf("command %s", name), mRef, ModelRoleCompletion); err != nil {
@@ -700,6 +725,9 @@ func (r *Registry) validateDecisionLocked(name string, dec *Decision) error {
 		}
 	}
 	for _, mRef := range dec.Spec.Models {
+		if err := rejectReservedInheritRef(fmt.Sprintf("decision %s", name), mRef); err != nil {
+			return err
+		}
 		if len(r.findProvidersLocked()) > 0 {
 			if _, _, isAlias := isAliasRef(mRef); isAlias {
 				if err := r.validateAliasModelRefLocked(fmt.Sprintf("decision %s", name), mRef, ModelRoleDecision); err != nil {
@@ -741,6 +769,9 @@ func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) 
 		if ref == "" {
 			return nil
 		}
+		if err := rejectReservedInheritRef(fmt.Sprintf("%s defaultModels.%s", scope, roleStr), ref); err != nil {
+			return err
+		}
 		if hasProviders {
 			if _, _, isAlias := isAliasRef(ref); isAlias {
 				if err := r.validateAliasModelRefLocked(fmt.Sprintf("%s defaultModels.%s", scope, roleStr), ref, role); err != nil {
@@ -776,7 +807,22 @@ func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) 
 
 func validateProviderDefaultModels(name string, mp *ModelProvider) error {
 	dm := mp.Spec.DefaultModels
-	if dm == nil || len(mp.Spec.Models) == 0 {
+	if dm == nil {
+		return nil
+	}
+	for _, entry := range []struct {
+		roleStr string
+		ref     string
+	}{
+		{"completion", dm.Completion},
+		{"decision", dm.Decision},
+		{"embedding", dm.Embedding},
+	} {
+		if err := rejectReservedInheritRef(fmt.Sprintf("provider %s defaultModels.%s", name, entry.roleStr), entry.ref); err != nil {
+			return err
+		}
+	}
+	if len(mp.Spec.Models) == 0 {
 		return nil
 	}
 	findModelOrAlias := func(ref string) *ProviderModel {
@@ -919,10 +965,20 @@ func (r *Registry) findDeclaredModelForRoleLocked(ref string, role ModelRole) *P
 	return nil
 }
 
+func rejectReservedInheritRef(contextStr, ref string) error {
+	if _, aliasName, isAlias := isAliasRef(ref); isAlias && strings.EqualFold(aliasName, "inherit") {
+		return fmt.Errorf("%s: %q is a reserved alias and can only be used in Agent spec.models", contextStr, ref)
+	}
+	return nil
+}
+
 func (r *Registry) validateAliasModelRefLocked(contextStr, ref string, role ModelRole) error {
 	provPrefix, aliasName, isAlias := isAliasRef(ref)
 	if !isAlias {
 		return nil
+	}
+	if strings.EqualFold(aliasName, "inherit") {
+		return fmt.Errorf("%s: %q is a reserved alias and can only be used in Agent spec.models", contextStr, ref)
 	}
 	if provPrefix != "" {
 		if !r.hasProviderLocked(provPrefix) {
@@ -1606,6 +1662,20 @@ func (s *ScopedRegistry) ResolveModel(role ModelRole, explicit ...string) (*Reso
 	return resolveModel(s.base, s, role, explicit)
 }
 
+// ResolveAgentModel resolves the effective model for agent and role given an
+// optional caller-requested override and optional parent session model (used for
+// "@inherit"), enforcing agent.Spec.Models allowlists (literals, aliases,
+// "@inherit", globs, and "!" negations) when non-empty.
+func (r *Registry) ResolveAgentModel(agent *Agent, role ModelRole, requested, parentModel string) (*ResolvedModel, error) {
+	return resolveAgentModel(r, agent, role, parentModel, requested)
+}
+
+// ResolveAgentModel resolves the effective model for agent and role within this
+// project scope, enforcing agent.Spec.Models allowlists when non-empty.
+func (s *ScopedRegistry) ResolveAgentModel(agent *Agent, role ModelRole, requested, parentModel string) (*ResolvedModel, error) {
+	return resolveAgentModel(s, agent, role, parentModel, requested)
+}
+
 // ResolveRulesForPath returns all rules applicable to the given path within this registry scope,
 // sorted by Rule priority descending, then by name ascending.
 func (r *Registry) ResolveRulesForPath(targetPath string) []Rule {
@@ -1985,12 +2055,13 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 	// 1. Explicit model overrides
 	var out []ResolvedModel
 	for _, m := range explicit {
-		if m != "" {
-			if _, _, ok := isAliasRef(m); ok {
-				out = append(out, resolveAlias(m, make(map[string]bool))...)
-			} else {
-				out = append(out, qualify(m, nil))
-			}
+		if m == "" || isInheritAlias(m) || isModelGlobEntry(m) {
+			continue
+		}
+		if _, _, ok := isAliasRef(m); ok {
+			out = append(out, resolveAlias(m, make(map[string]bool))...)
+		} else {
+			out = append(out, qualify(m, nil))
 		}
 	}
 	if len(out) > 0 {
@@ -2337,7 +2408,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	})
 
 	// 7. Resolve Models
-	models := resolver.ResolveModels(ModelRoleCompletion, ag.Spec.Models...)
+	models, _ := resolveAgentModels(resolver, ag, ModelRoleCompletion, "")
 
 	return &ResolvedAgent{
 		Agent:           ag,
@@ -2511,11 +2582,132 @@ func (ra *ResolvedAgent) ResolveSubagent(resolver Resolver, ref string) (*Resolv
 // agent. When requested is empty, it resolves ra.Agent.Spec.Models (falling back to
 // workspace/provider completion defaults). When requested is non-empty and the agent
 // declares a non-empty spec.models list, every requested model or alias must be
-// permitted by ra.Agent.Spec.Models (either by direct reference/alias match or by
-// resolving to one of the agent's allowed models).
+// permitted by ra.Agent.Spec.Models (matching literal IDs, aliases, "@inherit",
+// positive globs, and "!" negations).
 func (ra *ResolvedAgent) ResolveModels(resolver Resolver, requested ...string) ([]ResolvedModel, error) {
+	return ra.ResolveModelsWithParent(resolver, "", requested...)
+}
+
+// ResolveModelsWithParent resolves completion models for this agent with an
+// optional parent session model used when "@inherit" is referenced.
+func (ra *ResolvedAgent) ResolveModelsWithParent(resolver Resolver, parentModel string, requested ...string) ([]ResolvedModel, error) {
 	if ra == nil || ra.Agent == nil {
 		return nil, fmt.Errorf("resolved agent is nil")
+	}
+	return resolveAgentModels(resolver, ra.Agent, ModelRoleCompletion, parentModel, requested...)
+}
+
+// ResolveModel resolves a single completion model for this agent (using the agent's
+// default priority order when requested is empty, or validating requested against
+// ra.Agent.Spec.Models when provided), returning the first candidate backed by a
+// registered ModelProvider.
+func (ra *ResolvedAgent) ResolveModel(resolver Resolver, requested ...string) (*ResolvedModel, error) {
+	return ra.ResolveModelWithParent(resolver, "", requested...)
+}
+
+// ResolveModelWithParent resolves a single completion model for this agent with
+// an optional parent session model used when "@inherit" is referenced.
+func (ra *ResolvedAgent) ResolveModelWithParent(resolver Resolver, parentModel string, requested ...string) (*ResolvedModel, error) {
+	if ra == nil || ra.Agent == nil {
+		return nil, fmt.Errorf("resolved agent is nil")
+	}
+	return resolveAgentModel(resolver, ra.Agent, ModelRoleCompletion, parentModel, requested...)
+}
+
+type modelAllowlist struct {
+	hasInherit       bool
+	hasPositive      bool
+	literals         map[string]bool
+	positiveGlobs    []string
+	negativeGlobs    []string
+	allowedQualified map[string]bool
+}
+
+func newModelAllowlist(resolver Resolver, role ModelRole, entries []string, parentModel string) *modelAllowlist {
+	al := &modelAllowlist{
+		literals:         make(map[string]bool),
+		allowedQualified: make(map[string]bool),
+	}
+	var concrete []string
+	for _, entry := range entries {
+		if entry == "" {
+			continue
+		}
+		if pat, negated := stripModelNegation(entry); negated {
+			if pat != "" {
+				al.negativeGlobs = append(al.negativeGlobs, pat)
+			}
+			continue
+		}
+		al.hasPositive = true
+		if isInheritAlias(entry) {
+			al.hasInherit = true
+			continue
+		}
+		if isModelGlobEntry(entry) {
+			al.positiveGlobs = append(al.positiveGlobs, entry)
+			continue
+		}
+		al.literals[entry] = true
+		concrete = append(concrete, entry)
+	}
+	if len(concrete) > 0 {
+		for _, am := range resolver.ResolveModels(role, concrete...) {
+			if am.QualifiedID != "" {
+				al.allowedQualified[am.QualifiedID] = true
+			}
+		}
+	}
+	if al.hasInherit && parentModel != "" {
+		for _, pm := range resolver.ResolveModels(role, parentModel) {
+			if pm.QualifiedID != "" {
+				al.allowedQualified[pm.QualifiedID] = true
+			}
+		}
+	}
+	return al
+}
+
+func (al *modelAllowlist) isNegated(c ResolvedModel, rawRef string) bool {
+	for _, pat := range al.negativeGlobs {
+		if matchModelGlob(pat, c.QualifiedID, c.ModelID, rawRef) {
+			return true
+		}
+	}
+	return false
+}
+
+func (al *modelAllowlist) isAllowed(c ResolvedModel, rawRef string) bool {
+	if al.isNegated(c, rawRef) {
+		return false
+	}
+	if !al.hasPositive {
+		return true
+	}
+	if rawRef != "" && al.literals[rawRef] {
+		return true
+	}
+	if c.QualifiedID != "" && al.allowedQualified[c.QualifiedID] {
+		return true
+	}
+	for _, pat := range al.positiveGlobs {
+		if matchModelGlob(pat, c.QualifiedID, c.ModelID, rawRef) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveAgentModels(resolver Resolver, agent *Agent, role ModelRole, parentModel string, requested ...string) ([]ResolvedModel, error) {
+	if agent == nil {
+		return nil, fmt.Errorf("agent is nil")
+	}
+	if role == "" {
+		role = ModelRoleCompletion
+	}
+	agentName := agent.Metadata.Name
+	if agentName == "" {
+		agentName = "agent"
 	}
 
 	var req []string
@@ -2526,41 +2718,112 @@ func (ra *ResolvedAgent) ResolveModels(resolver Resolver, requested ...string) (
 	}
 
 	if len(req) == 0 {
-		return resolver.ResolveModels(ModelRoleCompletion, ra.Agent.Spec.Models...), nil
-	}
-
-	if len(ra.Agent.Spec.Models) == 0 {
-		return resolver.ResolveModels(ModelRoleCompletion, req...), nil
-	}
-
-	allowedResolved := resolver.ResolveModels(ModelRoleCompletion, ra.Agent.Spec.Models...)
-	allowedQualified := make(map[string]bool, len(allowedResolved))
-	for _, am := range allowedResolved {
-		if am.QualifiedID != "" {
-			allowedQualified[am.QualifiedID] = true
+		if len(agent.Spec.Models) == 0 {
+			return resolver.ResolveModels(role), nil
 		}
+		al := newModelAllowlist(resolver, role, agent.Spec.Models, parentModel)
+		var out []ResolvedModel
+		for _, entry := range agent.Spec.Models {
+			if entry == "" {
+				continue
+			}
+			if _, negated := stripModelNegation(entry); negated {
+				continue
+			}
+			if isInheritAlias(entry) {
+				if parentModel == "" {
+					continue
+				}
+				for _, c := range resolver.ResolveModels(role, parentModel) {
+					if !al.isNegated(c, parentModel) {
+						out = append(out, c)
+					}
+				}
+				continue
+			}
+			if isModelGlobEntry(entry) {
+				continue
+			}
+			for _, c := range resolver.ResolveModels(role, entry) {
+				if !al.isNegated(c, entry) {
+					out = append(out, c)
+				}
+			}
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
+		// All entries were globs/negations or unresolved @inherit: fall back to defaults.
+		defaults := resolver.ResolveModels(role)
+		var filtered []ResolvedModel
+		var allowed []ResolvedModel
+		for _, c := range defaults {
+			if al.isNegated(c, "") {
+				continue
+			}
+			filtered = append(filtered, c)
+			if al.isAllowed(c, "") {
+				allowed = append(allowed, c)
+			}
+		}
+		if len(allowed) > 0 {
+			return allowed, nil
+		}
+		return filtered, nil
 	}
 
-	agentName := ra.Agent.Metadata.Name
-	if agentName == "" {
-		agentName = "agent"
+	if len(agent.Spec.Models) == 0 {
+		var out []ResolvedModel
+		for _, rRef := range req {
+			if isInheritAlias(rRef) {
+				if parentModel == "" {
+					return nil, fmt.Errorf("cannot resolve %q for agent %q: no parent model provided", ModelAliasInherit, agentName)
+				}
+				out = append(out, resolver.ResolveModels(role, parentModel)...)
+				continue
+			}
+			out = append(out, resolver.ResolveModels(role, rRef)...)
+		}
+		return out, nil
 	}
 
+	al := newModelAllowlist(resolver, role, agent.Spec.Models, parentModel)
 	var out []ResolvedModel
 	for _, rRef := range req {
-		candidates := resolver.ResolveModels(ModelRoleCompletion, rRef)
-		if slices.Contains(ra.Agent.Spec.Models, rRef) {
-			out = append(out, candidates...)
+		if isInheritAlias(rRef) {
+			if parentModel == "" {
+				if !al.hasInherit {
+					return nil, fmt.Errorf("model %q is not allowed for agent %q (allowed: %v)", rRef, agentName, agent.Spec.Models)
+				}
+				return nil, fmt.Errorf("cannot resolve %q for agent %q: no parent model provided", ModelAliasInherit, agentName)
+			}
+			candidates := resolver.ResolveModels(role, parentModel)
+			var matched []ResolvedModel
+			for _, c := range candidates {
+				if al.hasInherit {
+					if !al.isNegated(c, parentModel) {
+						matched = append(matched, c)
+					}
+				} else if al.isAllowed(c, parentModel) {
+					matched = append(matched, c)
+				}
+			}
+			if len(matched) == 0 {
+				return nil, fmt.Errorf("model %q is not allowed for agent %q (allowed: %v)", rRef, agentName, agent.Spec.Models)
+			}
+			out = append(out, matched...)
 			continue
 		}
+
+		candidates := resolver.ResolveModels(role, rRef)
 		var matched []ResolvedModel
 		for _, c := range candidates {
-			if allowedQualified[c.QualifiedID] {
+			if al.isAllowed(c, rRef) {
 				matched = append(matched, c)
 			}
 		}
 		if len(matched) == 0 {
-			return nil, fmt.Errorf("model %q is not allowed for agent %q (allowed: %v)", rRef, agentName, ra.Agent.Spec.Models)
+			return nil, fmt.Errorf("model %q is not allowed for agent %q (allowed: %v)", rRef, agentName, agent.Spec.Models)
 		}
 		out = append(out, matched...)
 	}
@@ -2568,12 +2831,8 @@ func (ra *ResolvedAgent) ResolveModels(resolver Resolver, requested ...string) (
 	return out, nil
 }
 
-// ResolveModel resolves a single completion model for this agent (using the agent's
-// default priority order when requested is empty, or validating requested against
-// ra.Agent.Spec.Models when provided), returning the first candidate backed by a
-// registered ModelProvider.
-func (ra *ResolvedAgent) ResolveModel(resolver Resolver, requested ...string) (*ResolvedModel, error) {
-	models, err := ra.ResolveModels(resolver, requested...)
+func resolveAgentModel(resolver Resolver, agent *Agent, role ModelRole, parentModel string, requested ...string) (*ResolvedModel, error) {
+	models, err := resolveAgentModels(resolver, agent, role, parentModel, requested...)
 	if err != nil {
 		return nil, err
 	}
@@ -2584,8 +2843,8 @@ func (ra *ResolvedAgent) ResolveModel(resolver Resolver, requested ...string) (*
 		}
 	}
 	agentName := "agent"
-	if ra != nil && ra.Agent != nil && ra.Agent.Metadata.Name != "" {
-		agentName = ra.Agent.Metadata.Name
+	if agent != nil && agent.Metadata.Name != "" {
+		agentName = agent.Metadata.Name
 	}
 	return nil, fmt.Errorf("no registered model provider found for agent %q", agentName)
 }

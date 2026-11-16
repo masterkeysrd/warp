@@ -5299,3 +5299,272 @@ func TestProviderAuth_Validation(t *testing.T) {
 		}
 	})
 }
+
+func TestAgentModels_InheritAndGlobs(t *testing.T) {
+	setup := func(agents ...*Agent) (*Registry, *WorkspaceDef) {
+		wsDef := &WorkspaceDef{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Metadata: Metadata{Name: "ws"}},
+			Spec: WorkspaceDefSpec{
+				DefaultProvider: "anthropic",
+				DefaultModels:   &ModelDefaults{Completion: "claude-3-7-sonnet"},
+			},
+		}
+		reg := NewRegistry(&Workspace{Def: wsDef})
+
+		anthropic := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Metadata: Metadata{Name: "anthropic"}, Namespace: NamespaceWorkspace},
+			Spec: ModelProviderSpec{
+				Type: "anthropic",
+				Models: []ProviderModel{
+					{ID: "claude-3-7-sonnet", Name: "claude-3-7-sonnet", Label: "Sonnet 3.7", Aliases: []string{"default"}},
+					{ID: "claude-3-5-haiku", Name: "claude-3-5-haiku", Label: "Haiku 3.5", Aliases: []string{"fast"}},
+					{ID: "claude-opus-4", Name: "claude-opus-4", Label: "Opus 4", Aliases: []string{"heavy"}},
+				},
+			},
+		}
+		ollama := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Metadata: Metadata{Name: "ollama"}, Namespace: NamespaceWorkspace},
+			Spec: ModelProviderSpec{
+				Type: "ollama",
+				Models: []ProviderModel{
+					{ID: "nemotron-3.5-lightning", Name: "nemotron-3.5-lightning", Label: "Nemotron"},
+					{ID: "hf.co/org/qwen3", Name: "qwen3", Label: "Qwen3"},
+				},
+			},
+		}
+		openai := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Metadata: Metadata{Name: "openai"}, Namespace: NamespaceWorkspace},
+			Spec: ModelProviderSpec{
+				Type: "openai",
+				Models: []ProviderModel{
+					{ID: "gpt-4o", Name: "gpt-4o", Label: "GPT-4o"},
+					{ID: "expensive-o1", Name: "expensive-o1", Label: "Expensive O1"},
+				},
+			},
+		}
+		reg.set(anthropic.QualifiedName(), anthropic)
+		reg.set(ollama.QualifiedName(), ollama)
+		reg.set(openai.QualifiedName(), openai)
+		for _, ag := range agents {
+			reg.set(ag.QualifiedName(), ag)
+		}
+		return reg, wsDef
+	}
+
+	makeAgent := func(name string, models []string, extends string) *Agent {
+		return &Agent{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindAgent, Metadata: Metadata{Name: name}, Namespace: NamespaceWorkspace},
+			Spec: AgentSpec{
+				Extends: extends,
+				Models:  models,
+			},
+		}
+	}
+
+	t.Run("validation accepts @inherit and valid globs", func(t *testing.T) {
+		ag1 := makeAgent("inherit-any", []string{ModelAliasInherit, "*"}, "")
+		ag2 := makeAgent("fast-ollama", []string{"@fast", "ollama/*", "!*/expensive-*"}, "")
+		ag3 := makeAgent("case-inherit", []string{"@INHERIT"}, "")
+		ag4 := makeAgent("child-inherits", nil, "inherit-any")
+		reg, _ := setup(ag1, ag2, ag3, ag4)
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("expected Validate() to succeed, got: %v", err)
+		}
+	})
+
+	t.Run("validation rejects reserved @inherit in non-agent contexts and invalid globs", func(t *testing.T) {
+		// Provider-prefixed @inherit on Agent
+		reg1, _ := setup(makeAgent("bad-prefix", []string{"anthropic/@inherit"}, ""))
+		if err := reg1.Validate(); err == nil || !strings.Contains(err.Error(), "cannot be provider-prefixed") {
+			t.Fatalf("expected provider-prefixed @inherit error, got: %v", err)
+		}
+
+		// Malformed glob on Agent
+		reg2, _ := setup(makeAgent("bad-glob", []string{"anthropic/[unclosed"}, ""))
+		if err := reg2.Validate(); err == nil || !strings.Contains(err.Error(), "invalid model glob") {
+			t.Fatalf("expected invalid model glob error, got: %v", err)
+		}
+
+		// Empty negation on Agent
+		reg3, _ := setup(makeAgent("bad-neg", []string{"!"}, ""))
+		if err := reg3.Validate(); err == nil || !strings.Contains(err.Error(), "invalid model glob") {
+			t.Fatalf("expected empty negation error, got: %v", err)
+		}
+
+		// Provider model alias "inherit"
+		reg4, _ := setup()
+		reg4.set("workspace/ModelProvider/bad-prov", &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Metadata: Metadata{Name: "bad-prov"}, Namespace: NamespaceWorkspace},
+			Spec: ModelProviderSpec{
+				Type:   "custom",
+				Models: []ProviderModel{{ID: "m1", Name: "m1", Label: "M1", Aliases: []string{"inherit"}}},
+			},
+		})
+		if err := reg4.Validate(); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("expected reserved alias error on provider model, got: %v", err)
+		}
+
+		// Workspace modelAliases key/value
+		reg5, ws5 := setup()
+		ws5.Spec.ModelAliases = map[string]string{"inherit": "gpt-4o"}
+		if err := reg5.Validate(); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("expected reserved alias key error on workspace, got: %v", err)
+		}
+		ws5.Spec.ModelAliases = map[string]string{"fast": "@inherit"}
+		if err := reg5.Validate(); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("expected reserved alias target error on workspace, got: %v", err)
+		}
+
+		// Workspace defaultModels
+		reg6, ws6 := setup()
+		ws6.Spec.DefaultModels = &ModelDefaults{Completion: "@inherit"}
+		if err := reg6.Validate(); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("expected reserved @inherit error on workspace defaultModels, got: %v", err)
+		}
+
+		// Command.spec.models
+		reg7, _ := setup()
+		cmd := &Command{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Metadata: Metadata{Name: "bad-cmd"}, Namespace: NamespaceWorkspace},
+			Spec:         CommandSpec{Models: []string{"@inherit"}},
+		}
+		reg7.set(cmd.QualifiedName(), cmd)
+		if err := reg7.Validate(); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("expected reserved @inherit error on Command, got: %v", err)
+		}
+
+		// Decision.spec.models
+		reg8, _ := setup()
+		dec := &Decision{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindDecision, Metadata: Metadata{Name: "bad-dec"}, Namespace: NamespaceWorkspace},
+			Spec: DecisionSpec{
+				Models:    []string{"@inherit"},
+				Questions: []DecisionQuestion{{Name: "q1", Type: DecisionQuestionPredicate}},
+			},
+		}
+		reg8.set(dec.QualifiedName(), dec)
+		if err := reg8.Validate(); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("expected reserved @inherit error on Decision, got: %v", err)
+		}
+	})
+
+	t.Run("ResolveModel and ResolveModels skip globs and bare @inherit", func(t *testing.T) {
+		reg, _ := setup()
+
+		// ["*"] falls through to workspace default rather than returning synthetic "*"
+		gotWildcard := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "*"))
+		if !slicesEqual(gotWildcard, []string{"anthropic/claude-3-7-sonnet"}) {
+			t.Fatalf("ResolveModels(\"*\") = %v, want [anthropic/claude-3-7-sonnet]", gotWildcard)
+		}
+		if rm, ok := reg.ResolveModel(ModelRoleCompletion, "*"); !ok || rm.QualifiedID != "anthropic/claude-3-7-sonnet" {
+			t.Fatalf("ResolveModel(\"*\") = (%+v, %v), want anthropic/claude-3-7-sonnet", rm, ok)
+		}
+
+		// ["@inherit", "*"] skips both and falls back to workspace default
+		gotInheritWild := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "@inherit", "*"))
+		if !slicesEqual(gotInheritWild, []string{"anthropic/claude-3-7-sonnet"}) {
+			t.Fatalf("ResolveModels(\"@inherit\", \"*\") = %v, want [anthropic/claude-3-7-sonnet]", gotInheritWild)
+		}
+
+		// ["@fast", "*"] resolves @fast without adding synthetic "*"
+		gotFastWild := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "@fast", "*"))
+		if !slicesEqual(gotFastWild, []string{"anthropic/claude-3-5-haiku"}) {
+			t.Fatalf("ResolveModels(\"@fast\", \"*\") = %v, want [anthropic/claude-3-5-haiku]", gotFastWild)
+		}
+	})
+
+	t.Run("ResolveAgentModel and ResolvedAgent delegation allowlists", func(t *testing.T) {
+		agInheritAny := makeAgent("inherit-any", []string{"@inherit", "*"}, "")
+		agFastAll := makeAgent("fast-all", []string{"@fast", "*", "!*/expensive-*"}, "")
+		agFastOllama := makeAgent("fast-ollama", []string{"@fast", "ollama/*"}, "")
+		agClosed := makeAgent("closed", []string{"@fast", "@heavy"}, "")
+		agChild := makeAgent("child", nil, "inherit-any")
+		reg, _ := setup(agInheritAny, agFastAll, agFastOllama, agClosed, agChild)
+
+		// 1. Default omitted requested with @inherit + parentModel -> inherits parentModel
+		rm, err := reg.ResolveAgentModel(agInheritAny, ModelRoleCompletion, "", "ollama/nemotron-3.5-lightning")
+		if err != nil || rm.QualifiedID != "ollama/nemotron-3.5-lightning" {
+			t.Fatalf("expected parent model ollama/nemotron-3.5-lightning, got %+v (err: %v)", rm, err)
+		}
+
+		// 2. Default omitted requested with @inherit and empty parentModel -> falls back to workspace default via "*"
+		rm, err = reg.ResolveAgentModel(agInheritAny, ModelRoleCompletion, "", "")
+		if err != nil || rm.QualifiedID != "anthropic/claude-3-7-sonnet" {
+			t.Fatalf("expected workspace fallback anthropic/claude-3-7-sonnet, got %+v (err: %v)", rm, err)
+		}
+
+		// 3. Default omitted on ["@fast", "ollama/*"] -> @fast
+		rm, err = reg.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "", "")
+		if err != nil || rm.QualifiedID != "anthropic/claude-3-5-haiku" {
+			t.Fatalf("expected @fast -> anthropic/claude-3-5-haiku, got %+v (err: %v)", rm, err)
+		}
+
+		// 4. Explicit override matching provider glob (including slash inside model ID)
+		rm, err = reg.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "ollama/hf.co/org/qwen3", "")
+		if err != nil || rm.QualifiedID != "ollama/hf.co/org/qwen3" {
+			t.Fatalf("expected ollama/hf.co/org/qwen3 to match ollama/*, got %+v (err: %v)", rm, err)
+		}
+
+		// 5. Explicit override outside provider glob rejected
+		if _, err := reg.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "openai/gpt-4o", ""); err == nil {
+			t.Fatalf("expected openai/gpt-4o to be rejected for fast-ollama")
+		}
+
+		// 6. Negation overrides wildcard
+		rm, err = reg.ResolveAgentModel(agFastAll, ModelRoleCompletion, "openai/gpt-4o", "")
+		if err != nil || rm.QualifiedID != "openai/gpt-4o" {
+			t.Fatalf("expected openai/gpt-4o to be allowed by *, got %+v (err: %v)", rm, err)
+		}
+		if _, err := reg.ResolveAgentModel(agFastAll, ModelRoleCompletion, "openai/expensive-o1", ""); err == nil {
+			t.Fatalf("expected openai/expensive-o1 to be excluded by !*/expensive-*")
+		}
+
+		// 7. Explicit requested == "@inherit"
+		// 7a. Allowed when @inherit in spec.models
+		rm, err = reg.ResolveAgentModel(agInheritAny, ModelRoleCompletion, "@inherit", "openai/gpt-4o")
+		if err != nil || rm.QualifiedID != "openai/gpt-4o" {
+			t.Fatalf("expected @inherit -> openai/gpt-4o, got %+v (err: %v)", rm, err)
+		}
+		// 7b. Allowed when parentModel matches glob ("ollama/*")
+		rm, err = reg.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "@inherit", "ollama/nemotron-3.5-lightning")
+		if err != nil || rm.QualifiedID != "ollama/nemotron-3.5-lightning" {
+			t.Fatalf("expected @inherit matching ollama/* -> ollama/nemotron-3.5-lightning, got %+v (err: %v)", rm, err)
+		}
+		// 7c. Rejected when parentModel doesn't match allowlist
+		if _, err := reg.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "@inherit", "openai/gpt-4o"); err == nil {
+			t.Fatalf("expected @inherit with openai/gpt-4o to be rejected for fast-ollama")
+		}
+		// 7d. Rejected on closed allowlist
+		if _, err := reg.ResolveAgentModel(agClosed, ModelRoleCompletion, "@inherit", "openai/gpt-4o"); err == nil {
+			t.Fatalf("expected @inherit to be rejected on closed allowlist")
+		}
+		// 7e. Explicit @inherit with empty parentModel fails clearly
+		if _, err := reg.ResolveAgentModel(agInheritAny, ModelRoleCompletion, "@inherit", ""); err == nil || !strings.Contains(err.Error(), "no parent model provided") {
+			t.Fatalf("expected missing parent model error for explicit @inherit, got: %v", err)
+		}
+
+		// 8. Inheritance via extends + ResolvedAgent methods
+		resolvedChild, err := reg.ResolveAgent("child")
+		if err != nil {
+			t.Fatalf("ResolveAgent(child) failed: %v", err)
+		}
+		if len(resolvedChild.Models) != 1 || resolvedChild.Models[0].QualifiedID != "anthropic/claude-3-7-sonnet" {
+			t.Fatalf("expected resolvedChild.Models fallback to [anthropic/claude-3-7-sonnet], got: %+v", resolvedChild.Models)
+		}
+		rm, err = resolvedChild.ResolveModelWithParent(reg, "ollama/nemotron-3.5-lightning")
+		if err != nil || rm.QualifiedID != "ollama/nemotron-3.5-lightning" {
+			t.Fatalf("expected child ResolveModelWithParent to inherit parent model, got %+v (err: %v)", rm, err)
+		}
+		rm, err = resolvedChild.ResolveModel(reg, "openai/gpt-4o")
+		if err != nil || rm.QualifiedID != "openai/gpt-4o" {
+			t.Fatalf("expected child ResolveModel(openai/gpt-4o) via inherited '*', got %+v (err: %v)", rm, err)
+		}
+
+		// 9. ScopedRegistry.ResolveAgentModel
+		scoped := reg.Project("non-existent-falls-back-ws")
+		rm, err = scoped.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "ollama/nemotron-3.5-lightning", "")
+		if err != nil || rm.QualifiedID != "ollama/nemotron-3.5-lightning" {
+			t.Fatalf("ScopedRegistry.ResolveAgentModel failed: %+v (err: %v)", rm, err)
+		}
+	})
+}

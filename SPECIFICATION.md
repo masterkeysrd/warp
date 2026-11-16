@@ -143,7 +143,9 @@ When resolving the prioritized model list for a capability role (`completion`, `
 - `ResolveModels(role, explicit...)` returns `[]ResolvedModel` (each carrying `Provider`, `Model`, `ModelID`, and `QualifiedID`), and `ResolveModel(role, explicit...)` returns `(*ResolvedModel, bool)` for the first candidate backed by a registered `ModelProvider`.
 
 **Model Aliases (`@<alias>` and `<provider>/@<alias>`):**
-- **Syntax**: An alias reference starts with `@` either as a bare alias (e.g., `@fast`, `@default`) or scoped to a provider (e.g., `anthropic/@fast`, `anthropic/@default`). References without `@` only match model IDs and names; they never match aliases.
+- **Syntax**: An alias reference starts with `@` either as a bare alias (e.g., `@fast`, `@default`, `@inherit`) or scoped to a provider (e.g., `anthropic/@fast`, `anthropic/@default`). References without `@` only match model IDs and names; they never match aliases.
+- **Reserved `@inherit` Alias**: Allowed only in `Agent.spec.models` (case-insensitive) to represent the delegating parent/caller session's active model during subagent invocation. It is rejected in `Workspace.spec.modelAliases`, `Workspace.spec.defaultModels`, `ModelProvider.spec.models[].aliases`, `ModelProvider.spec.defaultModels`, `Command.spec.models`, and `Decision.spec.models`. When resolving models without parent session context, `@inherit` is skipped so resolution falls through to subsequent entries or workspace/provider defaults.
+- **Glob & Negation Patterns in `Agent.spec.models`**: `Agent.spec.models` may include glob patterns (`"*"`, `"ollama/*"`, `"anthropic/claude-*"`) and negation patterns (`"!*/expensive-*"`). Wildcards/globs are allowlist matchers rather than default selectors—default model resolution skips glob entries and falls back to earlier concrete entries or workspace/provider defaults, while explicit overrides (or parent models) are checked against the full allowlist (negations override positive matches).
 - **Provider-Scoped Alias (`<provider>/@<alias>`)**: Resolves against `<provider>`. If `<alias>` is `default`, it resolves to that provider's default model for the requested role (`defaultModels.<role>`, an `@default` alias defined on the provider, or the first capability-matching model). If `<alias>` is any other name, it resolves to the model in that provider declaring the matching alias in its `aliases` list.
 - **Bare Alias (`@<alias>`)**:
   - If `<alias>` is `default`, it checks `workspace.spec.modelAliases["default"]` (or `"@default"`). If unset, it resolves to the standard Workspace -> Provider role-default hierarchy for that role.
@@ -270,7 +272,7 @@ runtime.
 |---------------|----------|:--------:|---------|----------------------------------------------------------------------------------------------------|
 | `extends`     | string   |          | —       | Qualified Name (`namespace/Agent/name`) or Short Name of another Agent to extend. When set, the engine merges the parent's `skills` and `policies` blocks. |
 | `triggers`    | string[] |          | `[]`    | Defines what architectural entities can invoke this agent: standard values are `"human"`, `"agent"`, `"system"` (custom strings also allowed). An empty list means it can be triggered by anything. |
-| `models`      | string[] |          | `[]`    | A prioritized list of allowed LLM model identifiers or aliases (e.g. `["@default", "@fast"]` or `["gpt-4o", "claude-3-5-sonnet"]`). The runtime uses the first available model by default, and when non-empty, restricts caller-requested model overrides to this list. |
+| `models`      | string[] |          | `[]`    | A prioritized list of allowed LLM model identifiers, aliases, reserved `@inherit`, or glob/negation patterns (e.g. `["@default", "@fast"]`, `["@inherit", "*"]`, or `["@fast", "ollama/*", "!*/expensive-*"]`). The runtime uses the first available concrete model/alias by default, and when non-empty, restricts caller-requested model overrides to entries matched by this list. |
 | `temperature` | float    |          | `0.0`   | Sampling temperature in the range `0.0`–`2.0`. Higher values produce more varied output.          |
 | `thinking`    | object   |          | —       | Runtime configuration for extended reasoning (`AgentThinking`: `type`, `enabled`, `effort`, `budgetTokens`). Overrides the provider's default. |
 | `skills`      | string[] |          | `[]`    | Names, qualified refs, or globs of `Skill` resources this agent is allowed to use. Default is `[]` (none). Use `["*"]` to include all effective skills in scope. |
@@ -1384,7 +1386,7 @@ loaded Workspace.
 | All `spec.subagents` paths resolve | A listed path does not match any loaded `Agent` in the resolution hierarchy. |
 | All `spec.rules` paths resolve    | A listed path does not match any loaded `Rule` in the resolution hierarchy. |
 | All `spec.tools` references resolve | A listed reference does not match any loaded `Tool` in the resolution hierarchy (or, in offline validation for `<mcp_name>__<tool_name>` references, `<mcp_name>` does not match any loaded `MCP` resource or `<tool_name>` is excluded by that MCP's policies). |
-| Declared `spec.models` resolve and support completion | When providers exist, a listed model or alias reference does not resolve to any declared model or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`. |
+| Declared `spec.models` resolve and support completion | When providers exist, a listed concrete model or alias reference (excluding `@inherit` and valid glob/negation patterns) does not resolve to any declared model or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`; or a provider-prefixed `@inherit` or malformed glob/negation pattern is declared. |
 | Valid `spec.thinking` strategy | `spec.thinking.type` is not one of `toggle`, `effort`, `budget`, or `adaptive`, or `budgetTokens < 0`. |
 | Thinking capability match | When `spec.thinking` is declared, every resolved model in `spec.models` that defines thinking capabilities must support `spec.thinking.type`, allowed effort levels (`spec.thinking.effort`), and maximum budget tokens (`spec.thinking.budgetTokens <= maxBudgetTokens`). |
 
@@ -1410,8 +1412,8 @@ loaded Workspace.
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
 | All `spec.projects` paths exist     | A listed path (when not `"*"`) does not exist on the filesystem. |
-| Valid `spec.modelAliases`           | An alias entry has an empty key or an empty target model reference. |
-| `spec.defaultModels` capabilities match role | When providers exist, a model in `defaultModels` does not resolve or resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
+| Valid `spec.modelAliases`           | An alias entry has an empty key, an empty target model reference, or uses the reserved `inherit` / `@inherit` alias. |
+| `spec.defaultModels` capabilities match role | When providers exist, a model in `defaultModels` uses reserved `@inherit`, does not resolve, or resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
 
 ### 7.6 Plugin-specific
 
@@ -1441,7 +1443,7 @@ loaded Workspace.
 
 | Rule                                | Error condition                                                |
 |-------------------------------------|----------------------------------------------------------------|
-| Valid model `aliases`               | Any model alias in `spec.models[].aliases` is empty.           |
+| Valid model `aliases`               | Any model alias in `spec.models[].aliases` is empty or uses the reserved `inherit` / `@inherit` alias. |
 | Unique model `aliases` per provider | A model alias is defined more than once within the same `ModelProvider`. |
 | No alias collision with model IDs or names | A model alias matches the `id` or `name` of a different model in the same `ModelProvider`. |
 | Valid thinking strategies           | Any `spec.models[].capabilities.thinking[].type` is not one of `toggle`, `effort`, `budget`, or `adaptive`. |

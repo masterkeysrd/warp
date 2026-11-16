@@ -137,7 +137,8 @@ AGENTS.md             # Project context instructions (kind: Context)
   - `Project(name string) *ScopedRegistry` / `ProjectFromPath(path string) (*Project, error)` — scopes resolution to a project namespace.
   - `ResolveAgent(ref string) (*ResolvedAgent, error)` — resolves an executable Agent (evaluating inheritance, policies, and globs).
   - `Validate() error` / `ValidateWithOptions(opts *ValidateOptions) error` — validates all resources, auth expressions, inheritance chains, and cross-references across the workspace.
-- **`LoadWorkspace(dir string, opts ...LoadOption) (*Registry, error)`** — discovers and loads a workspace starting from `dir`.
+- **`LoadWorkspace(dir string, providers ...ResourceProvider) (*Registry, error)`** — discovers and loads a workspace starting from `dir`.
+- **`LoadWithOptions(ctx context.Context, startDir string, opts LoadOptions) (*Registry, error)`** — loads a workspace with custom `SystemProviders`, `UserProviders` (`NamespaceUser`), and optional `AutoDiscoverStartSubproject`.
 - **`Load(dir string) (*Registry, error)`** — loads a single `.agents` resource directory.
 - **`LoadDefault() (*Registry, error)`** — loads resources from the default `.agents` directory in the current working directory.
 - **`Parse(filename, content string) (*ParseResult, error)`** — parses a single WARP Markdown or YAML string into a typed resource.

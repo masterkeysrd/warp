@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -108,8 +109,28 @@ func newResourceSet() *ResourceSet {
 	}
 }
 
+// LoadOptions configures workspace loading, including system and user-tier
+// ResourceProviders and automatic discovery of an undeclared starting subproject.
+type LoadOptions struct {
+	// SystemProviders supplies built-in / system-tier ResourceProviders loaded
+	// into NamespaceSystem.
+	SystemProviders []ResourceProvider
+
+	// UserProviders supplies user-tier ResourceProviders loaded into
+	// NamespaceUser (for example, NewFSResourceProvider(os.DirFS(dir), dir)).
+	// Providers whose LoadResources call returns fs.ErrNotExist are silently skipped.
+	UserProviders []ResourceProvider
+
+	// AutoDiscoverStartSubproject, when true and startDir is a subdirectory
+	// beneath a discovered workspace root that is not already mapped in
+	// spec.projects, automatically registers startDir as a Project if it
+	// contains .agents/ or AGENTS.md while preserving root .agents/ in
+	// NamespaceWorkspace.
+	AutoDiscoverStartSubproject bool
+}
+
 // LoadDefault loads a workspace starting from the current working directory.
-// It is equivalent to LoadWorkspace(".").
+// It is equivalent to LoadWorkspace(".", providers...).
 //
 //	reg, err := warp.LoadDefault()
 func LoadDefault(providers ...ResourceProvider) (*Registry, error) {
@@ -149,15 +170,39 @@ func Load(dir string, providers ...ResourceProvider) (*Registry, error) {
 // the root .agents/ directory is owned by the Project. The workspace-global
 // library is left empty to prevent double-loading.
 func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, error) {
+	return LoadWithOptions(context.Background(), startDir, LoadOptions{
+		SystemProviders: providers,
+	})
+}
+
+// LoadWithOptions executes the WARP workspace loading algorithm with explicit
+// LoadOptions (supporting UserProviders, SystemProviders, and
+// AutoDiscoverStartSubproject).
+func LoadWithOptions(ctx context.Context, startDir string, opts LoadOptions) (*Registry, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+
 	abs, err := filepath.Abs(startDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve start directory %q: %w", startDir, err)
 	}
+	abs = filepath.Clean(abs)
 
 	// Phase 1: discover workspace root.
 	workspaceRoot, wsDef, err := findWorkspace(abs)
 	if err != nil {
 		return nil, err
+	}
+	workspaceRoot = filepath.Clean(workspaceRoot)
+
+	if wsDef != nil {
+		wsDef.Directory = workspaceRoot
+		if wsDef.Path == "" {
+			wsDef.Path = filepath.Join(workspaceRoot, WorkspaceFileName)
+		}
 	}
 
 	ws := &Workspace{
@@ -172,6 +217,12 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 	projectPaths, err := mapProjects(workspaceRoot, wsDef)
 	if err != nil {
 		return nil, err
+	}
+
+	if opts.AutoDiscoverStartSubproject && shouldAutoDiscoverSubproject(workspaceRoot, abs, projectPaths) {
+		if relStart, relErr := filepath.Rel(workspaceRoot, abs); relErr == nil {
+			projectPaths = append(projectPaths, relStart)
+		}
 	}
 
 	isFlatRoot := len(projectPaths) == 1 && projectPaths[0] == "."
@@ -196,7 +247,7 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		projectNames = append(projectNames, slug)
 
 		// Load Context (AGENTS.md).
-		ctx, warn := loadContext(projAbsPath)
+		ctxRes, warn := loadContext(projAbsPath)
 		if warn != "" {
 			reg.warnings = append(reg.warnings, warn)
 		}
@@ -205,14 +256,14 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 			Name:     slug,
 			Path:     relPath,
 			RootPath: workspaceRoot,
-			Context:  ctx,
+			Context:  ctxRes,
 		}
 		reg.AddProject(proj)
 
 		// Also register the Context as a first-class resource.
-		if ctx != nil {
-			ctx.SetNamespace(slug)
-			reg.set(ctx.QualifiedName(), ctx)
+		if ctxRes != nil {
+			ctxRes.SetNamespace(slug)
+			reg.set(ctxRes.QualifiedName(), ctxRes)
 		}
 
 		// Load project-local resources from PROJECT_DIR/.agents/
@@ -236,7 +287,10 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		}
 	}
 
-	if err := applyResourceProviders(reg, providers); err != nil {
+	if err := applyResourceProvidersForNamespace(reg, opts.UserProviders, NamespaceUser, true); err != nil {
+		return nil, err
+	}
+	if err := applyResourceProvidersForNamespace(reg, opts.SystemProviders, NamespaceSystem, false); err != nil {
 		return nil, err
 	}
 
@@ -261,9 +315,41 @@ func LoadWorkspace(startDir string, providers ...ResourceProvider) (*Registry, e
 		reg.workspace = ws
 	}
 
-	reg.providers = slices.Clone(providers)
+	reg.providers = slices.Clone(opts.SystemProviders)
+	reg.userProviders = slices.Clone(opts.UserProviders)
+	reg.loadStartDir = abs
+	reg.autoDiscoverSubproject = opts.AutoDiscoverStartSubproject
 
 	return reg, nil
+}
+
+func shouldAutoDiscoverSubproject(workspaceRoot, startAbs string, projectPaths []string) bool {
+	rel, err := filepath.Rel(workspaceRoot, startAbs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	for _, existing := range projectPaths {
+		if filepath.Clean(filepath.Join(workspaceRoot, existing)) == startAbs {
+			return false
+		}
+	}
+	return hasProjectMarkers(startAbs)
+}
+
+func hasProjectMarkers(dir string) bool {
+	if info, err := os.Stat(filepath.Join(dir, DefaultAgentsDir)); err == nil && info.IsDir() {
+		return true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.EqualFold(e.Name(), ContextFileName) {
+			return true
+		}
+	}
+	return false
 }
 
 func loadWorkspacePlugins(reg *Registry, workspaceRoot string, plugins []WorkspacePlugin) error {
@@ -382,25 +468,29 @@ func loadWorkspacePlugins(reg *Registry, workspaceRoot string, plugins []Workspa
 	return nil
 }
 
-func applyResourceProviders(reg *Registry, providers []ResourceProvider) error {
+func applyResourceProvidersForNamespace(reg *Registry, providers []ResourceProvider, ns string, ignoreNotExist bool) error {
 	for i, provider := range providers {
 		if provider == nil {
-			return fmt.Errorf("resource provider %d is nil", i)
+			return fmt.Errorf("%s resource provider %d is nil", ns, i)
 		}
 		resources, err := provider.LoadResources()
 		if err != nil {
-			return fmt.Errorf("load resources from provider %d: %w", i, err)
+			if ignoreNotExist && errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("load resources from %s provider %d: %w", ns, i, err)
 		}
-		// Inject as system namespace; do not overwrite existing keys.
-		injectResourceSetFallback(reg, resources)
+		if resources != nil {
+			injectResourceSetForNamespace(reg, resources, ns)
+		}
 	}
 	return nil
 }
 
-// injectResourceSetFallback injects resources from a ResourceSet into reg
-// using NamespaceSystem namespace. Existing registry keys are not overwritten.
-func injectResourceSetFallback(reg *Registry, rs *ResourceSet) {
-	inject := func(r Resource, ns string) {
+// injectResourceSetForNamespace injects resources from a ResourceSet into reg
+// using the specified namespace. Existing registry keys are not overwritten.
+func injectResourceSetForNamespace(reg *Registry, rs *ResourceSet, ns string) {
+	inject := func(r Resource) {
 		br := resourceBase(r)
 		if br == nil {
 			return
@@ -411,30 +501,29 @@ func injectResourceSetFallback(reg *Registry, rs *ResourceSet) {
 			reg.set(qn, r)
 		}
 	}
-	ns := NamespaceSystem
 	for _, a := range rs.Agents {
-		inject(a, ns)
+		inject(a)
 	}
 	for _, s := range rs.Skills {
-		inject(s, ns)
+		inject(s)
 	}
 	for _, c := range rs.Commands {
-		inject(c, ns)
+		inject(c)
 	}
 	for _, d := range rs.Decisions {
-		inject(d, ns)
+		inject(d)
 	}
 	for _, rl := range rs.Rules {
-		inject(rl, ns)
+		inject(rl)
 	}
 	for _, mp := range rs.ModelProviders {
-		inject(mp, ns)
+		inject(mp)
 	}
 	for _, t := range rs.Tools {
-		inject(t, ns)
+		inject(t)
 	}
 	for _, m := range rs.MCPs {
-		inject(m, ns)
+		inject(m)
 	}
 }
 

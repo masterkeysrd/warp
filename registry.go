@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -50,14 +51,17 @@ type mcpToolEntry struct {
 // workspace/user/system/plugins) or through a ScopedRegistry obtained via
 // Project(), which elevates a specific project namespace to the top priority.
 type Registry struct {
-	mu                 sync.RWMutex
-	resources          map[string]Resource
-	workspace          *Workspace
-	projects           map[string]*Project
-	warnings           []string
-	validationWarnings []string
-	providers          []ResourceProvider
-	mcpTools           map[string]mcpToolEntry
+	mu                     sync.RWMutex
+	resources              map[string]Resource
+	workspace              *Workspace
+	projects               map[string]*Project
+	warnings               []string
+	validationWarnings     []string
+	providers              []ResourceProvider
+	userProviders          []ResourceProvider
+	loadStartDir           string
+	autoDiscoverSubproject bool
+	mcpTools               map[string]mcpToolEntry
 }
 
 // NewRegistry returns an empty Registry bound to the given workspace spec.
@@ -213,11 +217,18 @@ func (r *Registry) Reload() (*ReloadStats, error) {
 		r.mu.RUnlock()
 		return nil, fmt.Errorf("cannot reload registry: workspace root path is not set")
 	}
-	rootPath := r.workspace.RootPath
-	providers := slices.Clone(r.providers)
+	startDir := r.loadStartDir
+	if startDir == "" {
+		startDir = r.workspace.RootPath
+	}
+	opts := LoadOptions{
+		SystemProviders:             slices.Clone(r.providers),
+		UserProviders:               slices.Clone(r.userProviders),
+		AutoDiscoverStartSubproject: r.autoDiscoverSubproject,
+	}
 	r.mu.RUnlock()
 
-	newReg, err := LoadWorkspace(rootPath, providers...)
+	newReg, err := LoadWithOptions(context.Background(), startDir, opts)
 	if err != nil {
 		return nil, fmt.Errorf("reload workspace: %w", err)
 	}
@@ -254,6 +265,9 @@ func (r *Registry) Reload() (*ReloadStats, error) {
 	r.projects = newReg.projects
 	r.warnings = newReg.warnings
 	r.providers = newReg.providers
+	r.userProviders = newReg.userProviders
+	r.loadStartDir = newReg.loadStartDir
+	r.autoDiscoverSubproject = newReg.autoDiscoverSubproject
 
 	return stats, nil
 }

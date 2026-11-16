@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -694,4 +695,173 @@ Always run gofmt.
 	if len(rules) != 1 || rules[0].GetName() != "repo-lint" {
 		t.Errorf("expected [repo-lint], got %v", rules)
 	}
+}
+
+func TestLoadWithOptions_UserProvidersAndSubprojectDiscovery(t *testing.T) {
+	t.Run("UserProviders shadowing and missing dir skip", func(t *testing.T) {
+		wsDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(wsDir, ".agents", "skills"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: ws\nspec:\n  projects: [\".\"]\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wsDir, ".agents", "skills", "local-only.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: shared-skill\n  description: local version\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		userFS := fstest.MapFS{
+			"skills/shared.md": &fstest.MapFile{Data: []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: shared-skill\n  description: user version\n---\n")},
+			"skills/user.md":   &fstest.MapFile{Data: []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: user-skill\n  description: from user\n---\n")},
+		}
+		sysFS := fstest.MapFS{
+			"skills/user.md": &fstest.MapFile{Data: []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: user-skill\n  description: from system\n---\n")},
+			"skills/sys.md":  &fstest.MapFile{Data: []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: sys-skill\n  description: from system\n---\n")},
+		}
+
+		missingDir := filepath.Join(t.TempDir(), "does-not-exist")
+		reg, err := LoadWithOptions(context.Background(), wsDir, LoadOptions{
+			UserProviders: []ResourceProvider{
+				NewFSResourceProvider(os.DirFS(missingDir), missingDir),
+				NewFSResourceProvider(userFS, "/xdg/user/agents"),
+			},
+			SystemProviders: []ResourceProvider{
+				NewFSResourceProvider(sysFS, "builtin://"),
+			},
+		})
+		if err != nil {
+			t.Fatalf("LoadWithOptions failed: %v", err)
+		}
+
+		// WorkspaceDef.Directory must be hydrated with cleaned RootPath
+		wsSpec := reg.WorkspaceSpec()
+		if wsSpec == nil || wsSpec.Def == nil || wsSpec.Def.Directory != filepath.Clean(wsSpec.RootPath) {
+			t.Fatalf("expected Def.Directory == cleaned RootPath (%q), got %+v", wsSpec.RootPath, wsSpec.Def)
+		}
+
+		// user-skill shadows system -> user version wins at base Registry
+		resUser, ok := reg.ResolveResource("user-skill")
+		if !ok || resUser.GetNamespace() != NamespaceUser || resUser.GetMetadata().Description != "from user" {
+			t.Errorf("expected user-skill from NamespaceUser, got ok=%v res=%+v", ok, resUser)
+		}
+
+		// shared-skill in local project shadows user version in ScopedRegistry
+		projSlug := strings.ToLower(filepath.Base(wsDir))
+		scoped := reg.Project(projSlug)
+		resShared, ok := scoped.ResolveResource("shared-skill")
+		if !ok || resShared.GetNamespace() != projSlug || resShared.GetMetadata().Description != "local version" {
+			t.Errorf("expected local shared-skill to shadow user, got ok=%v res=%+v", ok, resShared)
+		}
+
+		// sys-skill still available from NamespaceSystem
+		resSys, ok := scoped.ResolveResource("sys-skill")
+		if !ok || resSys.GetNamespace() != NamespaceSystem {
+			t.Errorf("expected sys-skill from NamespaceSystem, got ok=%v res=%+v", ok, resSys)
+		}
+	})
+
+	t.Run("AutoDiscoverStartSubproject preserves root .agents in NamespaceWorkspace and reloads", func(t *testing.T) {
+		wsRoot := t.TempDir()
+		if err := os.WriteFile(filepath.Join(wsRoot, "WORKSPACE.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: monorepo\nspec:\n  projects: [\".\"]\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(wsRoot, ".agents", "skills"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wsRoot, ".agents", "skills", "root.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: root-skill\n  description: root workspace skill\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		subDir := filepath.Join(wsRoot, "packages", "foo")
+		if err := os.MkdirAll(filepath.Join(subDir, ".agents", "skills"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(subDir, "AGENTS.md"), []byte("# Foo Package Context\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(subDir, ".agents", "skills", "foo.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: foo-skill\n  description: subproject skill\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		userFS := fstest.MapFS{
+			"skills/user.md": &fstest.MapFile{Data: []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: user-only\n---\n")},
+		}
+
+		// Without AutoDiscoverStartSubproject, packages/foo is ignored.
+		regNoAuto, err := LoadWithOptions(context.Background(), subDir, LoadOptions{
+			AutoDiscoverStartSubproject: false,
+		})
+		if err != nil {
+			t.Fatalf("LoadWithOptions(false) failed: %v", err)
+		}
+		if _, ok := regNoAuto.GetProject("packages-foo"); ok {
+			t.Fatalf("did not expect packages-foo project when AutoDiscoverStartSubproject is false")
+		}
+
+		// With AutoDiscoverStartSubproject: true
+		reg, err := LoadWithOptions(context.Background(), subDir, LoadOptions{
+			AutoDiscoverStartSubproject: true,
+			UserProviders: []ResourceProvider{
+				NewFSResourceProvider(userFS, ""),
+			},
+		})
+		if err != nil {
+			t.Fatalf("LoadWithOptions(true) failed: %v", err)
+		}
+
+		// Root .agents/ must be preserved in NamespaceWorkspace
+		if res, ok := reg.ResolveResource(MakeQualifiedName(NamespaceWorkspace, KindSkill, "root-skill")); !ok || res.GetNamespace() != NamespaceWorkspace {
+			t.Fatalf("expected root-skill in NamespaceWorkspace, got ok=%v res=%+v", ok, res)
+		}
+
+		// Subproject must be registered and discoverable via ProjectFromPath
+		proj, ok := reg.ProjectFromPath(subDir)
+		if !ok || proj.Name != "packages-foo" || proj.Context == nil {
+			t.Fatalf("expected packages-foo project with Context, got ok=%v proj=%+v", ok, proj)
+		}
+
+		scoped := reg.Project("packages-foo")
+		if _, ok := scoped.ResolveResource("foo-skill"); !ok {
+			t.Errorf("expected foo-skill in packages-foo scope")
+		}
+		if _, ok := scoped.ResolveResource("root-skill"); !ok {
+			t.Errorf("expected root-skill inherited from NamespaceWorkspace in packages-foo scope")
+		}
+		if _, ok := scoped.ResolveResource("user-only"); !ok {
+			t.Errorf("expected user-only inherited from NamespaceUser in packages-foo scope")
+		}
+
+		// Reload() must preserve LoadOptions (UserProviders + AutoDiscoverStartSubproject)
+		if err := os.WriteFile(filepath.Join(subDir, ".agents", "skills", "foo2.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: foo2-skill\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		stats, err := reg.Reload()
+		if err != nil {
+			t.Fatalf("Reload failed: %v", err)
+		}
+		if stats.Total.Added != 1 {
+			t.Errorf("expected 1 added resource after Reload, got %+v", stats)
+		}
+		if _, ok := reg.Project("packages-foo").ResolveResource("foo2-skill"); !ok {
+			t.Errorf("expected foo2-skill after Reload")
+		}
+		if _, ok := reg.ResolveResource("user-only"); !ok {
+			t.Errorf("expected user-only preserved after Reload")
+		}
+
+		// Subdirectory without .agents/ or AGENTS.md must not create an extra project
+		plainSub := filepath.Join(wsRoot, "internal", "util")
+		if err := os.MkdirAll(plainSub, 0755); err != nil {
+			t.Fatal(err)
+		}
+		regPlain, err := LoadWithOptions(context.Background(), plainSub, LoadOptions{
+			AutoDiscoverStartSubproject: true,
+		})
+		if err != nil {
+			t.Fatalf("LoadWithOptions(plainSub) failed: %v", err)
+		}
+		if _, ok := regPlain.GetProject("internal-util"); ok {
+			t.Errorf("did not expect internal-util project without .agents/ or AGENTS.md")
+		}
+	})
 }

@@ -349,6 +349,10 @@
     },
     "MCPSpec": {
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this MCP server is active (defaults to true when omitted)"
+        },
         "type": {
           "type": "string",
           "description": "Transport type: stdio, sse, http, or streamable-http"
@@ -449,6 +453,10 @@
     },
     "ModelProviderSpec": {
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this provider is active (defaults to true when omitted)"
+        },
         "type": {
           "type": "string",
           "description": "e.g., \"ollama\", \"openai\", \"anthropic\", \"typesafe\""
@@ -539,6 +547,9 @@
       "properties": {
         "tools": {
           "$ref": "#/$defs/ToolPolicies"
+        },
+        "mcps": {
+          "$ref": "#/$defs/ResourceFilter"
         }
       },
       "additionalProperties": false,
@@ -1059,6 +1070,10 @@
     },
     "ToolSpec": {
       "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this tool is active (defaults to true when omitted)"
+        },
         "instructions": {
           "type": "string",
           "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
@@ -1193,6 +1208,9 @@
                 "properties": {
                   "tools": {
                     "$ref": "#/$defs/ToolPolicies"
+                  },
+                  "mcps": {
+                    "$ref": "#/$defs/ResourceFilter"
                   }
                 },
                 "additionalProperties": false,
@@ -1469,11 +1487,35 @@
                 "properties": {
                   "tools": {
                     "$ref": "#/$defs/ToolPolicies"
+                  },
+                  "mcps": {
+                    "$ref": "#/$defs/ResourceFilter"
                   }
                 },
                 "additionalProperties": false,
                 "type": "object",
                 "description": "Policies defines security and access policies."
+              },
+              "ResourceFilter": {
+                "properties": {
+                  "include": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns for resources to expose"
+                  },
+                  "exclude": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Glob patterns for resources to block (applied after include)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
               },
               "ToolPolicies": {
                 "properties": {
@@ -1998,6 +2040,10 @@
               },
               "ModelProviderSpec": {
                 "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this provider is active (defaults to true when omitted)"
+                  },
                   "type": {
                     "type": "string",
                     "description": "e.g., \"ollama\", \"openai\", \"anthropic\", \"typesafe\""
@@ -2421,6 +2467,10 @@
               },
               "ToolSpec": {
                 "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this tool is active (defaults to true when omitted)"
+                  },
                   "instructions": {
                     "type": "string",
                     "description": "Instructions is the detailed description of what the tool does, populated from the Markdown body."
@@ -2494,6 +2544,10 @@
               },
               "MCPSpec": {
                 "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this MCP server is active (defaults to true when omitted)"
+                  },
                   "type": {
                     "type": "string",
                     "description": "Transport type: stdio, sse, http, or streamable-http"

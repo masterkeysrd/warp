@@ -30,8 +30,12 @@ type QueryOptions struct {
 	// Namespaces filters by namespace. An empty slice matches all namespaces.
 	Namespaces []string
 	// Effective applies shadowing: when true, only the highest-priority
-	// namespace version of each short name is returned.
+	// namespace version of each (Kind, Name) is returned.
 	Effective bool
+	// IncludeDisabled includes resources with spec.enabled: false in the
+	// returned slice (after Effective shadowing is applied). By default
+	// disabled resources are excluded from active queries.
+	IncludeDisabled bool
 	// Filter is an optional custom predicate function called for each candidate resource.
 	// If set and it returns false, the resource is excluded from the results.
 	Filter func(Resource) bool
@@ -550,18 +554,32 @@ func (r *Registry) validateWorkspaceLocked(addIssue func(qn string, kind Kind, n
 	if dm := def.Spec.DefaultModels; dm != nil {
 		r.validateModelDefaultsLocked("workspace", dm, emit)
 	}
-	if def.Spec.Policies != nil && def.Spec.Policies.Tools != nil {
-		if err := validateToolPolicies(def.Spec.Policies.Tools, "workspace policies.tools"); err != nil {
-			emit("spec.policies.tools", err)
+	if def.Spec.Policies != nil {
+		if def.Spec.Policies.Tools != nil {
+			if err := validateToolPolicies(def.Spec.Policies.Tools, "workspace policies.tools"); err != nil {
+				emit("spec.policies.tools", err)
+			}
+		}
+		if def.Spec.Policies.MCPs != nil {
+			if err := validateResourceFilter(def.Spec.Policies.MCPs, "workspace policies.mcps"); err != nil {
+				emit("spec.policies.mcps", err)
+			}
 		}
 	}
 }
 
 func (r *Registry) validateAgentLocked(name string, agent *Agent, emit func(field string, err error)) {
 	ns := agent.GetNamespace()
-	if agent.Spec.Policies != nil && agent.Spec.Policies.Tools != nil {
-		if err := validateToolPolicies(agent.Spec.Policies.Tools, fmt.Sprintf("agent %s policies.tools", name)); err != nil {
-			emit("spec.policies.tools", err)
+	if agent.Spec.Policies != nil {
+		if agent.Spec.Policies.Tools != nil {
+			if err := validateToolPolicies(agent.Spec.Policies.Tools, fmt.Sprintf("agent %s policies.tools", name)); err != nil {
+				emit("spec.policies.tools", err)
+			}
+		}
+		if agent.Spec.Policies.MCPs != nil {
+			if err := validateResourceFilter(agent.Spec.Policies.MCPs, fmt.Sprintf("agent %s policies.mcps", name)); err != nil {
+				emit("spec.policies.mcps", err)
+			}
 		}
 	}
 	if agent.Spec.Extends != "" {
@@ -800,14 +818,14 @@ func (r *Registry) detectCrossProviderDuplicateAliasesLocked() []string {
 		asRes[i] = mp
 	}
 	deduped := deduplicateByName(asRes, NamespacePriority)
-	if len(deduped) < 2 {
-		return nil
-	}
 	providers := make([]*ModelProvider, 0, len(deduped))
 	for _, res := range deduped {
-		if mp, ok := res.(*ModelProvider); ok {
+		if mp, ok := res.(*ModelProvider); ok && mp.Spec.IsEnabled() {
 			providers = append(providers, mp)
 		}
+	}
+	if len(providers) < 2 {
+		return nil
 	}
 	var defaultProv string
 	var wsAliases map[string]string
@@ -1289,6 +1307,29 @@ func validateToolPolicies(tp *ToolPolicies, prefix string) error {
 	return nil
 }
 
+func validateResourceFilter(rf *ResourceFilter, prefix string) error {
+	if rf == nil {
+		return nil
+	}
+	for _, pat := range rf.Include {
+		if pat == "" {
+			return fmt.Errorf("%s: include pattern cannot be empty", prefix)
+		}
+		if _, err := path.Match(pat, ""); err != nil {
+			return fmt.Errorf("%s: invalid include pattern %q: %w", prefix, pat, err)
+		}
+	}
+	for _, pat := range rf.Exclude {
+		if pat == "" {
+			return fmt.Errorf("%s: exclude pattern cannot be empty", prefix)
+		}
+		if _, err := path.Match(pat, ""); err != nil {
+			return fmt.Errorf("%s: invalid exclude pattern %q: %w", prefix, pat, err)
+		}
+	}
+	return nil
+}
+
 func matchResourcePattern(pat, shortName, nsName, qualifiedName string) bool {
 	if m, _ := path.Match(pat, shortName); m {
 		return true
@@ -1505,6 +1546,9 @@ func (r *Registry) ListResources(opts QueryOptions) []Resource {
 	if opts.Effective {
 		filtered = deduplicateByName(filtered, NamespacePriority)
 	}
+	if !opts.IncludeDisabled {
+		filtered = filterEnabledResources(filtered)
+	}
 	sortResources(filtered)
 	return filtered
 }
@@ -1653,6 +1697,9 @@ func (s *ScopedRegistry) ListResources(opts QueryOptions) []Resource {
 	}
 	if opts.Effective {
 		filtered = deduplicateByName(filtered, s.priorityFor)
+	}
+	if !opts.IncludeDisabled {
+		filtered = filterEnabledResources(filtered)
 	}
 	sortResources(filtered)
 	return filtered
@@ -1967,6 +2014,9 @@ func (r *Registry) SetMCPTools(mcpRef string, tools []*Tool) error {
 }
 
 func materializeMCPTools(targetMCP *MCP, rawTools []*Tool) (active []*Tool, activeKeys []string) {
+	if targetMCP == nil || !targetMCP.Spec.IsEnabled() {
+		return nil, nil
+	}
 	for _, rawTool := range rawTools {
 		if rawTool == nil {
 			continue
@@ -2301,10 +2351,15 @@ func effectiveProviders(base *Registry, resolver Resolver, defaultProv string) [
 			list = append(list, mp)
 		}
 	}
-	if len(list) == 0 {
+	if len(list) == 0 && len(resolver.ListResources(QueryOptions{Kinds: []Kind{KindModelProvider}, Effective: true, IncludeDisabled: true})) == 0 {
 		base.mu.RLock()
-		list = base.findProvidersLocked()
+		raw := base.findProvidersLocked()
 		base.mu.RUnlock()
+		for _, mp := range raw {
+			if mp.Spec.IsEnabled() {
+				list = append(list, mp)
+			}
+		}
 		sort.Slice(list, func(i, j int) bool {
 			return list[i].QualifiedName() < list[j].QualifiedName()
 		})
@@ -2320,6 +2375,32 @@ func effectiveProviders(base *Registry, resolver Resolver, defaultProv string) [
 		}
 	}
 	return list
+}
+
+func isResourceEnabled(res Resource) bool {
+	switch v := res.(type) {
+	case *ModelProvider:
+		return v.Spec.IsEnabled()
+	case *MCP:
+		return v.Spec.IsEnabled()
+	case *Tool:
+		return v.Spec.IsEnabled()
+	default:
+		return true
+	}
+}
+
+func filterEnabledResources(resources []Resource) []Resource {
+	if len(resources) == 0 {
+		return resources
+	}
+	out := make([]Resource, 0, len(resources))
+	for _, res := range resources {
+		if isResourceEnabled(res) {
+			out = append(out, res)
+		}
+	}
+	return out
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -2413,7 +2494,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	// 2. Resolve Tools
 	tools := resolveToolsFromRefs(resolver, ag.Spec.Tools)
 
-	// Apply tool policy filter
+	// Apply tool and MCP policy filters
 	wsPolicy := workspaceToolPolicy(resolver)
 	if wsPolicy != nil {
 		tools = filterTools(tools, wsPolicy)
@@ -2421,6 +2502,12 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 	if ag.Spec.Policies != nil && ag.Spec.Policies.Tools != nil {
 		tools = filterTools(tools, ag.Spec.Policies.Tools)
 	}
+	wsMCPPol := workspaceMCPPolicy(resolver)
+	var agentMCPPol *ResourceFilter
+	if ag.Spec.Policies != nil {
+		agentMCPPol = ag.Spec.Policies.MCPs
+	}
+	tools = filterToolsByMCPPolicy(resolver, tools, wsMCPPol, agentMCPPol)
 
 	// 3. Resolve Commands
 	var commands []*Command
@@ -2590,6 +2677,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 			mcps = append(mcps, m)
 		}
 	}
+	mcps = filterMCPs(mcps, wsMCPPol, agentMCPPol)
 	sort.Slice(mcps, func(i, j int) bool {
 		return mcps[i].QualifiedName() < mcps[j].QualifiedName()
 	})
@@ -2649,7 +2737,7 @@ func resolveToolsFromRefs(resolver Resolver, toolRefs []string) []*Tool {
 			if !ok {
 				continue
 			}
-			if t, ok := tRes.(*Tool); ok {
+			if t, ok := tRes.(*Tool); ok && t.Spec.IsEnabled() {
 				addTool(t)
 			}
 		}
@@ -2675,6 +2763,7 @@ func resolveToolsForSkill(resolver Resolver, skillRef string) ([]*Tool, error) {
 	if wsPolicy := workspaceToolPolicy(resolver); wsPolicy != nil {
 		tools = filterTools(tools, wsPolicy)
 	}
+	tools = filterToolsByMCPPolicy(resolver, tools, workspaceMCPPolicy(resolver), nil)
 	return tools, nil
 }
 
@@ -2717,8 +2806,13 @@ func (ra *ResolvedAgent) ToolsForSkill(resolver Resolver, skillRef string) ([]*T
 		return nil, err
 	}
 
-	if ra.Agent != nil && ra.Agent.Spec.Policies != nil && ra.Agent.Spec.Policies.Tools != nil {
-		tools = filterTools(tools, ra.Agent.Spec.Policies.Tools)
+	if ra.Agent != nil && ra.Agent.Spec.Policies != nil {
+		if ra.Agent.Spec.Policies.Tools != nil {
+			tools = filterTools(tools, ra.Agent.Spec.Policies.Tools)
+		}
+		if ra.Agent.Spec.Policies.MCPs != nil {
+			tools = filterToolsByMCPPolicy(resolver, tools, nil, ra.Agent.Spec.Policies.MCPs)
+		}
 	}
 
 	return tools, nil
@@ -3188,9 +3282,14 @@ func resolveCommand(resolver Resolver, executingAgent *ResolvedAgent, ref string
 		tools = filterTools(tools, wsPolicy)
 	}
 
-	if executingAgent != nil && executingAgent.Agent != nil && executingAgent.Agent.Spec.Policies != nil && executingAgent.Agent.Spec.Policies.Tools != nil {
-		tools = filterTools(tools, executingAgent.Agent.Spec.Policies.Tools)
+	var agentMCPPol *ResourceFilter
+	if executingAgent != nil && executingAgent.Agent != nil && executingAgent.Agent.Spec.Policies != nil {
+		if executingAgent.Agent.Spec.Policies.Tools != nil {
+			tools = filterTools(tools, executingAgent.Agent.Spec.Policies.Tools)
+		}
+		agentMCPPol = executingAgent.Agent.Spec.Policies.MCPs
 	}
+	tools = filterToolsByMCPPolicy(resolver, tools, workspaceMCPPolicy(resolver), agentMCPPol)
 
 	return &ResolvedCommand{
 		Command: cmd,
@@ -3223,6 +3322,14 @@ func mergePolicies(parent, child *Policies) *Policies {
 	}
 
 	merged := parent.DeepCopy()
+	if child.MCPs != nil {
+		if merged.MCPs == nil {
+			merged.MCPs = child.MCPs.DeepCopy()
+		} else {
+			merged.MCPs.Include = unionSlices(merged.MCPs.Include, child.MCPs.Include)
+			merged.MCPs.Exclude = unionSlices(merged.MCPs.Exclude, child.MCPs.Exclude)
+		}
+	}
 	if child.Tools == nil {
 		return merged
 	}
@@ -3316,6 +3423,103 @@ func workspaceToolPolicy(resolver Resolver) *ToolPolicies {
 		return base.workspace.Def.Spec.Policies.Tools
 	}
 	return nil
+}
+
+func workspaceMCPPolicy(resolver Resolver) *ResourceFilter {
+	var base *Registry
+	switch r := resolver.(type) {
+	case *Registry:
+		base = r
+	case *ScopedRegistry:
+		if r != nil {
+			base = r.base
+		}
+	}
+	if base == nil {
+		return nil
+	}
+	base.mu.RLock()
+	defer base.mu.RUnlock()
+	if base.workspace != nil && base.workspace.Def != nil && base.workspace.Def.Spec.Policies != nil {
+		return base.workspace.Def.Spec.Policies.MCPs
+	}
+	return nil
+}
+
+func matchesMCPFilterIdentity(filter *ResourceFilter, shortName, nsName, qualifiedName string) bool {
+	if filter == nil {
+		return true
+	}
+	matchesAny := func(patterns []string) bool {
+		for _, pat := range patterns {
+			if pat == "*" || matchResourcePattern(pat, shortName, nsName, qualifiedName) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(filter.Include) > 0 && !matchesAny(filter.Include) {
+		return false
+	}
+	if len(filter.Exclude) > 0 && matchesAny(filter.Exclude) {
+		return false
+	}
+	return true
+}
+
+func mcpMatchesResourceFilter(m *MCP, filter *ResourceFilter) bool {
+	if filter == nil {
+		return true
+	}
+	if m == nil {
+		return false
+	}
+	return matchesMCPFilterIdentity(filter, m.Metadata.Name, m.GetNamespace()+"/"+m.Metadata.Name, m.QualifiedName())
+}
+
+func filterMCPs(mcps []*MCP, wsFilter, agentFilter *ResourceFilter) []*MCP {
+	if len(mcps) == 0 {
+		return mcps
+	}
+	out := make([]*MCP, 0, len(mcps))
+	for _, m := range mcps {
+		if m == nil || !m.Spec.IsEnabled() {
+			continue
+		}
+		if !mcpMatchesResourceFilter(m, wsFilter) || !mcpMatchesResourceFilter(m, agentFilter) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func filterToolsByMCPPolicy(resolver Resolver, tools []*Tool, wsFilter, agentFilter *ResourceFilter) []*Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	out := make([]*Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool == nil || !tool.Spec.IsEnabled() {
+			continue
+		}
+		if mcpName, _, ok := ParseMCPToolName(tool.GetName()); ok {
+			if mcpRes, found := resolver.ResolveResource(mcpName); found {
+				if m, isMCP := mcpRes.(*MCP); isMCP {
+					if !m.Spec.IsEnabled() || !mcpMatchesResourceFilter(m, wsFilter) || !mcpMatchesResourceFilter(m, agentFilter) {
+						continue
+					}
+					out = append(out, tool)
+					continue
+				}
+			}
+			if !matchesMCPFilterIdentity(wsFilter, mcpName, mcpName, mcpName) || !matchesMCPFilterIdentity(agentFilter, mcpName, mcpName, mcpName) {
+				continue
+			}
+		}
+		out = append(out, tool)
+	}
+	return out
 }
 
 func filterTools(tools []*Tool, policy *ToolPolicies) []*Tool {

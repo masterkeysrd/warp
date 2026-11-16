@@ -163,9 +163,10 @@ When resolving the prioritized model list for a capability role (`completion`, `
 
 #### `Policies` fields
 
-| Field   | Type   | Description                                           |
-|---------|--------|-------------------------------------------------------|
-| `tools` | object | Restrictions on which tools agents are allowed to use. |
+| Field   | Type   | Description                                                                                 |
+|---------|--------|---------------------------------------------------------------------------------------------|
+| `tools` | object | Restrictions on which tools agents are allowed to use (`ToolPolicies`).                     |
+| `mcps`  | object | `ResourceFilter` (`include`/`exclude`) restricting which MCP servers and MCP tools agents can use. |
 
 #### `ToolPolicies` fields
 
@@ -675,6 +676,7 @@ endpoints and default models.
 
 | Field           | Type     | Required | Description                                                                                      |
 |-----------------|----------|:--------:|--------------------------------------------------------------------------------------------------|
+| `enabled`       | boolean  |          | Whether this provider is active (defaults to `true` when omitted).                               |
 | `type`          | string   | ✅       | e.g., `ollama`, `openai`, `anthropic`.                                                           |
 | `endpoint`      | string   |          | API base URL (optional when the provider `type` has a standard default endpoint).                |
 | `defaultModels` | object   |          | Role-specific default models (`completion`, `decision`, `embedding`) for this provider.          |
@@ -845,6 +847,7 @@ A `Tool` resource describes a custom command-line tool or a host-native tool tha
 
 | Field         | Type     | Required | Description                                                                 |
 |---------------|----------|:--------:|-----------------------------------------------------------------------------|
+| `enabled`     | boolean  |          | Whether this tool is active (defaults to `true` when omitted).              |
 | `command`     | string[] |          | Executable and template args (e.g., `["ls", "-F", "$path"]`). Optional when representing a built-in or host-native tool implemented directly by the runtime. |
 | `env`         | map      |          | Environment variables injected into the process.                            |
 | `inputSchema`  | map      |          | JSON Schema object defining arguments the LLM must pass.                    |
@@ -907,6 +910,7 @@ An `MCP` resource describes a [Model Context Protocol](https://modelcontextproto
 
 | Field         | Type     | Required | Description                                     |
 |---------------|----------|:--------:|-------------------------------------------------|
+| `enabled`     | boolean  |          | Whether this MCP server is active (defaults to `true` when omitted). |
 | `type`        | string   |          | `MCPTransport` type: `stdio` (default), `sse`, `http`, or `streamable-http`. |
 | `command`     | string[] | *        | Command to start the MCP server (required if `type: stdio`). |
 | `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type` is `sse`, `http`, or `streamable-http`). |

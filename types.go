@@ -259,7 +259,8 @@ func (in *ModelDefaults) DeepCopy() *ModelDefaults {
 
 // Policies defines security and access policies.
 type Policies struct {
-	Tools *ToolPolicies `yaml:"tools,omitempty"`
+	Tools *ToolPolicies   `yaml:"tools,omitempty"`
+	MCPs  *ResourceFilter `yaml:"mcps,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the Policies.
@@ -269,7 +270,16 @@ func (in *Policies) DeepCopy() *Policies {
 	}
 	out := new(Policies)
 	out.Tools = in.Tools.DeepCopy()
+	out.MCPs = in.MCPs.DeepCopy()
 	return out
+}
+
+func copyBoolPtr(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
 }
 
 // ToolPolicyAction defines the action to take for a tool evaluation.

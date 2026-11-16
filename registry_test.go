@@ -5831,3 +5831,191 @@ func TestListResources_Effective_MultiKind(t *testing.T) {
 		t.Errorf("ScopedRegistry.ListResources(Effective: true) = %v, want %v", scopedQNs, wantScoped)
 	}
 }
+
+func TestSpecEnabled_And_PoliciesMCPs(t *testing.T) {
+	falseVal := false
+	trueVal := true
+
+	t.Run("disabled higher-priority resource shadows enabled lower-priority resource", func(t *testing.T) {
+		reg := NewRegistry(nil)
+
+		userProv := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceUser, Metadata: Metadata{Name: "openai"}},
+			Spec:         ModelProviderSpec{Type: "openai", Models: []ProviderModel{{ID: "gpt-4o", Aliases: []string{"fast"}}}},
+		}
+		wsProvDisabled := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "openai"}},
+			Spec:         ModelProviderSpec{Enabled: &falseVal, Type: "openai", Models: []ProviderModel{{ID: "gpt-4o", Aliases: []string{"fast"}}}},
+		}
+		anthropicEnabled := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "anthropic"}},
+			Spec:         ModelProviderSpec{Enabled: &trueVal, Type: "anthropic", Models: []ProviderModel{{ID: "claude-3-5-haiku", Aliases: []string{"fast"}}}},
+		}
+
+		userMCP := &MCP{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceUser, Metadata: Metadata{Name: "github"}},
+			Spec:         MCPSpec{Type: MCPTransportStdio, Command: []string{"npx", "gh"}},
+		}
+		wsMCPDisabled := &MCP{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "github"}},
+			Spec:         MCPSpec{Enabled: &falseVal, Type: MCPTransportStdio, Command: []string{"npx", "gh"}},
+		}
+		wsToolDisabled := makeToolResource(NamespaceWorkspace, "disabled-tool")
+		wsToolDisabled.Spec.Enabled = &falseVal
+
+		for _, r := range []Resource{userProv, wsProvDisabled, anthropicEnabled, userMCP, wsMCPDisabled, wsToolDisabled} {
+			reg.set(r.QualifiedName(), r)
+		}
+
+		// Active ListResources excludes disabled openai & github (does NOT fall back to user/openai or user/github)
+		activeProvs := reg.ListResources(QueryOptions{Kinds: []Kind{KindModelProvider}, Effective: true})
+		if len(activeProvs) != 1 || activeProvs[0].GetName() != "anthropic" {
+			t.Fatalf("expected only anthropic in active providers, got: %v", activeProvs)
+		}
+		activeMCPs := reg.ListResources(QueryOptions{Kinds: []Kind{KindMCP}, Effective: true})
+		if len(activeMCPs) != 0 {
+			t.Fatalf("expected 0 active MCPs (workspace github disabled should shadow user github), got: %v", activeMCPs)
+		}
+
+		// IncludeDisabled returns the winning disabled resource for UI inspection
+		allProvs := reg.ListResources(QueryOptions{Kinds: []Kind{KindModelProvider}, Effective: true, IncludeDisabled: true})
+		if len(allProvs) != 2 {
+			t.Fatalf("expected 2 providers with IncludeDisabled, got %d", len(allProvs))
+		}
+		allMCPs := reg.ListResources(QueryOptions{Kinds: []Kind{KindMCP}, Effective: true, IncludeDisabled: true})
+		if len(allMCPs) != 1 || allMCPs[0].GetNamespace() != NamespaceWorkspace || allMCPs[0].(*MCP).Spec.IsEnabled() {
+			t.Fatalf("expected disabled workspace/MCP/github with IncludeDisabled, got: %+v", allMCPs)
+		}
+
+		// ResolveModels / ResolveModel ignore disabled openai and resolve anthropic for @fast (and omit openai/gpt-4o)
+		if rm, ok := reg.ResolveModel(ModelRoleCompletion, "@fast"); !ok || rm.QualifiedID != "anthropic/claude-3-5-haiku" {
+			t.Fatalf("expected @fast to resolve to anthropic/claude-3-5-haiku, got (%+v, %v)", rm, ok)
+		}
+		if rm, ok := reg.ResolveModel(ModelRoleCompletion); !ok || rm.QualifiedID != "anthropic/claude-3-5-haiku" {
+			t.Fatalf("expected default ResolveModel to skip disabled openai, got (%+v, %v)", rm, ok)
+		}
+
+		// All providers disabled -> ResolveModel returns ok=false (does not resurrect disabled providers)
+		anthropicEnabled.Spec.Enabled = &falseVal
+		if rm, ok := reg.ResolveModel(ModelRoleCompletion); ok || rm != nil {
+			t.Fatalf("expected no resolved model when all providers disabled, got (%+v, %v)", rm, ok)
+		}
+		// Re-enable anthropic for agent checks
+		anthropicEnabled.Spec.Enabled = &trueVal
+
+		// SetMCPTools on disabled MCP exposes no active tools, and agent omits disabled tool & MCP
+		if err := reg.SetMCPTools("workspace/MCP/github", []*Tool{makeToolResource("", "search")}); err != nil {
+			t.Fatalf("SetMCPTools on disabled MCP failed: %v", err)
+		}
+		ag := agentWithSpec(NamespaceWorkspace, "worker", AgentSpec{Tools: []string{"*"}})
+		reg.set(ag.QualifiedName(), ag)
+		resolved, err := reg.ResolveAgent("worker")
+		if err != nil {
+			t.Fatalf("ResolveAgent failed: %v", err)
+		}
+		if len(resolved.MCPs) != 0 {
+			t.Errorf("expected 0 active MCPs on ResolvedAgent, got %+v", resolved.MCPs)
+		}
+		if len(resolved.Tools) != 0 {
+			t.Errorf("expected 0 active Tools (disabled-tool + disabled github MCP tool excluded), got %+v", resolved.Tools)
+		}
+	})
+
+	t.Run("Policies.MCPs inheritance, workspace ceiling, and validation", func(t *testing.T) {
+		wsDef := &WorkspaceDef{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Metadata: Metadata{Name: "ws"}},
+			Spec: WorkspaceDefSpec{
+				Policies: &Policies{
+					MCPs: &ResourceFilter{
+						Include: []string{"github", "slack", "postgres"},
+						Exclude: []string{"slack"},
+					},
+				},
+			},
+		}
+		reg := NewRegistry(&Workspace{Def: wsDef})
+
+		gh := &MCP{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "github"}}, Spec: MCPSpec{Type: MCPTransportStdio, Command: []string{"gh"}}}
+		sl := &MCP{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "slack"}}, Spec: MCPSpec{Type: MCPTransportStdio, Command: []string{"sl"}}}
+		pg := &MCP{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "postgres"}}, Spec: MCPSpec{Type: MCPTransportStdio, Command: []string{"pg"}}}
+		jira := &MCP{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "jira"}}, Spec: MCPSpec{Type: MCPTransportStdio, Command: []string{"jira"}}}
+		localTool := makeToolResource(NamespaceWorkspace, "read_file")
+
+		for _, r := range []Resource{gh, sl, pg, jira, localTool} {
+			reg.set(r.QualifiedName(), r)
+		}
+		for _, pair := range []struct{ mcp, tool string }{
+			{"github", "search"},
+			{"slack", "post"},
+			{"postgres", "query"},
+			{"jira", "create"},
+		} {
+			if err := reg.SetMCPTools(pair.mcp, []*Tool{makeToolResource("", pair.tool)}); err != nil {
+				t.Fatalf("SetMCPTools(%s) failed: %v", pair.mcp, err)
+			}
+		}
+
+		parent := agentWithSpec(NamespaceWorkspace, "parent-ag", AgentSpec{
+			Tools: []string{"*"},
+			Policies: &Policies{
+				MCPs: &ResourceFilter{
+					Include: []string{"github", "postgres", "jira"},
+				},
+			},
+		})
+		child := agentWithSpec(NamespaceWorkspace, "child-ag", AgentSpec{
+			Extends: "parent-ag",
+			Policies: &Policies{
+				MCPs: &ResourceFilter{
+					Exclude: []string{"postgres"},
+				},
+			},
+		})
+		sk := &Skill{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindSkill, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "sk"}},
+			Spec:         SkillSpec{Tools: []string{"github__search", "slack__post", "postgres__query"}},
+		}
+		child.Spec.Skills = []string{"sk"}
+		reg.set(parent.QualifiedName(), parent)
+		reg.set(child.QualifiedName(), child)
+		reg.set(sk.QualifiedName(), sk)
+
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("expected Validate() to pass, got: %v", err)
+		}
+
+		resolved, err := reg.ResolveAgent("child-ag")
+		if err != nil {
+			t.Fatalf("ResolveAgent failed: %v", err)
+		}
+
+		// Workspace allows {github, postgres}; parent allows {github, postgres, jira}; child excludes {postgres} -> only github remains!
+		if len(resolved.MCPs) != 1 || resolved.MCPs[0].GetName() != "github" {
+			t.Fatalf("expected only github MCP on resolved agent, got: %+v", resolved.MCPs)
+		}
+
+		// Tools should contain github__search + read_file (slack__post excluded by ws, jira__create not in ws include, postgres__query excluded by child)
+		var toolNames []string
+		for _, tl := range resolved.Tools {
+			toolNames = append(toolNames, tl.GetName())
+		}
+		if !slicesEqual(toolNames, []string{"github__search", "read_file"}) {
+			t.Fatalf("expected tools [github__search read_file], got: %v", toolNames)
+		}
+
+		// ToolsForSkill enforces both workspace and agent MCPs policies
+		skTools, err := resolved.ToolsForSkill(reg, "sk")
+		if err != nil {
+			t.Fatalf("ToolsForSkill failed: %v", err)
+		}
+		if len(skTools) != 1 || skTools[0].GetName() != "github__search" {
+			t.Fatalf("expected ToolsForSkill to return only [github__search], got: %+v", skTools)
+		}
+
+		// Invalid glob in Policies.MCPs is caught by Validate()
+		wsDef.Spec.Policies.MCPs.Exclude = []string{"[bad"}
+		if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "policies.mcps") {
+			t.Fatalf("expected policies.mcps validation error for bad glob, got: %v", err)
+		}
+	})
+}

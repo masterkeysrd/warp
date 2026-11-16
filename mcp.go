@@ -38,6 +38,7 @@ func (m *MCP) DeepCopy() *MCP {
 
 // MCPSpec contains the configuration details for an MCP resource.
 type MCPSpec struct {
+	Enabled     *bool                     `yaml:"enabled,omitempty" json:"enabled,omitempty"`         // Whether this MCP server is active (defaults to true when omitted)
 	Type        MCPTransport              `yaml:"type,omitempty" json:"type,omitempty"`               // Transport type: stdio, sse, http, or streamable-http
 	Endpoint    string                    `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`       // HTTP URL for the MCP server if type is sse, http, or streamable-http
 	Command     []string                  `yaml:"command,omitempty" json:"command,omitempty"`         // Command to start the MCP server via stdio
@@ -47,6 +48,11 @@ type MCPSpec struct {
 	Annotations *ToolAnnotation           `yaml:"annotations,omitempty" json:"annotations,omitempty"` // Default safety profile for all exposed tools
 	Policies    *MCPPolicies              `yaml:"policies,omitempty" json:"policies,omitempty"`       // Controls which external MCP resources are exposed
 	Overrides   map[string]ToolAnnotation `yaml:"overrides,omitempty" json:"overrides,omitempty"`     // Tool-specific annotation overrides (key is tool name)
+}
+
+// IsEnabled reports whether this MCP server is enabled (true when Enabled is nil or *Enabled is true).
+func (in *MCPSpec) IsEnabled() bool {
+	return in == nil || in.Enabled == nil || *in.Enabled
 }
 
 // MCPPolicies defines inclusion and exclusion rules for resources exposed by an MCP server.
@@ -75,6 +81,7 @@ func (in *MCPSpec) DeepCopy() *MCPSpec {
 	}
 	out := new(MCPSpec)
 	*out = *in
+	out.Enabled = copyBoolPtr(in.Enabled)
 	if in.Command != nil {
 		out.Command = make([]string, len(in.Command))
 		copy(out.Command, in.Command)

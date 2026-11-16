@@ -63,6 +63,7 @@ func (in *ModelProvider) defaultForRole(role ModelRole) string {
 
 // ModelProviderSpec contains the configuration details for a ModelProvider resource.
 type ModelProviderSpec struct {
+	Enabled       *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`             // Whether this provider is active (defaults to true when omitted)
 	Type          string            `yaml:"type"`                                                   // e.g., "ollama", "openai", "anthropic", "typesafe"
 	Endpoint      string            `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`           // API base URL
 	DefaultModels *ModelDefaults    `yaml:"defaultModels,omitempty" json:"defaultModels,omitempty"` // Role-based default models (completion, decision, embedding)
@@ -72,6 +73,11 @@ type ModelProviderSpec struct {
 	Models        []ProviderModel   `yaml:"models"`                                                 // Available models from this provider
 }
 
+// IsEnabled reports whether this ModelProvider is enabled (true when Enabled is nil or *Enabled is true).
+func (in *ModelProviderSpec) IsEnabled() bool {
+	return in == nil || in.Enabled == nil || *in.Enabled
+}
+
 // DeepCopy returns a deep copy of the ModelProviderSpec.
 func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	if in == nil {
@@ -79,6 +85,7 @@ func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	}
 	out := new(ModelProviderSpec)
 	*out = *in
+	out.Enabled = copyBoolPtr(in.Enabled)
 	if in.DefaultModels != nil {
 		out.DefaultModels = in.DefaultModels.DeepCopy()
 	}

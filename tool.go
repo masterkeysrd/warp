@@ -140,6 +140,7 @@ func (t *Tool) RenderCommand(opts *ToolRenderOptions) ([]string, error) {
 
 // ToolSpec contains the configuration details for a Tool resource.
 type ToolSpec struct {
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"` // Whether this tool is active (defaults to true when omitted)
 	// Instructions is the detailed description of what the tool does, populated from the Markdown body.
 	Instructions string            `yaml:"instructions,omitempty"`
 	Command      []string          `yaml:"command,omitempty" json:"command,omitempty"` // Executable and static args (e.g., ["python", "script.py"]). Optional for built-in / host-native tools.
@@ -147,6 +148,11 @@ type ToolSpec struct {
 	InputSchema  map[string]any    `yaml:"inputSchema,omitempty"`                      // JSON Schema object defining arguments the LLM must pass
 	OutputSchema map[string]any    `yaml:"outputSchema,omitempty"`                     // JSON Schema object defining the tool's output
 	Annotations  *ToolAnnotation   `yaml:"annotations,omitempty"`                      // Safety profile for Tool Execution Security
+}
+
+// IsEnabled reports whether this Tool is enabled (true when Enabled is nil or *Enabled is true).
+func (in *ToolSpec) IsEnabled() bool {
+	return in == nil || in.Enabled == nil || *in.Enabled
 }
 
 // ToolAnnotation defines the safety profile for a tool.
@@ -175,6 +181,7 @@ func (in *ToolSpec) DeepCopy() *ToolSpec {
 	}
 	out := new(ToolSpec)
 	*out = *in
+	out.Enabled = copyBoolPtr(in.Enabled)
 	if in.Command != nil {
 		out.Command = make([]string, len(in.Command))
 		copy(out.Command, in.Command)

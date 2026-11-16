@@ -946,3 +946,123 @@ spec:
 		t.Errorf("Round-trip failed for ModelProvider")
 	}
 }
+
+func TestEnabledAndPoliciesMCPsRoundTripAndDeepCopy(t *testing.T) {
+	mpYAML := `apiVersion: warp/v1alpha1
+kind: ModelProvider
+metadata:
+  name: openai
+spec:
+  enabled: false
+  type: openai
+  endpoint: https://api.openai.com/v1
+  models:
+    - id: gpt-4o
+      name: gpt-4o
+      label: GPT-4o
+      limits:
+        context: 128000
+`
+	res, err := Parse("openai.yaml", mpYAML)
+	if err != nil {
+		t.Fatalf("Parse ModelProvider failed: %v", err)
+	}
+	mp := res.Resource.(*ModelProvider)
+	if mp.Spec.IsEnabled() {
+		t.Fatalf("expected ModelProvider.Spec.IsEnabled() to be false")
+	}
+	formatted, err := Format(mp)
+	if err != nil {
+		t.Fatalf("Format ModelProvider failed: %v", err)
+	}
+	if !strings.Contains(string(formatted), "enabled: false") {
+		t.Errorf("expected formatted YAML to preserve enabled: false, got:\n%s", string(formatted))
+	}
+	res2, err := Parse("openai.yaml", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse ModelProvider failed: %v", err)
+	}
+	if !reflect.DeepEqual(res.Resource, res2.Resource) {
+		t.Errorf("ModelProvider enabled: false round-trip mismatch")
+	}
+	cp := mp.DeepCopy()
+	*cp.Spec.Enabled = true
+	if mp.Spec.IsEnabled() {
+		t.Errorf("DeepCopy mutated original ModelProvider.Spec.Enabled")
+	}
+
+	mcpYAML := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: slack
+spec:
+  enabled: false
+  type: stdio
+  command: ["npx", "slack-mcp"]
+`
+	mcpRes, err := Parse("slack.yaml", mcpYAML)
+	if err != nil {
+		t.Fatalf("Parse MCP failed: %v", err)
+	}
+	mcp := mcpRes.Resource.(*MCP)
+	if mcp.Spec.IsEnabled() {
+		t.Fatalf("expected MCP.Spec.IsEnabled() to be false")
+	}
+	mcpFormatted, err := Format(mcp)
+	if err != nil {
+		t.Fatalf("Format MCP failed: %v", err)
+	}
+	if !strings.Contains(string(mcpFormatted), "enabled: false") {
+		t.Errorf("expected MCP formatted YAML to preserve enabled: false, got:\n%s", string(mcpFormatted))
+	}
+
+	toolMD := `---
+apiVersion: warp/v1alpha1
+kind: Tool
+metadata:
+  name: custom-tool
+spec:
+  enabled: false
+---
+Disabled tool description
+`
+	toolRes, err := Parse("custom-tool.md", toolMD)
+	if err != nil {
+		t.Fatalf("Parse Tool failed: %v", err)
+	}
+	tool := toolRes.Resource.(*Tool)
+	if tool.Spec.IsEnabled() {
+		t.Fatalf("expected Tool.Spec.IsEnabled() to be false")
+	}
+	toolFormatted, err := Format(tool)
+	if err != nil {
+		t.Fatalf("Format Tool failed: %v", err)
+	}
+	if !strings.Contains(string(toolFormatted), "enabled: false") {
+		t.Errorf("expected Tool formatted MD to preserve enabled: false, got:\n%s", string(toolFormatted))
+	}
+
+	agentMD := `---
+apiVersion: warp/v1alpha1
+kind: Agent
+metadata:
+  name: scoped
+spec:
+  policies:
+    mcps:
+      include: ["github", "local/*"]
+      exclude: ["slack"]
+---
+Instructions
+`
+	agRes, err := Parse("scoped.md", agentMD)
+	if err != nil {
+		t.Fatalf("Parse Agent failed: %v", err)
+	}
+	ag := agRes.Resource.(*Agent)
+	if ag.Spec.Policies == nil || ag.Spec.Policies.MCPs == nil ||
+		!reflect.DeepEqual(ag.Spec.Policies.MCPs.Include, []string{"github", "local/*"}) ||
+		!reflect.DeepEqual(ag.Spec.Policies.MCPs.Exclude, []string{"slack"}) {
+		t.Fatalf("unexpected Agent Policies.MCPs: %+v", ag.Spec.Policies)
+	}
+}

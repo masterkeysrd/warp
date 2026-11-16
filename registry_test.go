@@ -5779,3 +5779,55 @@ func TestResolveModels_UnresolvedAliases(t *testing.T) {
 		t.Errorf("ResolveModels(unlisted-model) = %v, want [anthropic/unlisted-model]", got)
 	}
 }
+
+func TestListResources_Effective_MultiKind(t *testing.T) {
+	reg := NewRegistry(nil)
+	reg.AddProject(&Project{Name: "app", Path: "apps/app", RootPath: "/ws"})
+
+	// Same short name "deploy" across 5 distinct kinds, plus same-kind shadowing across namespaces.
+	sysSkill := makeSkillResource(NamespaceSystem, "deploy")
+	wsSkill := makeSkillResource(NamespaceWorkspace, "deploy")
+	localSkill := makeSkillResource("app", "deploy")
+	wsCmd := makeCommandResource(NamespaceWorkspace, "deploy")
+	wsAgent := &Agent{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindAgent, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "deploy"}}}
+	wsRule := &Rule{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindRule, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "deploy"}}}
+	wsTool := &Tool{BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindTool, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "deploy"}}}
+
+	for _, r := range []Resource{sysSkill, wsSkill, localSkill, wsCmd, wsAgent, wsRule, wsTool} {
+		reg.set(r.QualifiedName(), r)
+	}
+
+	// Base Registry Effective: true preserves all 5 distinct kinds and shadows system/Skill/deploy with workspace/Skill/deploy.
+	baseEffective := reg.ListResources(QueryOptions{Effective: true})
+	var baseQNs []string
+	for _, r := range baseEffective {
+		baseQNs = append(baseQNs, r.QualifiedName())
+	}
+	wantBase := []string{
+		wsAgent.QualifiedName(),
+		wsCmd.QualifiedName(),
+		wsRule.QualifiedName(),
+		wsSkill.QualifiedName(),
+		wsTool.QualifiedName(),
+	}
+	if !slicesEqual(baseQNs, wantBase) {
+		t.Errorf("Registry.ListResources(Effective: true) = %v, want %v", baseQNs, wantBase)
+	}
+
+	// ScopedRegistry Effective: true preserves all 5 kinds and shadows workspace/Skill/deploy with app/Skill/deploy.
+	scopedEffective := reg.Project("app").ListResources(QueryOptions{Effective: true})
+	var scopedQNs []string
+	for _, r := range scopedEffective {
+		scopedQNs = append(scopedQNs, r.QualifiedName())
+	}
+	wantScoped := []string{
+		localSkill.QualifiedName(),
+		wsAgent.QualifiedName(),
+		wsCmd.QualifiedName(),
+		wsRule.QualifiedName(),
+		wsTool.QualifiedName(),
+	}
+	if !slicesEqual(scopedQNs, wantScoped) {
+		t.Errorf("ScopedRegistry.ListResources(Effective: true) = %v, want %v", scopedQNs, wantScoped)
+	}
+}

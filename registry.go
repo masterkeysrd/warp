@@ -2316,24 +2316,29 @@ func sortResources(resources []Resource) {
 	})
 }
 
-// deduplicateByName returns one resource per short name, keeping the one whose
-// namespace yields the highest value from prioFn (breaking ties by QualifiedName).
+// deduplicateByName returns one resource per (Kind, Name) pair, keeping the one
+// whose namespace yields the highest value from prioFn (breaking ties by QualifiedName).
 func deduplicateByName(resources []Resource, prioFn func(string) int) []Resource {
-	byName := make(map[string]Resource, len(resources))
+	type resourceKey struct {
+		kind Kind
+		name string
+	}
+	byKey := make(map[resourceKey]Resource, len(resources))
 	for _, res := range resources {
-		existing, ok := byName[res.GetName()]
+		key := resourceKey{kind: res.GetKind(), name: res.GetName()}
+		existing, ok := byKey[key]
 		if !ok {
-			byName[res.GetName()] = res
+			byKey[key] = res
 			continue
 		}
 		pNew := prioFn(res.GetNamespace())
 		pOld := prioFn(existing.GetNamespace())
 		if pNew > pOld || (pNew == pOld && res.QualifiedName() < existing.QualifiedName()) {
-			byName[res.GetName()] = res
+			byKey[key] = res
 		}
 	}
-	out := make([]Resource, 0, len(byName))
-	for _, res := range byName {
+	out := make([]Resource, 0, len(byKey))
+	for _, res := range byKey {
 		out = append(out, res)
 	}
 	sortResources(out)

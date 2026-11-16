@@ -2062,7 +2062,7 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 	}
 	defaultMP := findProvider(defaultProv)
 
-	var qualify func(ref string, owner *ModelProvider) ResolvedModel
+	var qualify func(ref string, owner *ModelProvider) (ResolvedModel, bool)
 	var resolveAlias func(ref string, visited map[string]bool) []ResolvedModel
 
 	resolveAlias = func(ref string, visited map[string]bool) []ResolvedModel {
@@ -2079,11 +2079,14 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 		if provPrefix != "" {
 			mp := findProvider(provPrefix)
 			if mp == nil {
-				return []ResolvedModel{newResolvedModel(nil, ref, provPrefix)}
+				return nil
 			}
 			if aliasName == "default" {
 				if provModel := mp.defaultForRole(role); provModel != "" {
-					return []ResolvedModel{qualify(provModel, mp)}
+					if rm, ok := qualify(provModel, mp); ok {
+						return []ResolvedModel{rm}
+					}
+					return nil
 				}
 				if m := mp.findModelByAlias("default"); m != nil {
 					return []ResolvedModel{newResolvedModel(mp, m.ID, defaultProv)}
@@ -2094,12 +2097,12 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 						return []ResolvedModel{newResolvedModel(mp, m.ID, defaultProv)}
 					}
 				}
-				return []ResolvedModel{newResolvedModel(nil, ref, provPrefix)}
+				return nil
 			}
 			if m := mp.findModelByAlias(aliasName); m != nil {
 				return []ResolvedModel{newResolvedModel(mp, m.ID, defaultProv)}
 			}
-			return []ResolvedModel{newResolvedModel(nil, ref, provPrefix)}
+			return nil
 		}
 
 		// Bare alias: @<alias>
@@ -2114,7 +2117,10 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 					if _, _, ok := isAliasRef(target); ok {
 						return resolveAlias(target, visited)
 					}
-					return []ResolvedModel{qualify(target, nil)}
+					if rm, ok := qualify(target, nil); ok {
+						return []ResolvedModel{rm}
+					}
+					return nil
 				}
 			}
 			wsModel := wsSpec.DefaultModels.ForRole(role)
@@ -2122,11 +2128,16 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 				if _, _, ok := isAliasRef(wsModel); ok {
 					return resolveAlias(wsModel, visited)
 				}
-				return []ResolvedModel{qualify(wsModel, nil)}
+				if rm, ok := qualify(wsModel, nil); ok {
+					return []ResolvedModel{rm}
+				}
+				return nil
 			}
 			for _, mp := range providers {
 				if provModel := mp.defaultForRole(role); provModel != "" {
-					return []ResolvedModel{qualify(provModel, mp)}
+					if rm, ok := qualify(provModel, mp); ok {
+						return []ResolvedModel{rm}
+					}
 				}
 			}
 			var defModels []ResolvedModel
@@ -2141,7 +2152,7 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 			if len(defModels) > 0 {
 				return defModels
 			}
-			return []ResolvedModel{newResolvedModel(nil, ref, "")}
+			return nil
 		}
 
 		// Non-default bare alias: @<alias>
@@ -2155,7 +2166,10 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 				if _, _, ok := isAliasRef(target); ok {
 					return resolveAlias(target, visited)
 				}
-				return []ResolvedModel{qualify(target, nil)}
+				if rm, ok := qualify(target, nil); ok {
+					return []ResolvedModel{rm}
+				}
+				return nil
 			}
 		}
 
@@ -2169,48 +2183,51 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 		if len(aliasModels) > 0 {
 			return aliasModels
 		}
-		return []ResolvedModel{newResolvedModel(nil, ref, "")}
+		return nil
 	}
 
-	qualify = func(ref string, owner *ModelProvider) ResolvedModel {
+	qualify = func(ref string, owner *ModelProvider) (ResolvedModel, bool) {
 		if _, _, ok := isAliasRef(ref); ok {
 			rms := resolveAlias(ref, make(map[string]bool))
 			if len(rms) > 0 {
-				return rms[0]
+				return rms[0], true
 			}
+			return ResolvedModel{}, false
 		}
 		if before, after, ok := strings.Cut(ref, "/"); ok {
 			if mp := findProvider(before); mp != nil {
-				return newResolvedModel(mp, after, before)
+				return newResolvedModel(mp, after, before), true
 			}
 		}
 		if owner != nil {
-			return newResolvedModel(owner, ref, defaultProv)
+			return newResolvedModel(owner, ref, defaultProv), true
 		}
 		for _, mp := range providers {
 			if mp.findModel(ref) != nil {
-				return newResolvedModel(mp, ref, defaultProv)
+				return newResolvedModel(mp, ref, defaultProv), true
 			}
 		}
 		if defaultProv != "" && !strings.Contains(ref, "/") && !strings.Contains(defaultProv, "/") {
-			return newResolvedModel(defaultMP, ref, defaultProv)
+			return newResolvedModel(defaultMP, ref, defaultProv), true
 		}
-		return newResolvedModel(nil, ref, "")
+		return newResolvedModel(nil, ref, ""), true
 	}
 
 	// 1. Explicit model overrides
 	var out []ResolvedModel
+	hasExplicitRef := false
 	for _, m := range explicit {
 		if m == "" || isInheritAlias(m) || isModelGlobEntry(m) {
 			continue
 		}
+		hasExplicitRef = true
 		if _, _, ok := isAliasRef(m); ok {
 			out = append(out, resolveAlias(m, make(map[string]bool))...)
-		} else {
-			out = append(out, qualify(m, nil))
+		} else if rm, ok := qualify(m, nil); ok {
+			out = append(out, rm)
 		}
 	}
-	if len(out) > 0 {
+	if len(out) > 0 || hasExplicitRef {
 		return out
 	}
 
@@ -2218,15 +2235,20 @@ func resolveModels(base *Registry, resolver Resolver, role ModelRole, explicit [
 	wsModel := wsSpec.DefaultModels.ForRole(role)
 	if wsModel != "" {
 		if _, _, ok := isAliasRef(wsModel); ok {
-			return resolveAlias(wsModel, make(map[string]bool))
+			if rms := resolveAlias(wsModel, make(map[string]bool)); len(rms) > 0 {
+				return rms
+			}
+		} else if rm, ok := qualify(wsModel, nil); ok {
+			return []ResolvedModel{rm}
 		}
-		return []ResolvedModel{qualify(wsModel, nil)}
 	}
 
 	// 3. Provider defaults, then capability-matching models in spec.models
 	for _, mp := range providers {
 		if provModel := mp.defaultForRole(role); provModel != "" {
-			return []ResolvedModel{qualify(provModel, mp)}
+			if rm, ok := qualify(provModel, mp); ok {
+				return []ResolvedModel{rm}
+			}
 		}
 	}
 	for _, mp := range providers {

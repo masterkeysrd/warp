@@ -5715,3 +5715,67 @@ func TestValidate_MultiErrorAndCrossProviderWarnings(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveModels_UnresolvedAliases(t *testing.T) {
+	anthropic := &ModelProvider{
+		BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "anthropic"}},
+		Spec: ModelProviderSpec{
+			DefaultModels: &ModelDefaults{Completion: "claude-3-7-sonnet"},
+			Models: []ProviderModel{
+				{ID: "claude-3-7-sonnet", Name: "claude-3-7-sonnet", Label: "Sonnet 3.7", Aliases: []string{"default"}},
+			},
+		},
+	}
+	wsDef := &WorkspaceDef{
+		BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+		Spec: WorkspaceDefSpec{
+			DefaultProvider: "anthropic",
+			ModelAliases: map[string]string{
+				"chained": "@missing-target",
+			},
+		},
+	}
+	reg := NewRegistry(&Workspace{Def: wsDef})
+	reg.set(anthropic.QualifiedName(), anthropic)
+
+	// 1. Bare unresolved @missing -> nil / false
+	if got := reg.ResolveModels(ModelRoleCompletion, "@missing"); len(got) != 0 {
+		t.Errorf("ResolveModels(@missing) = %+v, want empty", got)
+	}
+	if rm, ok := reg.ResolveModel(ModelRoleCompletion, "@missing"); ok || rm != nil {
+		t.Errorf("ResolveModel(@missing) = (%+v, %v), want (nil, false)", rm, ok)
+	}
+
+	// 2. Scoped unresolved anthropic/@missing -> nil / false
+	if got := reg.ResolveModels(ModelRoleCompletion, "anthropic/@missing"); len(got) != 0 {
+		t.Errorf("ResolveModels(anthropic/@missing) = %+v, want empty", got)
+	}
+
+	// 3. Missing provider fake/@missing -> nil / false (never "fake/fake/@missing")
+	if got := reg.ResolveModels(ModelRoleCompletion, "fake/@missing"); len(got) != 0 {
+		t.Errorf("ResolveModels(fake/@missing) = %+v, want empty", got)
+	}
+
+	// 4. Chained alias @chained -> @missing-target -> nil / false
+	if got := reg.ResolveModels(ModelRoleCompletion, "@chained"); len(got) != 0 {
+		t.Errorf("ResolveModels(@chained) = %+v, want empty", got)
+	}
+
+	// 5. Multi-entry fallback ["@missing", "@default"] skips @missing and resolves @default
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "@missing", "@default")); !slicesEqual(got, []string{"anthropic/claude-3-7-sonnet"}) {
+		t.Errorf("ResolveModels(@missing, @default) = %v, want [anthropic/claude-3-7-sonnet]", got)
+	}
+	if rm, ok := reg.ResolveModel(ModelRoleCompletion, "@missing", "@default"); !ok || rm.QualifiedID != "anthropic/claude-3-7-sonnet" {
+		t.Errorf("ResolveModel(@missing, @default) = (%+v, %v), want anthropic/claude-3-7-sonnet", rm, ok)
+	}
+
+	// 6. Multi-entry fallback ["@missing", "anthropic/claude-3-7-sonnet"]
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "@missing", "anthropic/claude-3-7-sonnet")); !slicesEqual(got, []string{"anthropic/claude-3-7-sonnet"}) {
+		t.Errorf("ResolveModels(@missing, real-model) = %v, want [anthropic/claude-3-7-sonnet]", got)
+	}
+
+	// 7. Bare pass-through non-alias model ID still works as before
+	if got := resolvedQualifiedIDs(reg.ResolveModels(ModelRoleCompletion, "unlisted-model")); !slicesEqual(got, []string{"anthropic/unlisted-model"}) {
+		t.Errorf("ResolveModels(unlisted-model) = %v, want [anthropic/unlisted-model]", got)
+	}
+}

@@ -157,30 +157,134 @@ func renderTemplate(name string, instructions string, data map[string]any) (stri
 	return buf.String(), nil
 }
 
-// preprocessShorthand converts shell-style variables to Go template variables.
-// Handles $var, ${var}, $1, and escapes $$.
+var (
+	reShorthandBraceNum = regexp.MustCompile(`\$\{([0-9]+)\}`)
+	reShorthandBraceVar = regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+	reShorthandVarNum   = regexp.MustCompile(`\$([0-9]+)`)
+	reShorthandVar      = regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
+)
+
+// preprocessShorthand converts shell-style variables outside Go text/template
+// {{ ... }} actions to Go template variables. Handles $var, ${var}, $1, ${1},
+// and escapes $$, while leaving native template variables ($i, $v, $.Field)
+// inside {{ ... }} untouched.
 func preprocessShorthand(input string) string {
+	if !strings.Contains(input, "$") {
+		return input
+	}
+
+	var out strings.Builder
+	out.Grow(len(input))
+	pos := 0
+	for pos < len(input) {
+		rel := strings.Index(input[pos:], "{{")
+		if rel < 0 {
+			out.WriteString(expandShorthand(input[pos:]))
+			break
+		}
+		if rel > 0 {
+			out.WriteString(expandShorthand(input[pos : pos+rel]))
+		}
+		actionStart := pos + rel
+		actionEnd := findTemplateActionEnd(input, actionStart)
+		if actionEnd < 0 {
+			out.WriteString(input[actionStart:])
+			break
+		}
+		out.WriteString(input[actionStart:actionEnd])
+		pos = actionEnd
+	}
+	return out.String()
+}
+
+func expandShorthand(segment string) string {
+	if !strings.Contains(segment, "$") {
+		return segment
+	}
+
 	// 1. Escape literal $$
-	s := strings.ReplaceAll(input, "$$", "%%ESCAPED_DOLLAR%%")
+	s := strings.ReplaceAll(segment, "$$", "%%ESCAPED_DOLLAR%%")
 
 	// 2. Replace ${var} -> {{.var}} (or {{index . "var"}} if it's a number)
-	reBraceNum := regexp.MustCompile(`\$\{([0-9]+)\}`)
-	s = reBraceNum.ReplaceAllString(s, `{{index . "$1"}}`)
-
-	reBrace := regexp.MustCompile(`\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
-	s = reBrace.ReplaceAllString(s, "{{.$1}}")
+	s = reShorthandBraceNum.ReplaceAllString(s, `{{index . "$1"}}`)
+	s = reShorthandBraceVar.ReplaceAllString(s, "{{.$1}}")
 
 	// 3. Replace $var or $1
-	reVarNum := regexp.MustCompile(`\$([0-9]+)`)
-	s = reVarNum.ReplaceAllString(s, `{{index . "$1"}}`)
-
-	reVar := regexp.MustCompile(`\$([a-zA-Z_][a-zA-Z0-9_]*)`)
-	s = reVar.ReplaceAllString(s, "{{.$1}}")
+	s = reShorthandVarNum.ReplaceAllString(s, `{{index . "$1"}}`)
+	s = reShorthandVar.ReplaceAllString(s, "{{.$1}}")
 
 	// 4. Restore literal $
-	s = strings.ReplaceAll(s, "%%ESCAPED_DOLLAR%%", "$")
+	return strings.ReplaceAll(s, "%%ESCAPED_DOLLAR%%", "$")
+}
 
-	return s
+// findTemplateActionEnd returns the index immediately after the closing "}}"
+// of the Go text/template action starting at start, respecting string literals,
+// raw strings, rune literals, and template comments. Returns -1 if unclosed.
+func findTemplateActionEnd(s string, start int) int {
+	i := start + 2
+
+	// Handle template comments: {{/* ... */}} or {{- /* ... */ -}}
+	j := i
+	if j < len(s) && s[j] == '-' {
+		j++
+	}
+	for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r' || s[j] == '\n') {
+		j++
+	}
+	if strings.HasPrefix(s[j:], "/*") {
+		commentEnd := strings.Index(s[j+2:], "*/")
+		if commentEnd < 0 {
+			return -1
+		}
+		i = j + 2 + commentEnd + 2
+	}
+
+	for i < len(s) {
+		switch s[i] {
+		case '"':
+			i++
+			for i < len(s) {
+				if s[i] == '\\' {
+					i += 2
+					continue
+				}
+				if s[i] == '"' {
+					i++
+					break
+				}
+				i++
+			}
+		case '`':
+			i++
+			for i < len(s) && s[i] != '`' {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+		case '\'':
+			i++
+			for i < len(s) {
+				if s[i] == '\\' {
+					i += 2
+					continue
+				}
+				if s[i] == '\'' {
+					i++
+					break
+				}
+				i++
+			}
+		case '}':
+			if i+1 < len(s) && s[i+1] == '}' {
+				return i + 2
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return -1
 }
 
 // buildTemplateData lifts fields from the resource to the top level.

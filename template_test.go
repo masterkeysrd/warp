@@ -1044,3 +1044,93 @@ func TestMCP_RenderCommandAndEndpoint(t *testing.T) {
 		t.Errorf("expected (\"\", nil) for empty MCP endpoint, got (%q, %v)", outEmptyEp, err)
 	}
 }
+
+func TestPreprocessShorthand_SkipsTemplateActions(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "range vars untouched",
+			in:   `Hello $Name: {{range $i, $tool := .Tools}}{{if $i}}, {{end}}{{$tool}}{{end}}`,
+			want: `Hello {{.Name}}: {{range $i, $tool := .Tools}}{{if $i}}, {{end}}{{$tool}}{{end}}`,
+		},
+		{
+			name: "trim markers and root ref untouched",
+			in:   `{{- $root := . -}}{{$.Workspace.Name}} $1 ${2} $$`,
+			want: `{{- $root := . -}}{{$.Workspace.Name}} {{index . "1"}} {{index . "2"}} $`,
+		},
+		{
+			name: "closing braces in string literal and comment untouched",
+			in:   `{{$x := "}}"}}{{/* $ignored }} */}} $DisplayName`,
+			want: `{{$x := "}}"}}{{/* $ignored }} */}} {{.DisplayName}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := preprocessShorthand(tc.in); got != tc.want {
+				t.Errorf("preprocessShorthand(%q)\n got: %q\nwant: %q", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	cmd := &Command{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "range-cmd"},
+		},
+		Spec: CommandSpec{
+			Skills: []string{"alpha", "beta", "gamma"},
+			Instructions: `Cmd $Name (cost $$10, arg $1, brace ${1}):
+{{- $prefix := .Name -}}
+Skills: {{range $i, $s := .Skills}}{{if $i}}, {{end}}{{$.Name}}:${{$s}}{{end}}
+RawBrace: {{$x := "}}"}}{{if eq $x "}}"}}ok{{end}}
+Comment: {{/* $ignored inside comment with }} */}}done
+Backtick: {{$raw := ` + "`$notExpanded }}`" + `}}{{$raw}}`,
+		},
+	}
+
+	got, err := Render(cmd, &RenderOptions{Args: []string{"arg1"}})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	want := "Cmd range-cmd (cost $10, arg arg1, brace arg1):" +
+		"Skills: range-cmd:$alpha, range-cmd:$beta, range-cmd:$gamma\n" +
+		"RawBrace: ok\n" +
+		"Comment: done\n" +
+		"Backtick: $notExpanded }}"
+
+	if got != want {
+		t.Errorf("Render mismatch:\nGot:\n%q\nWant:\n%q", got, want)
+	}
+}
+
+func TestTemplateRender_RangeAndRootVars(t *testing.T) {
+	agent := &Agent{
+		BaseResource: BaseResource{
+			Metadata: Metadata{Name: "orchestrator"},
+		},
+		Spec: AgentSpec{
+			Instructions: `Name: $Name | {{range $i, $tool := .Agent.Tools}}{{if $i}}, {{end}}{{$.Name}}/{{$tool.Name}}{{end}} | {{$x := .Name}}X={{$x}}`,
+		},
+	}
+
+	resolved := &ResolvedAgent{
+		Agent: agent,
+		Tools: []*Tool{
+			{BaseResource: BaseResource{Metadata: Metadata{Name: "read"}}},
+			{BaseResource: BaseResource{Metadata: Metadata{Name: "write"}}},
+		},
+	}
+
+	got, err := agent.Render(&AgentRenderOptions{Resolved: resolved})
+	if err != nil {
+		t.Fatalf("Agent.Render failed: %v", err)
+	}
+
+	want := "Name: orchestrator | orchestrator/read, orchestrator/write | X=orchestrator"
+	if got != want {
+		t.Errorf("Got %q, want %q", got, want)
+	}
+}

@@ -50,13 +50,14 @@ type mcpToolEntry struct {
 // workspace/user/system/plugins) or through a ScopedRegistry obtained via
 // Project(), which elevates a specific project namespace to the top priority.
 type Registry struct {
-	mu        sync.RWMutex
-	resources map[string]Resource
-	workspace *Workspace
-	projects  map[string]*Project
-	warnings  []string
-	providers []ResourceProvider
-	mcpTools  map[string]mcpToolEntry
+	mu                 sync.RWMutex
+	resources          map[string]Resource
+	workspace          *Workspace
+	projects           map[string]*Project
+	warnings           []string
+	validationWarnings []string
+	providers          []ResourceProvider
+	mcpTools           map[string]mcpToolEntry
 }
 
 // NewRegistry returns an empty Registry bound to the given workspace spec.
@@ -165,11 +166,12 @@ func (r *Registry) WorkspaceSpec() *Workspace {
 	return r.workspace
 }
 
-// Warnings returns non-fatal issues collected during loading. Thread-safe.
+// Warnings returns non-fatal issues collected during loading and validation. Thread-safe.
 func (r *Registry) Warnings() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return slices.Clone(r.warnings)
+	out := slices.Clone(r.warnings)
+	return append(out, r.validationWarnings...)
 }
 
 // Providers returns a copy of the resource providers configured on this registry. Thread-safe.
@@ -326,63 +328,102 @@ func (r *Registry) set(qualifiedName string, res Resource) {
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
+// ValidationIssue describes a single structural or cross-reference validation failure.
+type ValidationIssue struct {
+	QualifiedName string
+	Kind          Kind
+	Namespace     string
+	Field         string
+	Message       string
+	Err           error
+}
+
+// Error returns the human-readable validation error message.
+func (i ValidationIssue) Error() string {
+	if i.Message != "" {
+		return i.Message
+	}
+	if i.Err != nil {
+		return i.Err.Error()
+	}
+	return ""
+}
+
+// Unwrap returns the underlying error for errors.Is / errors.As.
+func (i ValidationIssue) Unwrap() error {
+	return i.Err
+}
+
+// ValidationError aggregates all validation issues collected across the
+// workspace and its resources during a single Registry.Validate call.
+type ValidationError struct {
+	Issues []ValidationIssue
+}
+
+// Error formats all collected validation issues separated by newlines.
+func (e *ValidationError) Error() string {
+	if e == nil || len(e.Issues) == 0 {
+		return ""
+	}
+	if len(e.Issues) == 1 {
+		return e.Issues[0].Error()
+	}
+	var b strings.Builder
+	for i, issue := range e.Issues {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(issue.Error())
+	}
+	return b.String()
+}
+
+// Unwrap returns the underlying errors for standard Go error unwrapping.
+func (e *ValidationError) Unwrap() []error {
+	if e == nil || len(e.Issues) == 0 {
+		return nil
+	}
+	errs := make([]error, 0, len(e.Issues))
+	for _, issue := range e.Issues {
+		if issue.Err != nil {
+			errs = append(errs, issue.Err)
+		} else {
+			errs = append(errs, issue)
+		}
+	}
+	return errs
+}
+
 // Validate checks every resource for structural correctness and resolves
-// cross-references. Returns the first error encountered.
+// cross-references, collecting all validation issues and returning a
+// *ValidationError when any failures occur. Non-fatal diagnostics (such as
+// cross-provider duplicate bare model aliases) are surfaced via Warnings().
 func (r *Registry) Validate() error {
 	return r.ValidateWithOptions(nil)
 }
 
 // ValidateWithOptions checks every resource for structural correctness and
-// resolves cross-references using the provided ValidateOptions.
+// resolves cross-references using the provided ValidateOptions, returning a
+// *ValidationError containing all collected issues or nil if none occurred.
 func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
-	if r.workspace != nil && r.workspace.Def != nil {
-		if err := r.workspace.Def.ValidateBase(); err != nil {
-			return fmt.Errorf("workspace definition: %w", err)
-		}
-	}
-
-	type validator interface{ ValidateBase() error }
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 
-	if r.workspace != nil && r.workspace.Def != nil {
-		if da := r.workspace.Def.Spec.DefaultAgent; da != "" {
-			if !r.hasKindLocked(NamespaceWorkspace, KindAgent, da) {
-				return fmt.Errorf("workspace defaultAgent references missing agent: %s", da)
-			}
+	var issues []ValidationIssue
+	addIssue := func(qn string, kind Kind, ns, field string, err error) {
+		if err == nil {
+			return
 		}
-		if dp := r.workspace.Def.Spec.DefaultProvider; dp != "" && len(r.findProvidersLocked()) > 0 {
-			if !r.hasProviderLocked(dp) {
-				return fmt.Errorf("workspace defaultProvider references missing provider: %s", dp)
-			}
-		}
-		if r.workspace.Def.Spec.ModelAliases != nil {
-			for k, v := range r.workspace.Def.Spec.ModelAliases {
-				if normalizeAliasName(k) == "" {
-					return fmt.Errorf("workspace modelAliases: alias key cannot be empty")
-				}
-				if isReservedInheritAliasName(k) {
-					return fmt.Errorf("workspace modelAliases: %q is a reserved alias", k)
-				}
-				if strings.TrimSpace(v) == "" {
-					return fmt.Errorf("workspace modelAliases %q: target model cannot be empty", k)
-				}
-				if err := rejectReservedInheritRef(fmt.Sprintf("workspace modelAliases %q", k), v); err != nil {
-					return err
-				}
-			}
-		}
-		if dm := r.workspace.Def.Spec.DefaultModels; dm != nil {
-			if err := r.validateModelDefaultsLocked("workspace", dm); err != nil {
-				return err
-			}
-		}
-		if r.workspace.Def.Spec.Policies != nil && r.workspace.Def.Spec.Policies.Tools != nil {
-			if err := validateToolPolicies(r.workspace.Def.Spec.Policies.Tools, "workspace policies.tools"); err != nil {
-				return err
-			}
-		}
+		issues = append(issues, ValidationIssue{
+			QualifiedName: qn,
+			Kind:          kind,
+			Namespace:     ns,
+			Field:         field,
+			Message:       err.Error(),
+			Err:           err,
+		})
 	}
+
+	r.validateWorkspaceLocked(addIssue)
 
 	// Iterate in deterministic order so validation errors are reproducible.
 	keys := make([]string, 0, len(r.resources))
@@ -391,391 +432,504 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 	}
 	sort.Strings(keys)
 
+	type validator interface{ ValidateBase() error }
 	for _, name := range keys {
 		res := r.resources[name]
+		kind := res.GetKind()
+		ns := res.GetNamespace()
+		emit := func(field string, err error) {
+			addIssue(name, kind, ns, field, err)
+		}
 		if v, ok := res.(validator); ok {
 			if err := v.ValidateBase(); err != nil {
-				return fmt.Errorf("resource %s: %w", name, err)
+				emit("", fmt.Errorf("resource %s: %w", name, err))
 			}
 		}
-		ns := res.GetNamespace()
-		if agent, ok := res.(*Agent); ok {
-			if agent.Spec.Policies != nil && agent.Spec.Policies.Tools != nil {
-				if err := validateToolPolicies(agent.Spec.Policies.Tools, fmt.Sprintf("agent %s policies.tools", name)); err != nil {
-					return err
-				}
-			}
-			if agent.Spec.Extends != "" {
-				if !r.hasKindLocked(ns, KindAgent, agent.Spec.Extends) {
-					return fmt.Errorf("agent %s extends missing agent: %s", name, agent.Spec.Extends)
-				}
-				if err := r.checkInheritanceCycleLocked(agent); err != nil {
-					return err
-				}
-			}
-			for _, mRef := range agent.Spec.Models {
-				if isInheritAlias(mRef) {
-					continue
-				}
-				if _, aliasName, isAlias := isAliasRef(mRef); isAlias && strings.EqualFold(aliasName, "inherit") {
-					return fmt.Errorf("agent %s: %q cannot be provider-prefixed; use %q", name, mRef, ModelAliasInherit)
-				}
-				if isModelGlobEntry(mRef) {
-					pat, _ := stripModelNegation(mRef)
-					if _, err := compileModelGlob(pat); err != nil {
-						return fmt.Errorf("agent %s: invalid model glob %q: %w", name, mRef, err)
-					}
-					continue
-				}
-				if len(r.findProvidersLocked()) > 0 {
-					if _, _, isAlias := isAliasRef(mRef); isAlias {
-						if err := r.validateAliasModelRefLocked(fmt.Sprintf("agent %s", name), mRef, ModelRoleCompletion); err != nil {
-							return err
-						}
-					}
-				}
-				if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
-					return fmt.Errorf("agent %s: model %q does not support completion capability", name, mRef)
-				}
-			}
-			if agent.Spec.Thinking != nil {
-				switch agent.Spec.Thinking.Type {
-				case ThinkingStrategyToggle, ThinkingStrategyEffort, ThinkingStrategyBudget, ThinkingStrategyAdaptive:
-				default:
-					return fmt.Errorf("agent %s: invalid thinking type %q (must be toggle, effort, budget, or adaptive)", name, agent.Spec.Thinking.Type)
-				}
-				if agent.Spec.Thinking.BudgetTokens < 0 {
-					return fmt.Errorf("agent %s: thinking budgetTokens cannot be negative (%d)", name, agent.Spec.Thinking.BudgetTokens)
-				}
-				for _, mRef := range agent.Spec.Models {
-					m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion)
-					if m == nil || m.Capabilities == nil || len(m.Capabilities.Thinking) == 0 {
-						continue
-					}
-					var matchingCap *ProviderModelThinkingCapability
-					for i := range m.Capabilities.Thinking {
-						if m.Capabilities.Thinking[i].Type == agent.Spec.Thinking.Type {
-							matchingCap = &m.Capabilities.Thinking[i]
-							break
-						}
-					}
-					if matchingCap == nil {
-						return fmt.Errorf("agent %s: model %q does not support thinking strategy %q", name, mRef, agent.Spec.Thinking.Type)
-					}
-					if agent.Spec.Thinking.Type == ThinkingStrategyEffort && agent.Spec.Thinking.Effort != "" && len(matchingCap.AllowedEfforts) > 0 {
-						if !slices.Contains(matchingCap.AllowedEfforts, agent.Spec.Thinking.Effort) {
-							return fmt.Errorf("agent %s: model %q does not allow thinking effort %q", name, mRef, agent.Spec.Thinking.Effort)
-						}
-					}
-					if agent.Spec.Thinking.Type == ThinkingStrategyBudget && agent.Spec.Thinking.BudgetTokens > 0 && matchingCap.MaxBudgetTokens > 0 {
-						if agent.Spec.Thinking.BudgetTokens > matchingCap.MaxBudgetTokens {
-							return fmt.Errorf("agent %s: model %q thinking budgetTokens %d exceeds maximum %d", name, mRef, agent.Spec.Thinking.BudgetTokens, matchingCap.MaxBudgetTokens)
-						}
-					}
-				}
-			}
-			for _, skillRef := range agent.Spec.Skills {
-				if hasGlobMeta(skillRef) {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindSkill, skillRef) {
-					return fmt.Errorf("agent %s references missing skill: %s", name, skillRef)
-				}
-			}
-			for _, cmdRef := range agent.Spec.Commands {
-				if hasGlobMeta(cmdRef) {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindCommand, cmdRef) {
-					return fmt.Errorf("agent %s references missing command: %s", name, cmdRef)
-				}
-			}
-			for _, saRef := range agent.Spec.Subagents {
-				if hasGlobMeta(saRef) {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindAgent, saRef) {
-					return fmt.Errorf("agent %s references missing subagent: %s", name, saRef)
-				}
-			}
-			for _, ruleRef := range agent.Spec.Rules {
-				if hasGlobMeta(ruleRef) {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindRule, ruleRef) {
-					return fmt.Errorf("agent %s references missing rule: %s", name, ruleRef)
-				}
-			}
-			for _, toolRef := range agent.Spec.Tools {
-				if hasGlobMeta(toolRef) || toolRef == "*" {
-					continue
-				}
-				if err := r.validateToolRefLocked(ns, toolRef); err != nil {
-					if strings.Contains(err.Error(), "excluded by MCP") {
-						return fmt.Errorf("agent %s: %w", name, err)
-					}
-					return fmt.Errorf("agent %s %w", name, err)
-				}
-			}
-		}
-		if rule, ok := res.(*Rule); ok {
-			if err := r.validateRuleLocked(name, rule); err != nil {
-				return err
-			}
-		}
-		if dec, ok := res.(*Decision); ok {
-			if err := r.validateDecisionLocked(name, dec); err != nil {
-				return err
-			}
-		}
-		if mp, ok := res.(*ModelProvider); ok {
-			seenAliases := make(map[string]string)
-			modelIDsAndNames := make(map[string]string)
-			for _, m := range mp.Spec.Models {
-				if m.ID != "" {
-					modelIDsAndNames[normalizeAliasName(m.ID)] = m.ID
-				}
-				if m.Name != "" {
-					modelIDsAndNames[normalizeAliasName(m.Name)] = m.ID
-				}
-			}
-			for _, m := range mp.Spec.Models {
-				if m.Capabilities != nil {
-					for _, tc := range m.Capabilities.Thinking {
-						switch tc.Type {
-						case ThinkingStrategyToggle, ThinkingStrategyEffort, ThinkingStrategyBudget, ThinkingStrategyAdaptive:
-						default:
-							return fmt.Errorf("provider %s: model %q has invalid thinking strategy %q", name, m.ID, tc.Type)
-						}
-					}
-				}
-				for _, a := range m.Aliases {
-					norm := normalizeAliasName(a)
-					if norm == "" {
-						return fmt.Errorf("provider %s model %q: alias cannot be empty", name, m.ID)
-					}
-					if isReservedInheritAliasName(a) {
-						return fmt.Errorf("provider %s model %q: alias %q is reserved", name, m.ID, a)
-					}
-					if existingID, exists := seenAliases[norm]; exists {
-						return fmt.Errorf("provider %s: duplicate alias %q on models %q and %q", name, a, existingID, m.ID)
-					}
-					seenAliases[norm] = m.ID
-					if collidingID, exists := modelIDsAndNames[norm]; exists && collidingID != m.ID {
-						return fmt.Errorf("provider %s: alias %q on model %q collides with model %q", name, a, m.ID, collidingID)
-					}
-				}
-			}
-			if mp.Spec.DefaultModels != nil {
-				if err := validateProviderDefaultModels(name, mp); err != nil {
-					return err
-				}
-			}
-			if mp.Spec.Auth != nil {
-				if err := mp.Spec.Auth.ValidateWithOptions(opts); err != nil {
-					return fmt.Errorf("provider %s: %w", name, err)
-				}
-			}
-		}
-		if skill, ok := res.(*Skill); ok {
-			for _, toolRef := range skill.Spec.Tools {
-				if hasGlobMeta(toolRef) || toolRef == "*" {
-					continue
-				}
-				if err := r.validateToolRefLocked(ns, toolRef); err != nil {
-					if strings.Contains(err.Error(), "excluded by MCP") {
-						return fmt.Errorf("skill %s: %w", name, err)
-					}
-					return fmt.Errorf("skill %s %w", name, err)
-				}
-			}
-		}
-		if cmd, ok := res.(*Command); ok {
-			for _, mRef := range cmd.Spec.Models {
-				if err := rejectReservedInheritRef(fmt.Sprintf("command %s", name), mRef); err != nil {
-					return err
-				}
-				if len(r.findProvidersLocked()) > 0 {
-					if _, _, isAlias := isAliasRef(mRef); isAlias {
-						if err := r.validateAliasModelRefLocked(fmt.Sprintf("command %s", name), mRef, ModelRoleCompletion); err != nil {
-							return err
-						}
-					}
-				}
-				if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
-					return fmt.Errorf("command %s: model %q does not support completion capability", name, mRef)
-				}
-			}
-			for _, skillRef := range cmd.Spec.Skills {
-				if hasGlobMeta(skillRef) || skillRef == "*" {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindSkill, skillRef) {
-					return fmt.Errorf("command %s references missing skill: %s", name, skillRef)
-				}
-			}
-			for _, ruleRef := range cmd.Spec.Rules {
-				if hasGlobMeta(ruleRef) || ruleRef == "*" {
-					continue
-				}
-				if !r.hasKindLocked(ns, KindRule, ruleRef) {
-					return fmt.Errorf("command %s references missing rule: %s", name, ruleRef)
-				}
-			}
-			for _, toolRef := range cmd.Spec.Tools {
-				if hasGlobMeta(toolRef) || toolRef == "*" {
-					continue
-				}
-				if err := r.validateToolRefLocked(ns, toolRef); err != nil {
-					if strings.Contains(err.Error(), "excluded by MCP") {
-						return fmt.Errorf("command %s: %w", name, err)
-					}
-					return fmt.Errorf("command %s %w", name, err)
-				}
-			}
-			if cmd.Spec.Agent != "" {
-				if !hasGlobMeta(cmd.Spec.Agent) && !r.hasKindLocked(ns, KindAgent, cmd.Spec.Agent) {
-					return fmt.Errorf("command %s references missing agent: %s", name, cmd.Spec.Agent)
-				}
-			}
-			if cmd.Spec.Context != "" {
-				switch cmd.Spec.Context {
-				case CommandContextInline, CommandContextFork, CommandContextClean:
-					// valid
-				default:
-					return fmt.Errorf("command %s has invalid context %q: must be one of inline, fork, clean", name, cmd.Spec.Context)
-				}
-			}
-		}
-		if pl, ok := res.(*Plugin); ok {
-			for _, exp := range pl.Spec.Exports {
+		switch typed := res.(type) {
+		case *Agent:
+			r.validateAgentLocked(name, typed, emit)
+		case *Rule:
+			r.validateRuleLocked(name, typed, emit)
+		case *Decision:
+			r.validateDecisionLocked(name, typed, emit)
+		case *ModelProvider:
+			r.validateModelProviderLocked(name, typed, opts, emit)
+		case *Skill:
+			r.validateToolRefListLocked(ns, fmt.Sprintf("skill %s", name), "spec.tools", typed.Spec.Tools, emit)
+		case *Command:
+			r.validateCommandLocked(name, typed, emit)
+		case *Plugin:
+			for _, exp := range typed.Spec.Exports {
 				lower := strings.ToLower(exp)
 				if strings.HasPrefix(lower, "workspace/") || strings.HasPrefix(lower, "context/") || strings.HasPrefix(lower, "plugin/") ||
 					lower == "workspace" || lower == "context" || lower == "plugin" {
-					return fmt.Errorf("plugin %s cannot export structural resource pattern %q", name, exp)
+					emit("spec.exports", fmt.Errorf("plugin %s cannot export structural resource pattern %q", name, exp))
+				}
+			}
+		case *MCP:
+			r.validateMCPLocked(name, typed, opts, emit)
+		}
+	}
+
+	valWarnings := r.detectCrossProviderDuplicateAliasesLocked()
+	r.mu.RUnlock()
+
+	r.mu.Lock()
+	r.validationWarnings = valWarnings
+	r.mu.Unlock()
+
+	if len(issues) == 0 {
+		return nil
+	}
+	return &ValidationError{Issues: issues}
+}
+
+func (r *Registry) validateWorkspaceLocked(addIssue func(qn string, kind Kind, ns, field string, err error)) {
+	if r.workspace == nil || r.workspace.Def == nil {
+		return
+	}
+	def := r.workspace.Def
+	wsQN := def.QualifiedName()
+	if wsQN == "" {
+		wsQN = WorkspaceFileName
+	}
+	wsNS := def.GetNamespace()
+	emit := func(field string, err error) {
+		addIssue(wsQN, KindWorkspace, wsNS, field, err)
+	}
+
+	if err := def.ValidateBase(); err != nil {
+		emit("", fmt.Errorf("workspace definition: %w", err))
+	}
+	if da := def.Spec.DefaultAgent; da != "" {
+		if !r.hasKindLocked(NamespaceWorkspace, KindAgent, da) {
+			emit("spec.defaultAgent", fmt.Errorf("workspace defaultAgent references missing agent: %s", da))
+		}
+	}
+	if dp := def.Spec.DefaultProvider; dp != "" && len(r.findProvidersLocked()) > 0 {
+		if !r.hasProviderLocked(dp) {
+			emit("spec.defaultProvider", fmt.Errorf("workspace defaultProvider references missing provider: %s", dp))
+		}
+	}
+	if def.Spec.ModelAliases != nil {
+		aliasKeys := make([]string, 0, len(def.Spec.ModelAliases))
+		for k := range def.Spec.ModelAliases {
+			aliasKeys = append(aliasKeys, k)
+		}
+		sort.Strings(aliasKeys)
+		for _, k := range aliasKeys {
+			v := def.Spec.ModelAliases[k]
+			if normalizeAliasName(k) == "" {
+				emit("spec.modelAliases", fmt.Errorf("workspace modelAliases: alias key cannot be empty"))
+			}
+			if isReservedInheritAliasName(k) {
+				emit("spec.modelAliases", fmt.Errorf("workspace modelAliases: %q is a reserved alias", k))
+			}
+			if strings.TrimSpace(v) == "" {
+				emit("spec.modelAliases", fmt.Errorf("workspace modelAliases %q: target model cannot be empty", k))
+			}
+			if err := rejectReservedInheritRef(fmt.Sprintf("workspace modelAliases %q", k), v); err != nil {
+				emit("spec.modelAliases", err)
+			}
+		}
+	}
+	if dm := def.Spec.DefaultModels; dm != nil {
+		r.validateModelDefaultsLocked("workspace", dm, emit)
+	}
+	if def.Spec.Policies != nil && def.Spec.Policies.Tools != nil {
+		if err := validateToolPolicies(def.Spec.Policies.Tools, "workspace policies.tools"); err != nil {
+			emit("spec.policies.tools", err)
+		}
+	}
+}
+
+func (r *Registry) validateAgentLocked(name string, agent *Agent, emit func(field string, err error)) {
+	ns := agent.GetNamespace()
+	if agent.Spec.Policies != nil && agent.Spec.Policies.Tools != nil {
+		if err := validateToolPolicies(agent.Spec.Policies.Tools, fmt.Sprintf("agent %s policies.tools", name)); err != nil {
+			emit("spec.policies.tools", err)
+		}
+	}
+	if agent.Spec.Extends != "" {
+		if !r.hasKindLocked(ns, KindAgent, agent.Spec.Extends) {
+			emit("spec.extends", fmt.Errorf("agent %s extends missing agent: %s", name, agent.Spec.Extends))
+		} else if err := r.checkInheritanceCycleLocked(agent); err != nil {
+			emit("spec.extends", err)
+		}
+	}
+	for _, mRef := range agent.Spec.Models {
+		if isInheritAlias(mRef) {
+			continue
+		}
+		if _, aliasName, isAlias := isAliasRef(mRef); isAlias && strings.EqualFold(aliasName, "inherit") {
+			emit("spec.models", fmt.Errorf("agent %s: %q cannot be provider-prefixed; use %q", name, mRef, ModelAliasInherit))
+			continue
+		}
+		if isModelGlobEntry(mRef) {
+			pat, _ := stripModelNegation(mRef)
+			if _, err := compileModelGlob(pat); err != nil {
+				emit("spec.models", fmt.Errorf("agent %s: invalid model glob %q: %w", name, mRef, err))
+			}
+			continue
+		}
+		if len(r.findProvidersLocked()) > 0 {
+			if _, _, isAlias := isAliasRef(mRef); isAlias {
+				if err := r.validateAliasModelRefLocked(fmt.Sprintf("agent %s", name), mRef, ModelRoleCompletion); err != nil {
+					emit("spec.models", err)
 				}
 			}
 		}
-		if mcp, ok := res.(*MCP); ok {
-			transport := mcp.Spec.Type
-			if transport == "" {
-				transport = MCPTransportStdio
+		if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
+			emit("spec.models", fmt.Errorf("agent %s: model %q does not support completion capability", name, mRef))
+		}
+	}
+	if agent.Spec.Thinking != nil {
+		switch agent.Spec.Thinking.Type {
+		case ThinkingStrategyToggle, ThinkingStrategyEffort, ThinkingStrategyBudget, ThinkingStrategyAdaptive:
+		default:
+			emit("spec.thinking", fmt.Errorf("agent %s: invalid thinking type %q (must be toggle, effort, budget, or adaptive)", name, agent.Spec.Thinking.Type))
+		}
+		if agent.Spec.Thinking.BudgetTokens < 0 {
+			emit("spec.thinking", fmt.Errorf("agent %s: thinking budgetTokens cannot be negative (%d)", name, agent.Spec.Thinking.BudgetTokens))
+		}
+		for _, mRef := range agent.Spec.Models {
+			m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion)
+			if m == nil || m.Capabilities == nil || len(m.Capabilities.Thinking) == 0 {
+				continue
 			}
-			switch transport {
-			case MCPTransportStdio:
-				if len(mcp.Spec.Command) == 0 {
-					return fmt.Errorf("mcp %s: command is required for stdio transport", name)
+			var matchingCap *ProviderModelThinkingCapability
+			for i := range m.Capabilities.Thinking {
+				if m.Capabilities.Thinking[i].Type == agent.Spec.Thinking.Type {
+					matchingCap = &m.Capabilities.Thinking[i]
+					break
 				}
-			case MCPTransportSSE, MCPTransportHTTP, MCPTransportStreamableHTTP:
-				if mcp.Spec.Endpoint == "" {
-					return fmt.Errorf("mcp %s: endpoint is required for %s transport", name, transport)
-				}
-			default:
-				return fmt.Errorf("mcp %s: unknown transport type %q", name, transport)
 			}
-			if mcp.Spec.Auth != nil {
-				if err := mcp.Spec.Auth.ValidateWithOptions(opts); err != nil {
-					return fmt.Errorf("mcp %s: %w", name, err)
+			if matchingCap == nil {
+				emit("spec.thinking", fmt.Errorf("agent %s: model %q does not support thinking strategy %q", name, mRef, agent.Spec.Thinking.Type))
+				continue
+			}
+			if agent.Spec.Thinking.Type == ThinkingStrategyEffort && agent.Spec.Thinking.Effort != "" && len(matchingCap.AllowedEfforts) > 0 {
+				if !slices.Contains(matchingCap.AllowedEfforts, agent.Spec.Thinking.Effort) {
+					emit("spec.thinking", fmt.Errorf("agent %s: model %q does not allow thinking effort %q", name, mRef, agent.Spec.Thinking.Effort))
+				}
+			}
+			if agent.Spec.Thinking.Type == ThinkingStrategyBudget && agent.Spec.Thinking.BudgetTokens > 0 && matchingCap.MaxBudgetTokens > 0 {
+				if agent.Spec.Thinking.BudgetTokens > matchingCap.MaxBudgetTokens {
+					emit("spec.thinking", fmt.Errorf("agent %s: model %q thinking budgetTokens %d exceeds maximum %d", name, mRef, agent.Spec.Thinking.BudgetTokens, matchingCap.MaxBudgetTokens))
 				}
 			}
 		}
 	}
-	return nil
+	for _, skillRef := range agent.Spec.Skills {
+		if !hasGlobMeta(skillRef) && !r.hasKindLocked(ns, KindSkill, skillRef) {
+			emit("spec.skills", fmt.Errorf("agent %s references missing skill: %s", name, skillRef))
+		}
+	}
+	for _, cmdRef := range agent.Spec.Commands {
+		if !hasGlobMeta(cmdRef) && !r.hasKindLocked(ns, KindCommand, cmdRef) {
+			emit("spec.commands", fmt.Errorf("agent %s references missing command: %s", name, cmdRef))
+		}
+	}
+	for _, saRef := range agent.Spec.Subagents {
+		if !hasGlobMeta(saRef) && !r.hasKindLocked(ns, KindAgent, saRef) {
+			emit("spec.subagents", fmt.Errorf("agent %s references missing subagent: %s", name, saRef))
+		}
+	}
+	for _, ruleRef := range agent.Spec.Rules {
+		if !hasGlobMeta(ruleRef) && !r.hasKindLocked(ns, KindRule, ruleRef) {
+			emit("spec.rules", fmt.Errorf("agent %s references missing rule: %s", name, ruleRef))
+		}
+	}
+	r.validateToolRefListLocked(ns, fmt.Sprintf("agent %s", name), "spec.tools", agent.Spec.Tools, emit)
 }
 
-func (r *Registry) validateDecisionLocked(name string, dec *Decision) error {
+func (r *Registry) validateModelProviderLocked(name string, mp *ModelProvider, opts *ValidateOptions, emit func(field string, err error)) {
+	seenAliases := make(map[string]string)
+	modelIDsAndNames := make(map[string]string)
+	for _, m := range mp.Spec.Models {
+		if m.ID != "" {
+			modelIDsAndNames[normalizeAliasName(m.ID)] = m.ID
+		}
+		if m.Name != "" {
+			modelIDsAndNames[normalizeAliasName(m.Name)] = m.ID
+		}
+	}
+	for _, m := range mp.Spec.Models {
+		if m.Capabilities != nil {
+			for _, tc := range m.Capabilities.Thinking {
+				switch tc.Type {
+				case ThinkingStrategyToggle, ThinkingStrategyEffort, ThinkingStrategyBudget, ThinkingStrategyAdaptive:
+				default:
+					emit("spec.models", fmt.Errorf("provider %s: model %q has invalid thinking strategy %q", name, m.ID, tc.Type))
+				}
+			}
+		}
+		for _, a := range m.Aliases {
+			norm := normalizeAliasName(a)
+			if norm == "" {
+				emit("spec.models", fmt.Errorf("provider %s model %q: alias cannot be empty", name, m.ID))
+				continue
+			}
+			if isReservedInheritAliasName(a) {
+				emit("spec.models", fmt.Errorf("provider %s model %q: alias %q is reserved", name, m.ID, a))
+				continue
+			}
+			if existingID, exists := seenAliases[norm]; exists {
+				emit("spec.models", fmt.Errorf("provider %s: duplicate alias %q on models %q and %q", name, a, existingID, m.ID))
+				continue
+			}
+			seenAliases[norm] = m.ID
+			if collidingID, exists := modelIDsAndNames[norm]; exists && collidingID != m.ID {
+				emit("spec.models", fmt.Errorf("provider %s: alias %q on model %q collides with model %q", name, a, m.ID, collidingID))
+			}
+		}
+	}
+	if mp.Spec.DefaultModels != nil {
+		if err := validateProviderDefaultModels(name, mp); err != nil {
+			emit("spec.defaultModels", err)
+		}
+	}
+	if mp.Spec.Auth != nil {
+		if err := mp.Spec.Auth.ValidateWithOptions(opts); err != nil {
+			emit("spec.auth", fmt.Errorf("provider %s: %w", name, err))
+		}
+	}
+}
+
+func (r *Registry) validateCommandLocked(name string, cmd *Command, emit func(field string, err error)) {
+	ns := cmd.GetNamespace()
+	for _, mRef := range cmd.Spec.Models {
+		if err := rejectReservedInheritRef(fmt.Sprintf("command %s", name), mRef); err != nil {
+			emit("spec.models", err)
+			continue
+		}
+		if len(r.findProvidersLocked()) > 0 {
+			if _, _, isAlias := isAliasRef(mRef); isAlias {
+				if err := r.validateAliasModelRefLocked(fmt.Sprintf("command %s", name), mRef, ModelRoleCompletion); err != nil {
+					emit("spec.models", err)
+				}
+			}
+		}
+		if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleCompletion); m != nil && !m.Capabilities.SupportsCompletion() {
+			emit("spec.models", fmt.Errorf("command %s: model %q does not support completion capability", name, mRef))
+		}
+	}
+	for _, skillRef := range cmd.Spec.Skills {
+		if !hasGlobMeta(skillRef) && skillRef != "*" && !r.hasKindLocked(ns, KindSkill, skillRef) {
+			emit("spec.skills", fmt.Errorf("command %s references missing skill: %s", name, skillRef))
+		}
+	}
+	for _, ruleRef := range cmd.Spec.Rules {
+		if !hasGlobMeta(ruleRef) && ruleRef != "*" && !r.hasKindLocked(ns, KindRule, ruleRef) {
+			emit("spec.rules", fmt.Errorf("command %s references missing rule: %s", name, ruleRef))
+		}
+	}
+	r.validateToolRefListLocked(ns, fmt.Sprintf("command %s", name), "spec.tools", cmd.Spec.Tools, emit)
+	if cmd.Spec.Agent != "" && !hasGlobMeta(cmd.Spec.Agent) && !r.hasKindLocked(ns, KindAgent, cmd.Spec.Agent) {
+		emit("spec.agent", fmt.Errorf("command %s references missing agent: %s", name, cmd.Spec.Agent))
+	}
+	if cmd.Spec.Context != "" {
+		switch cmd.Spec.Context {
+		case CommandContextInline, CommandContextFork, CommandContextClean:
+		default:
+			emit("spec.context", fmt.Errorf("command %s has invalid context %q: must be one of inline, fork, clean", name, cmd.Spec.Context))
+		}
+	}
+}
+
+func (r *Registry) validateMCPLocked(name string, mcp *MCP, opts *ValidateOptions, emit func(field string, err error)) {
+	transport := mcp.Spec.Type
+	if transport == "" {
+		transport = MCPTransportStdio
+	}
+	switch transport {
+	case MCPTransportStdio:
+		if len(mcp.Spec.Command) == 0 {
+			emit("spec.command", fmt.Errorf("mcp %s: command is required for stdio transport", name))
+		}
+	case MCPTransportSSE, MCPTransportHTTP, MCPTransportStreamableHTTP:
+		if mcp.Spec.Endpoint == "" {
+			emit("spec.endpoint", fmt.Errorf("mcp %s: endpoint is required for %s transport", name, transport))
+		}
+	default:
+		emit("spec.type", fmt.Errorf("mcp %s: unknown transport type %q", name, transport))
+	}
+	if mcp.Spec.Auth != nil {
+		if err := mcp.Spec.Auth.ValidateWithOptions(opts); err != nil {
+			emit("spec.auth", fmt.Errorf("mcp %s: %w", name, err))
+		}
+	}
+}
+
+func (r *Registry) validateToolRefListLocked(ns, prefix, field string, refs []string, emit func(field string, err error)) {
+	for _, toolRef := range refs {
+		if hasGlobMeta(toolRef) || toolRef == "*" {
+			continue
+		}
+		if err := r.validateToolRefLocked(ns, toolRef); err != nil {
+			if strings.Contains(err.Error(), "excluded by MCP") {
+				emit(field, fmt.Errorf("%s: %w", prefix, err))
+			} else {
+				emit(field, fmt.Errorf("%s %w", prefix, err))
+			}
+		}
+	}
+}
+
+func (r *Registry) detectCrossProviderDuplicateAliasesLocked() []string {
+	rawProviders := r.findProvidersLocked()
+	if len(rawProviders) < 2 {
+		return nil
+	}
+	asRes := make([]Resource, len(rawProviders))
+	for i, mp := range rawProviders {
+		asRes[i] = mp
+	}
+	deduped := deduplicateByName(asRes, NamespacePriority)
+	if len(deduped) < 2 {
+		return nil
+	}
+	providers := make([]*ModelProvider, 0, len(deduped))
+	for _, res := range deduped {
+		if mp, ok := res.(*ModelProvider); ok {
+			providers = append(providers, mp)
+		}
+	}
+	var defaultProv string
+	var wsAliases map[string]string
+	if r.workspace != nil && r.workspace.Def != nil {
+		defaultProv = r.workspace.Def.Spec.DefaultProvider
+		wsAliases = r.workspace.Def.Spec.ModelAliases
+	}
+	if defaultProv != "" {
+		for i, mp := range providers {
+			if mp.matchesRef(defaultProv) {
+				if i > 0 {
+					providers = append([]*ModelProvider{mp}, append(providers[:i], providers[i+1:]...)...)
+				}
+				break
+			}
+		}
+	}
+
+	aliasOwners := make(map[string][]string)
+	for _, mp := range providers {
+		seenInProvider := make(map[string]bool)
+		for _, m := range mp.Spec.Models {
+			for _, a := range m.Aliases {
+				norm := normalizeAliasName(a)
+				if norm == "" || norm == "default" || isReservedInheritAliasName(a) || seenInProvider[norm] {
+					continue
+				}
+				if wsAliases != nil && (wsAliases[norm] != "" || wsAliases["@"+norm] != "") {
+					continue
+				}
+				seenInProvider[norm] = true
+				aliasOwners[norm] = append(aliasOwners[norm], mp.Metadata.Name+"/"+m.ID)
+			}
+		}
+	}
+
+	var aliases []string
+	for norm, owners := range aliasOwners {
+		if len(owners) > 1 {
+			aliases = append(aliases, norm)
+		}
+	}
+	sort.Strings(aliases)
+
+	warnings := make([]string, 0, len(aliases))
+	for _, norm := range aliases {
+		owners := aliasOwners[norm]
+		warnings = append(warnings, fmt.Sprintf("duplicate model alias @%s declared across providers (resolves to %s, shadows %s); set workspace.spec.modelAliases.%s to disambiguate", norm, owners[0], strings.Join(owners[1:], ", "), norm))
+	}
+	return warnings
+}
+
+func (r *Registry) validateDecisionLocked(name string, dec *Decision, emit func(field string, err error)) {
 	seenNames := make(map[string]bool, len(dec.Spec.Questions))
 	for i, q := range dec.Spec.Questions {
 		if q.Name == "" {
-			return fmt.Errorf("decision %s question[%d]: name is required", name, i)
+			emit("spec.questions", fmt.Errorf("decision %s question[%d]: name is required", name, i))
+		} else {
+			if seenNames[q.Name] {
+				emit("spec.questions", fmt.Errorf("decision %s: duplicate question name %q", name, q.Name))
+			}
+			seenNames[q.Name] = true
 		}
-		if seenNames[q.Name] {
-			return fmt.Errorf("decision %s: duplicate question name %q", name, q.Name)
-		}
-		seenNames[q.Name] = true
 		if q.Threshold != nil && (*q.Threshold < 0.0 || *q.Threshold > 1.0) {
-			return fmt.Errorf("decision %s question %q: threshold must be between 0.0 and 1.0", name, q.Name)
+			emit("spec.questions", fmt.Errorf("decision %s question %q: threshold must be between 0.0 and 1.0", name, q.Name))
 		}
 		if q.MinConfidence != nil && (*q.MinConfidence < 0.0 || *q.MinConfidence > 1.0) {
-			return fmt.Errorf("decision %s question %q: minConfidence must be between 0.0 and 1.0", name, q.Name)
+			emit("spec.questions", fmt.Errorf("decision %s question %q: minConfidence must be between 0.0 and 1.0", name, q.Name))
 		}
 		switch q.Type {
 		case DecisionQuestionPredicate:
-			// valid
 		case DecisionQuestionChoice:
 			if len(q.Options) < 2 {
-				return fmt.Errorf("decision %s question %q: choice question requires at least 2 options", name, q.Name)
+				emit("spec.questions", fmt.Errorf("decision %s question %q: choice question requires at least 2 options", name, q.Name))
 			}
 			for j, opt := range q.Options {
 				if opt.Value == "" {
-					return fmt.Errorf("decision %s question %q option[%d]: value is required", name, q.Name, j)
+					emit("spec.questions", fmt.Errorf("decision %s question %q option[%d]: value is required", name, q.Name, j))
 				}
 			}
 		case DecisionQuestionScore:
 			if len(q.Levels) < 2 {
-				return fmt.Errorf("decision %s question %q: score question requires at least 2 levels", name, q.Name)
+				emit("spec.questions", fmt.Errorf("decision %s question %q: score question requires at least 2 levels", name, q.Name))
 			}
 			for j, lvl := range q.Levels {
 				if lvl.Label == "" {
-					return fmt.Errorf("decision %s question %q level[%d]: label is required", name, q.Name, j)
+					emit("spec.questions", fmt.Errorf("decision %s question %q level[%d]: label is required", name, q.Name, j))
 				}
 			}
 		default:
-			return fmt.Errorf("decision %s question %q: invalid type %q (must be predicate, choice, or score)", name, q.Name, q.Type)
+			emit("spec.questions", fmt.Errorf("decision %s question %q: invalid type %q (must be predicate, choice, or score)", name, q.Name, q.Type))
 		}
 	}
 	for _, mRef := range dec.Spec.Models {
 		if err := rejectReservedInheritRef(fmt.Sprintf("decision %s", name), mRef); err != nil {
-			return err
+			emit("spec.models", err)
+			continue
 		}
 		if len(r.findProvidersLocked()) > 0 {
 			if _, _, isAlias := isAliasRef(mRef); isAlias {
 				if err := r.validateAliasModelRefLocked(fmt.Sprintf("decision %s", name), mRef, ModelRoleDecision); err != nil {
-					return err
+					emit("spec.models", err)
 				}
 			}
 		}
 		if m := r.findDeclaredModelForRoleLocked(mRef, ModelRoleDecision); m != nil && !m.Capabilities.SupportsDecision() {
-			return fmt.Errorf("decision %s: model %q does not support decision capability", name, mRef)
+			emit("spec.models", fmt.Errorf("decision %s: model %q does not support decision capability", name, mRef))
 		}
 	}
-	return nil
 }
 
-func (r *Registry) validateRuleLocked(name string, rule *Rule) error {
+func (r *Registry) validateRuleLocked(name string, rule *Rule, emit func(field string, err error)) {
 	ns := rule.GetNamespace()
 	if dec := rule.Spec.Triggers.Decision; dec != "" {
 		if !r.hasKindLocked(ns, KindDecision, dec) {
-			return fmt.Errorf("rule %s: trigger references missing decision: %s", name, dec)
+			emit("spec.triggers.decision", fmt.Errorf("rule %s: trigger references missing decision: %s", name, dec))
 		}
 	}
-	for _, tRef := range rule.Spec.Triggers.Tools {
-		if hasGlobMeta(tRef) || tRef == "*" {
-			continue
-		}
-		if err := r.validateToolRefLocked(ns, tRef); err != nil {
-			if strings.Contains(err.Error(), "excluded by MCP") {
-				return fmt.Errorf("rule %s: trigger: %w", name, err)
-			}
-			return fmt.Errorf("rule %s: trigger %w", name, err)
-		}
-	}
-	return nil
+	r.validateToolRefListLocked(ns, fmt.Sprintf("rule %s: trigger", name), "spec.triggers.tools", rule.Spec.Triggers.Tools, emit)
 }
 
-func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) error {
+func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults, emit func(field string, err error)) {
 	hasProviders := len(r.findProvidersLocked()) > 0
-	checkRef := func(role ModelRole, roleStr, ref string, checkCap func(*ProviderModelCapabilities) bool) error {
+	checkRef := func(role ModelRole, roleStr, ref string, checkCap func(*ProviderModelCapabilities) bool) {
 		if ref == "" {
-			return nil
+			return
 		}
+		field := fmt.Sprintf("spec.defaultModels.%s", roleStr)
 		if err := rejectReservedInheritRef(fmt.Sprintf("%s defaultModels.%s", scope, roleStr), ref); err != nil {
-			return err
+			emit(field, err)
+			return
 		}
 		if hasProviders {
 			if _, _, isAlias := isAliasRef(ref); isAlias {
 				if err := r.validateAliasModelRefLocked(fmt.Sprintf("%s defaultModels.%s", scope, roleStr), ref, role); err != nil {
-					return err
+					emit(field, err)
 				}
 			}
 		}
@@ -784,25 +938,17 @@ func (r *Registry) validateModelDefaultsLocked(scope string, dm *ModelDefaults) 
 			if before, _, ok := strings.Cut(ref, "/"); ok {
 				prov := before
 				if !r.hasProviderLocked(prov) {
-					return fmt.Errorf("%s defaultModels.%s references missing provider: %s", scope, roleStr, prov)
+					emit(field, fmt.Errorf("%s defaultModels.%s references missing provider: %s", scope, roleStr, prov))
 				}
 			}
 		}
 		if m != nil && !checkCap(m.Capabilities) {
-			return fmt.Errorf("%s defaultModels.%s %q does not support %s capability", scope, roleStr, ref, roleStr)
+			emit(field, fmt.Errorf("%s defaultModels.%s %q does not support %s capability", scope, roleStr, ref, roleStr))
 		}
-		return nil
 	}
-	if err := checkRef(ModelRoleCompletion, "completion", dm.Completion, (*ProviderModelCapabilities).SupportsCompletion); err != nil {
-		return err
-	}
-	if err := checkRef(ModelRoleDecision, "decision", dm.Decision, (*ProviderModelCapabilities).SupportsDecision); err != nil {
-		return err
-	}
-	if err := checkRef(ModelRoleEmbedding, "embedding", dm.Embedding, (*ProviderModelCapabilities).SupportsEmbedding); err != nil {
-		return err
-	}
-	return nil
+	checkRef(ModelRoleCompletion, "completion", dm.Completion, (*ProviderModelCapabilities).SupportsCompletion)
+	checkRef(ModelRoleDecision, "decision", dm.Decision, (*ProviderModelCapabilities).SupportsDecision)
+	checkRef(ModelRoleEmbedding, "embedding", dm.Embedding, (*ProviderModelCapabilities).SupportsEmbedding)
 }
 
 func validateProviderDefaultModels(name string, mp *ModelProvider) error {

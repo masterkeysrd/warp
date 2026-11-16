@@ -78,12 +78,14 @@ func executeValidate(out io.Writer, args []string) error {
 		return fmt.Errorf("Load Error: %w", err)
 	}
 
+	valErr := reg.Validate()
+
 	for _, w := range reg.Warnings() {
 		fmt.Fprintf(out, "⚠️  Warning: %s\n", w)
 	}
 
-	if err := reg.Validate(); err != nil {
-		return fmt.Errorf("Validation Error: %w", err)
+	if valErr != nil {
+		return fmt.Errorf("Validation Error: %w", valErr)
 	}
 
 	var contexts, agents, skills, commands, decisions, rules, providers, tools, mcps int

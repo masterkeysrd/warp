@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -5565,6 +5566,152 @@ func TestAgentModels_InheritAndGlobs(t *testing.T) {
 		rm, err = scoped.ResolveAgentModel(agFastOllama, ModelRoleCompletion, "ollama/nemotron-3.5-lightning", "")
 		if err != nil || rm.QualifiedID != "ollama/nemotron-3.5-lightning" {
 			t.Fatalf("ScopedRegistry.ResolveAgentModel failed: %+v (err: %v)", rm, err)
+		}
+	})
+}
+
+func TestValidate_MultiErrorAndCrossProviderWarnings(t *testing.T) {
+	t.Run("collects all errors across workspace and multiple broken resources", func(t *testing.T) {
+		wsDef := &WorkspaceDef{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindWorkspace,
+				Namespace:  NamespaceWorkspace,
+				Metadata:   Metadata{Name: "ws"},
+			},
+			Spec: WorkspaceDefSpec{
+				DefaultAgent: "missing-default-agent",
+			},
+		}
+		reg := NewRegistry(&Workspace{Def: wsDef})
+
+		badAgent := &Agent{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindAgent, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "a-broken-agent"}},
+			Spec: AgentSpec{
+				Skills: []string{"missing-skill"},
+				Tools:  []string{"missing-tool"},
+			},
+		}
+		badCmd := &Command{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "b-broken-cmd"}},
+			Spec: CommandSpec{
+				Agent:   "missing-cmd-agent",
+				Context: "invalid-mode",
+			},
+		}
+		badSkill := &Skill{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindSkill, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "c-broken-skill"}},
+			Spec: SkillSpec{
+				Tools: []string{"missing-skill-tool"},
+			},
+		}
+		badMCP := &MCP{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindMCP, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "d-broken-mcp"}},
+			Spec: MCPSpec{
+				Type: MCPTransportHTTP,
+				Auth: &ProviderAuth{Type: AuthTypeEnterprise},
+			},
+		}
+
+		reg.set(badAgent.QualifiedName(), badAgent)
+		reg.set(badCmd.QualifiedName(), badCmd)
+		reg.set(badSkill.QualifiedName(), badSkill)
+		reg.set(badMCP.QualifiedName(), badMCP)
+
+		err := reg.Validate()
+		if err == nil {
+			t.Fatal("expected ValidationError, got nil")
+		}
+
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("expected *ValidationError, got %T: %v", err, err)
+		}
+		// Expect: workspace defaultAgent, agent skill, agent tool, cmd agent, cmd context, skill tool, mcp endpoint, mcp auth (8 issues)
+		if len(ve.Issues) != 8 {
+			t.Fatalf("expected 8 validation issues, got %d:\n%s", len(ve.Issues), err.Error())
+		}
+
+		// Verify deterministic order and structured metadata on issues
+		expectedOrder := []struct {
+			qn    string
+			kind  Kind
+			ns    string
+			field string
+		}{
+			{wsDef.QualifiedName(), KindWorkspace, NamespaceWorkspace, "spec.defaultAgent"},
+			{badAgent.QualifiedName(), KindAgent, NamespaceWorkspace, "spec.skills"},
+			{badAgent.QualifiedName(), KindAgent, NamespaceWorkspace, "spec.tools"},
+			{badCmd.QualifiedName(), KindCommand, NamespaceWorkspace, "spec.agent"},
+			{badCmd.QualifiedName(), KindCommand, NamespaceWorkspace, "spec.context"},
+			{badMCP.QualifiedName(), KindMCP, NamespaceWorkspace, "spec.endpoint"},
+			{badMCP.QualifiedName(), KindMCP, NamespaceWorkspace, "spec.auth"},
+			{badSkill.QualifiedName(), KindSkill, NamespaceWorkspace, "spec.tools"},
+		}
+		for i, want := range expectedOrder {
+			got := ve.Issues[i]
+			if got.QualifiedName != want.qn || got.Kind != want.kind || got.Namespace != want.ns || got.Field != want.field {
+				t.Errorf("issue[%d] = %+v, want qn=%q kind=%q ns=%q field=%q", i, got, want.qn, want.kind, want.ns, want.field)
+			}
+		}
+
+		// Verify Unwrap() []error exposes individual errors
+		unwrapped := ve.Unwrap()
+		if len(unwrapped) != len(ve.Issues) {
+			t.Errorf("expected %d unwrapped errors, got %d", len(ve.Issues), len(unwrapped))
+		}
+	})
+
+	t.Run("detects cross-provider duplicate bare aliases as warnings unless disambiguated", func(t *testing.T) {
+		anthropic := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "anthropic"}},
+			Spec: ModelProviderSpec{
+				Models: []ProviderModel{{ID: "claude-3-5-haiku", Aliases: []string{"fast", "default"}}},
+			},
+		}
+		openai := &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "openai"}},
+			Spec: ModelProviderSpec{
+				Models: []ProviderModel{{ID: "gpt-4o-mini", Aliases: []string{"@fast", "default"}}},
+			},
+		}
+		wsDef := &WorkspaceDef{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+			Spec: WorkspaceDefSpec{
+				DefaultProvider: "openai",
+			},
+		}
+		reg := NewRegistry(&Workspace{Def: wsDef})
+		reg.set(anthropic.QualifiedName(), anthropic)
+		reg.set(openai.QualifiedName(), openai)
+
+		// Validation passes (non-fatal warning only)
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("expected cross-provider duplicate alias to be a warning only, got error: %v", err)
+		}
+		warnings := reg.Warnings()
+		if len(warnings) != 1 {
+			t.Fatalf("expected 1 cross-provider alias warning (ignoring @default), got %d: %v", len(warnings), warnings)
+		}
+		if !strings.Contains(warnings[0], "@fast") || !strings.Contains(warnings[0], "resolves to openai/gpt-4o-mini") || !strings.Contains(warnings[0], "shadows anthropic/claude-3-5-haiku") {
+			t.Errorf("unexpected warning message: %q", warnings[0])
+		}
+
+		// Calling Validate() again does not duplicate warnings
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("second Validate() failed: %v", err)
+		}
+		if len(reg.Warnings()) != 1 {
+			t.Errorf("expected warnings not to duplicate across Validate() calls, got: %v", reg.Warnings())
+		}
+
+		// Disambiguating via workspace.spec.modelAliases clears the warning
+		wsDef.Spec.ModelAliases = map[string]string{"fast": "anthropic/@fast"}
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("Validate() with disambiguation failed: %v", err)
+		}
+		if len(reg.Warnings()) != 0 {
+			t.Errorf("expected 0 warnings after workspace.spec.modelAliases override, got: %v", reg.Warnings())
 		}
 	})
 }

@@ -1366,7 +1366,7 @@ AGENTS.md                  # Context for the single project
 ## 7. Validation Rules
 
 A conforming implementation **must** enforce the following rules when `Validate()` is called on a
-loaded Workspace.
+loaded Workspace, collecting all structural and cross-reference failures in deterministic order into a `*ValidationError` (carrying structured `Issues` with `QualifiedName`, `Kind`, `Namespace`, `Field`, and `Message`) rather than stopping at the first error. Non-fatal diagnostics (such as duplicate bare aliases across multiple effective `ModelProvider`s without a `workspace.spec.modelAliases` override) are surfaced via `Warnings()`.
 
 ### 7.1 All resources
 

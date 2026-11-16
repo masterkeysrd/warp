@@ -1,7 +1,9 @@
 package warp
 
 import (
+	"fmt"
 	"maps"
+	"net/url"
 	"strings"
 )
 
@@ -99,22 +101,240 @@ func (in *ModelProviderSpec) DeepCopy() *ModelProviderSpec {
 	return out
 }
 
-// ProviderAuth defines how to authenticate with the model provider.
+// Standard authentication scheme constants for ProviderAuth.Type.
+const (
+	AuthTypeBearer            = "bearer"
+	AuthTypeAPIKey            = "api-key"
+	AuthTypeBasic             = "basic"
+	AuthTypeOAuth2            = "oauth2"
+	AuthTypeClientCredentials = "client-credentials"
+	AuthTypeEnterprise        = "enterprise"
+	AuthTypeNone              = "none"
+)
+
+// ProviderAuth defines how to authenticate with a model provider or remote MCP server.
 type ProviderAuth struct {
-	Type   string `yaml:"type,omitempty" json:"type,omitempty"`     // The auth scheme (e.g., "bearer", "api-key", "basic")
-	Header string `yaml:"header,omitempty" json:"header,omitempty"` // Custom header name if type is "api-key"
-	Env    string `yaml:"env,omitempty" json:"env,omitempty"`       // Read credential from environment variable
-	File   string `yaml:"file,omitempty" json:"file,omitempty"`     // Read credential from file path
+	Type     string             `yaml:"type,omitempty" json:"type,omitempty"`                                                                       // The auth scheme (e.g., "bearer", "api-key", "basic", "oauth2", "client-credentials", "enterprise", "none")
+	Header   string             `yaml:"header,omitempty" json:"header,omitempty"`                                                                   // Custom header name if type is "api-key" (literal or expression)
+	Token    string             `yaml:"token,omitempty" json:"token,omitempty" jsonschema:"pattern=^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$"`       // Secret expression for token-based schemes (e.g., "${env:OPENAI_API_KEY}")
+	Username string             `yaml:"username,omitempty" json:"username,omitempty"`                                                               // Username for "basic" auth (literal or expression)
+	Password string             `yaml:"password,omitempty" json:"password,omitempty" jsonschema:"pattern=^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$"` // Secret expression for "basic" auth password (e.g., "${env:BASIC_PASSWORD}")
+	OAuth    *ProviderAuthOAuth `yaml:"oauth,omitempty" json:"oauth,omitempty"`                                                                     // OAuth configuration for "oauth2", "client-credentials", and "enterprise" schemes
+}
+
+// ProviderAuthOAuth declares the authorization servers and client credentials
+// for OAuth-based schemes (oauth2, client-credentials, enterprise).
+type ProviderAuthOAuth struct {
+	IDPIssuer       string   `yaml:"idpIssuer,omitempty" json:"idpIssuer,omitempty"`                                                                           // Enterprise IdP issuer URL used for OIDC discovery (literal URL or expression)
+	IDPClientID     string   `yaml:"idpClientId,omitempty" json:"idpClientId,omitempty"`                                                                       // Client ID registered at the enterprise IdP (literal or expression)
+	IDPClientSecret string   `yaml:"idpClientSecret,omitempty" json:"idpClientSecret,omitempty" jsonschema:"pattern=^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$"` // Secret expression for the enterprise IdP client (e.g., "${file:~/.secrets/idp-secret}")
+	AudienceIssuer  string   `yaml:"audienceIssuer,omitempty" json:"audienceIssuer,omitempty"`                                                                 // Target authorization server issuer used as token-exchange audience and metadata discovery
+	ResourceURI     string   `yaml:"resourceURI,omitempty" json:"resourceURI,omitempty"`                                                                       // RFC 9728 resource identifier sent as the `resource` parameter
+	ClientID        string   `yaml:"clientId,omitempty" json:"clientId,omitempty"`                                                                             // OAuth client ID for the target authorization server (literal or expression)
+	ClientSecret    string   `yaml:"clientSecret,omitempty" json:"clientSecret,omitempty" jsonschema:"pattern=^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$"`       // Secret expression for the target authorization server client (e.g., "${env:MCP_CLIENT_SECRET}")
+	Scopes          []string `yaml:"scopes,omitempty,flow" json:"scopes,omitempty"`                                                                            // Scopes to request; empty means server-discovered defaults
 }
 
 // DeepCopy returns a deep copy of the ProviderAuth.
-func (in *ProviderAuth) DeepCopy() *ProviderAuth {
-	if in == nil {
+func (pa *ProviderAuth) DeepCopy() *ProviderAuth {
+	if pa == nil {
 		return nil
 	}
 	out := new(ProviderAuth)
-	*out = *in
+	*out = *pa
+	if pa.OAuth != nil {
+		out.OAuth = pa.OAuth.DeepCopy()
+	}
 	return out
+}
+
+// DeepCopy returns a deep copy of the ProviderAuthOAuth.
+func (pao *ProviderAuthOAuth) DeepCopy() *ProviderAuthOAuth {
+	if pao == nil {
+		return nil
+	}
+	out := new(ProviderAuthOAuth)
+	*out = *pao
+	if pao.Scopes != nil {
+		out.Scopes = make([]string, len(pao.Scopes))
+		copy(out.Scopes, pao.Scopes)
+	}
+	return out
+}
+
+// Validate checks ProviderAuth configuration and expression syntax using default options.
+func (pa *ProviderAuth) Validate() error {
+	return pa.ValidateWithOptions(nil)
+}
+
+// ValidateWithOptions checks ProviderAuth configuration, required secret
+// expressions, and scheme consistency using the provided ValidateOptions.
+func (pa *ProviderAuth) ValidateWithOptions(opts *ValidateOptions) error {
+	if pa == nil {
+		return nil
+	}
+	if strings.TrimSpace(pa.Type) == "" {
+		return fmt.Errorf("auth.type is required")
+	}
+
+	if err := validateOptionalExprFields(opts, []namedField{
+		{"auth.header", pa.Header},
+		{"auth.username", pa.Username},
+	}); err != nil {
+		return err
+	}
+	if err := validateRequiredExprFields(opts, []namedField{
+		{"auth.token", pa.Token},
+		{"auth.password", pa.Password},
+	}); err != nil {
+		return err
+	}
+	if pa.OAuth != nil {
+		if err := pa.OAuth.validateWithOptions(opts); err != nil {
+			return err
+		}
+	}
+
+	return pa.validateSchemeConstraints()
+}
+
+func (pa *ProviderAuth) validateSchemeConstraints() error {
+	switch pa.Type {
+	case AuthTypeBearer:
+		if pa.OAuth != nil || pa.Header != "" || pa.Username != "" || pa.Password != "" {
+			return fmt.Errorf("auth type %q only accepts token", pa.Type)
+		}
+		if pa.Token == "" {
+			return fmt.Errorf("auth type %q requires token", pa.Type)
+		}
+	case AuthTypeAPIKey:
+		if pa.OAuth != nil || pa.Username != "" || pa.Password != "" {
+			return fmt.Errorf("auth type %q only accepts header and token", pa.Type)
+		}
+		if pa.Token == "" {
+			return fmt.Errorf("auth type %q requires token", pa.Type)
+		}
+	case AuthTypeBasic:
+		if pa.OAuth != nil || pa.Header != "" {
+			return fmt.Errorf("auth type %q does not accept header or oauth", pa.Type)
+		}
+		hasPair := pa.Username != "" || pa.Password != ""
+		if pa.Token != "" && hasPair {
+			return fmt.Errorf("auth type %q cannot combine token with username/password", pa.Type)
+		}
+		if pa.Token == "" && (pa.Username == "" || pa.Password == "") {
+			return fmt.Errorf("auth type %q requires either token or both username and password", pa.Type)
+		}
+	case AuthTypeNone:
+		if pa.OAuth != nil || pa.Header != "" || pa.Token != "" || pa.Username != "" || pa.Password != "" {
+			return fmt.Errorf("auth type %q does not accept credentials or oauth configuration", pa.Type)
+		}
+	case AuthTypeOAuth2, AuthTypeClientCredentials:
+		if pa.Header != "" || pa.Token != "" || pa.Username != "" || pa.Password != "" {
+			return fmt.Errorf("auth type %q does not accept header, token, username, or password", pa.Type)
+		}
+	case AuthTypeEnterprise:
+		if pa.Header != "" || pa.Token != "" || pa.Username != "" || pa.Password != "" {
+			return fmt.Errorf("auth type %q does not accept header, token, username, or password", pa.Type)
+		}
+		if pa.OAuth == nil || strings.TrimSpace(pa.OAuth.IDPIssuer) == "" {
+			return fmt.Errorf("auth type %q requires auth.oauth.idpIssuer", pa.Type)
+		}
+	}
+	return nil
+}
+
+func (pao *ProviderAuthOAuth) validateWithOptions(opts *ValidateOptions) error {
+	if err := validateOptionalExprFields(opts, []namedField{
+		{"auth.oauth.idpIssuer", pao.IDPIssuer},
+		{"auth.oauth.idpClientId", pao.IDPClientID},
+		{"auth.oauth.audienceIssuer", pao.AudienceIssuer},
+		{"auth.oauth.resourceURI", pao.ResourceURI},
+		{"auth.oauth.clientId", pao.ClientID},
+	}); err != nil {
+		return err
+	}
+	if err := validateRequiredExprFields(opts, []namedField{
+		{"auth.oauth.idpClientSecret", pao.IDPClientSecret},
+		{"auth.oauth.clientSecret", pao.ClientSecret},
+	}); err != nil {
+		return err
+	}
+
+	if err := validateLiteralHTTPURL("auth.oauth.idpIssuer", pao.IDPIssuer); err != nil {
+		return err
+	}
+	if err := validateLiteralHTTPURL("auth.oauth.audienceIssuer", pao.AudienceIssuer); err != nil {
+		return err
+	}
+	if err := validateLiteralURI("auth.oauth.resourceURI", pao.ResourceURI); err != nil {
+		return err
+	}
+
+	if pao.AudienceIssuer != "" && pao.IDPIssuer == "" {
+		return fmt.Errorf("auth.oauth.audienceIssuer requires auth.oauth.idpIssuer")
+	}
+	if (pao.IDPClientID != "" || pao.IDPClientSecret != "") && pao.IDPIssuer == "" {
+		return fmt.Errorf("auth.oauth.idpClientId and auth.oauth.idpClientSecret require auth.oauth.idpIssuer")
+	}
+	if pao.IDPClientSecret != "" && pao.IDPClientID == "" {
+		return fmt.Errorf("auth.oauth.idpClientSecret requires auth.oauth.idpClientId")
+	}
+	if pao.ClientSecret != "" && pao.ClientID == "" {
+		return fmt.Errorf("auth.oauth.clientSecret requires auth.oauth.clientId")
+	}
+	return nil
+}
+
+type namedField struct {
+	name string
+	val  string
+}
+
+func validateRequiredExprFields(opts *ValidateOptions, fields []namedField) error {
+	for _, f := range fields {
+		if f.val == "" {
+			continue
+		}
+		if err := ValidateExpression(f.val, opts); err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
+		}
+	}
+	return nil
+}
+
+func validateOptionalExprFields(opts *ValidateOptions, fields []namedField) error {
+	for _, f := range fields {
+		if f.val == "" {
+			continue
+		}
+		if err := ValidateStringWithExpressions(f.val, opts); err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
+		}
+	}
+	return nil
+}
+
+func validateLiteralHTTPURL(fieldName, val string) error {
+	if val == "" || strings.Contains(val, "${") {
+		return nil
+	}
+	u, err := url.Parse(val)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("%s must be a valid http(s) URL or expression (got %q)", fieldName, val)
+	}
+	return nil
+}
+
+func validateLiteralURI(fieldName, val string) error {
+	if val == "" || strings.Contains(val, "${") {
+		return nil
+	}
+	u, err := url.Parse(val)
+	if err != nil || u.Scheme == "" {
+		return fmt.Errorf("%s must be a valid URI or expression (got %q)", fieldName, val)
+	}
+	return nil
 }
 
 // ProviderModel describes a specific model available from a provider.

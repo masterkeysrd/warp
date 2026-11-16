@@ -616,7 +616,7 @@ spec:
   endpoint: https://mcp.example.com/v1
   auth:
     type: bearer
-    env: MCP_API_TOKEN
+    token: ${env:MCP_API_TOKEN}
   headers:
     X-Custom-Tenant: acme
 `
@@ -631,7 +631,7 @@ spec:
 	if mcp.Spec.Type != "streamable-http" {
 		t.Errorf("expected type streamable-http, got %q", mcp.Spec.Type)
 	}
-	if mcp.Spec.Auth == nil || mcp.Spec.Auth.Type != "bearer" || mcp.Spec.Auth.Env != "MCP_API_TOKEN" {
+	if mcp.Spec.Auth == nil || mcp.Spec.Auth.Type != "bearer" || mcp.Spec.Auth.Token != "${env:MCP_API_TOKEN}" {
 		t.Errorf("unexpected auth: %+v", mcp.Spec.Auth)
 	}
 	if mcp.Spec.Headers["X-Custom-Tenant"] != "acme" {
@@ -833,5 +833,116 @@ spec:
 	}
 	if strings.Contains(string(formatted), "command:") {
 		t.Errorf("expected command: to be omitted in formatted built-in tool, got:\n%s", string(formatted))
+	}
+}
+
+func TestMCPEnterpriseAuthRoundTripAndDeepCopy(t *testing.T) {
+	content := `apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: internal-tools
+spec:
+  type: http
+  endpoint: https://mcp.internal.example.com/mcp
+  auth:
+    type: enterprise
+    oauth:
+      idpIssuer: https://acme.okta.com
+      idpClientId: ${env:ACME_IDP_CLIENT_ID}
+      idpClientSecret: ${file:~/.secrets/idp-secret}
+      audienceIssuer: https://auth.mcp.internal.example.com
+      resourceURI: https://mcp.internal.example.com
+      clientId: ${env:MCP_CLIENT_ID}
+      clientSecret: ${env:MCP_CLIENT_SECRET}
+      scopes: [tools, resources]
+`
+	res, err := Parse("internal-tools.yaml", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	mcp, ok := res.Resource.(*MCP)
+	if !ok {
+		t.Fatalf("Expected *MCP, got %T", res.Resource)
+	}
+	if mcp.Spec.Auth == nil || mcp.Spec.Auth.OAuth == nil {
+		t.Fatalf("Expected auth.oauth to be populated")
+	}
+	oauth := mcp.Spec.Auth.OAuth
+	if oauth.IDPIssuer != "https://acme.okta.com" ||
+		oauth.IDPClientID != "${env:ACME_IDP_CLIENT_ID}" ||
+		oauth.IDPClientSecret != "${file:~/.secrets/idp-secret}" ||
+		oauth.AudienceIssuer != "https://auth.mcp.internal.example.com" ||
+		oauth.ResourceURI != "https://mcp.internal.example.com" ||
+		oauth.ClientID != "${env:MCP_CLIENT_ID}" ||
+		oauth.ClientSecret != "${env:MCP_CLIENT_SECRET}" ||
+		!reflect.DeepEqual(oauth.Scopes, []string{"tools", "resources"}) {
+		t.Fatalf("unexpected oauth config: %+v", oauth)
+	}
+
+	formatted, err := Format(mcp)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+	res2, err := Parse("internal-tools.yaml", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse failed: %v", err)
+	}
+	if !reflect.DeepEqual(res.Resource, res2.Resource) {
+		t.Errorf("Round-trip failed:\noriginal: %+v\nroundtrip: %+v", res.Resource, res2.Resource)
+	}
+
+	copied := mcp.Spec.Auth.DeepCopy()
+	copied.OAuth.IDPIssuer = "https://other.okta.com"
+	copied.OAuth.Scopes[0] = "mutated"
+	if mcp.Spec.Auth.OAuth.IDPIssuer != "https://acme.okta.com" {
+		t.Errorf("DeepCopy mutated original IdPIssuer")
+	}
+	if mcp.Spec.Auth.OAuth.Scopes[0] != "tools" {
+		t.Errorf("DeepCopy mutated original Scopes slice")
+	}
+}
+
+func TestModelProviderAuthRoundTrip(t *testing.T) {
+	content := `apiVersion: warp/v1alpha1
+kind: ModelProvider
+metadata:
+  name: custom-anthropic
+spec:
+  type: anthropic
+  endpoint: https://api.anthropic.com
+  auth:
+    type: api-key
+    header: x-api-key
+    token: ${keychain:anthropic-api-key}
+  models:
+    - id: claude-3-7-sonnet-20250219
+      name: claude-3-7-sonnet
+      label: Claude 3.7 Sonnet
+      limits:
+        context: 200000
+        output: 8192
+`
+	res, err := Parse("provider.yaml", content)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	mp, ok := res.Resource.(*ModelProvider)
+	if !ok {
+		t.Fatalf("Expected *ModelProvider, got %T", res.Resource)
+	}
+	if mp.Spec.Auth == nil || mp.Spec.Auth.Type != "api-key" || mp.Spec.Auth.Header != "x-api-key" || mp.Spec.Auth.Token != "${keychain:anthropic-api-key}" {
+		t.Fatalf("unexpected provider auth: %+v", mp.Spec.Auth)
+	}
+
+	formatted, err := Format(mp)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+	res2, err := Parse("provider.yaml", string(formatted))
+	if err != nil {
+		t.Fatalf("Second Parse failed: %v", err)
+	}
+	if !reflect.DeepEqual(res.Resource, res2.Resource) {
+		t.Errorf("Round-trip failed for ModelProvider")
 	}
 }

@@ -99,6 +99,30 @@ spec:
 - `WORKSPACE.md`: Defines the workspace root and project boundaries.
 - `AGENTS.md`: Defines the context/identity for a specific project.
 
+### 4. Authentication & Config Expressions (`ProviderAuth`)
+`ModelProvider` and remote `MCP` servers configure authentication via `spec.auth`. Secret fields (`token`, `password`, `oauth.idpClientSecret`, `oauth.clientSecret`) **must** use `${<scheme>:<ref>}` expressions (e.g., `${env:OPENAI_API_KEY}`, `${file:~/.secrets/idp-secret}`, or consumer-defined schemes like `${keychain:...}` / `${vault:...}`) rather than plaintext literals:
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: internal-tools
+spec:
+  type: http
+  endpoint: https://mcp.internal.example.com/mcp
+  auth:
+    type: enterprise
+    oauth:
+      idpIssuer: https://acme.okta.com
+      idpClientId: ${env:ACME_IDP_CLIENT_ID}
+      idpClientSecret: ${file:~/.secrets/idp-secret}
+      audienceIssuer: https://auth.mcp.internal.example.com
+      resourceURI: https://mcp.internal.example.com
+      clientId: ${env:MCP_CLIENT_ID}
+      clientSecret: ${env:MCP_CLIENT_SECRET}
+      scopes: [tools, resources]
+```
+
 ## Using the Go API
 
 ### Loading a Workspace
@@ -151,13 +175,21 @@ warp validate .
 ```
 
 ### Programmatic Validation
-The `Registry.Validate()` method checks for structural correctness and ensures all cross-references (skills, commands, tools) resolve correctly.
+The `Registry.Validate()` method checks for structural correctness, auth expressions, and cross-references (skills, commands, tools). Use `Registry.ValidateWithOptions` to plug in custom expression validators or restrict allowed schemes:
 
 ```go
 err := reg.Validate()
 if err != nil {
     log.Fatalf("Validation failed: %v", err)
 }
+
+// Or customize expression validation:
+err = reg.ValidateWithOptions(&warp.ValidateOptions{
+    AllowedExpressionSchemes: []string{"env", "file", "vault"},
+    ExpressionValidators: map[string]warp.ExpressionValidator{
+        "vault": func(target string) error { return nil },
+    },
+})
 ```
 
 ## Development Guidelines

@@ -329,6 +329,12 @@ func (r *Registry) set(qualifiedName string, res Resource) {
 // Validate checks every resource for structural correctness and resolves
 // cross-references. Returns the first error encountered.
 func (r *Registry) Validate() error {
+	return r.ValidateWithOptions(nil)
+}
+
+// ValidateWithOptions checks every resource for structural correctness and
+// resolves cross-references using the provided ValidateOptions.
+func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 	if r.workspace != nil && r.workspace.Def != nil {
 		if err := r.workspace.Def.ValidateBase(); err != nil {
 			return fmt.Errorf("workspace definition: %w", err)
@@ -543,6 +549,11 @@ func (r *Registry) Validate() error {
 					return err
 				}
 			}
+			if mp.Spec.Auth != nil {
+				if err := mp.Spec.Auth.ValidateWithOptions(opts); err != nil {
+					return fmt.Errorf("provider %s: %w", name, err)
+				}
+			}
 		}
 		if skill, ok := res.(*Skill); ok {
 			for _, toolRef := range skill.Spec.Tools {
@@ -636,6 +647,11 @@ func (r *Registry) Validate() error {
 				}
 			default:
 				return fmt.Errorf("mcp %s: unknown transport type %q", name, transport)
+			}
+			if mcp.Spec.Auth != nil {
+				if err := mcp.Spec.Auth.ValidateWithOptions(opts); err != nil {
+					return fmt.Errorf("mcp %s: %w", name, err)
+				}
 			}
 		}
 	}

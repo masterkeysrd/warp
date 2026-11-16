@@ -55,9 +55,9 @@ You are a helpful assistant that specializes in financial analysis...
 | `Command`       | A discrete, reusable operation an agent can invoke (e.g. "generate a report"). |
 | `Decision`      | A probabilistic decision evaluation defining structured questions (`predicate`, `choice`, `score`) and an evaluation rubric. |
 | `Rule`          | Ambient constraints, coding standards, and guardrails with multi-modal activation triggers (`always`, `globs`, `useWhen`, `decision`, `tools`). |
-| `ModelProvider` | Configuration for an LLM provider (API key env var, base URL, available models, default models, thinking config). |
+| `ModelProvider` | Configuration for an LLM provider (auth expressions, base URL, available models, default models, thinking config). |
 | `Tool`          | A custom tool definition (input schema, execution binding, and safety annotations). |
-| `MCP`           | A Model Context Protocol server configuration (`stdio` or `sse`). |
+| `MCP`           | A Model Context Protocol server configuration (`stdio`, `sse`, `http`, or `streamable-http`). |
 
 ## Loading & Resolving Resources
 
@@ -136,7 +136,7 @@ AGENTS.md             # Project context instructions (kind: Context)
 - **`Registry` / `ScopedRegistry`** – multi-tenant resource store supporting 3-part qualified names (`namespace/Kind/name`), short-name resolution, and deterministic listing (`ListResources`, `ListProjects`, `Resources`).
   - `Project(name string) *ScopedRegistry` / `ProjectFromPath(path string) (*Project, error)` — scopes resolution to a project namespace.
   - `ResolveAgent(ref string) (*ResolvedAgent, error)` — resolves an executable Agent (evaluating inheritance, policies, and globs).
-  - `Validate() error` — validates all resources, inheritance chains, and cross-references across the workspace.
+  - `Validate() error` / `ValidateWithOptions(opts *ValidateOptions) error` — validates all resources, auth expressions, inheritance chains, and cross-references across the workspace.
 - **`LoadWorkspace(dir string, opts ...LoadOption) (*Registry, error)`** — discovers and loads a workspace starting from `dir`.
 - **`Load(dir string) (*Registry, error)`** — loads a single `.agents` resource directory.
 - **`LoadDefault() (*Registry, error)`** — loads resources from the default `.agents` directory in the current working directory.

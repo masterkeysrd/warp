@@ -1,6 +1,7 @@
 package warp
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -981,8 +982,8 @@ func TestMCP_Validation(t *testing.T) {
 				Type:     tr,
 				Endpoint: "https://example.com/mcp",
 				Auth: &ProviderAuth{
-					Type: "bearer",
-					Env:  "MCP_TOKEN",
+					Type:  "bearer",
+					Token: "${env:MCP_TOKEN}",
 				},
 				Headers: map[string]string{"X-Header": "val"},
 			},
@@ -5028,4 +5029,273 @@ func TestResolvedAgent_ResolveSubagent_And_ResolveModels(t *testing.T) {
 	if err != nil || heavyModel == nil || heavyModel.QualifiedID != "anthropic/claude-3-opus" {
 		t.Errorf("expected unrestricted subagent to allow @heavy, got %v (err: %v)", heavyModel, err)
 	}
+}
+
+func TestProviderAuth_Validation(t *testing.T) {
+	newMCPRegistry := func(auth *ProviderAuth) *Registry {
+		reg := NewRegistry(nil)
+		m := &MCP{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindMCP,
+				Metadata:   Metadata{Name: "auth-mcp"},
+			},
+			Spec: MCPSpec{
+				Type:     MCPTransportHTTP,
+				Endpoint: "https://mcp.example.com/mcp",
+				Auth:     auth,
+			},
+		}
+		reg.set(m.QualifiedName(), m)
+		return reg
+	}
+
+	newProviderRegistry := func(auth *ProviderAuth) *Registry {
+		reg := NewRegistry(nil)
+		mp := &ModelProvider{
+			BaseResource: BaseResource{
+				APIVersion: APIVersion,
+				Kind:       KindModelProvider,
+				Metadata:   Metadata{Name: "auth-provider"},
+			},
+			Spec: ModelProviderSpec{
+				Type:     "openai",
+				Endpoint: "https://api.openai.com/v1",
+				Auth:     auth,
+			},
+		}
+		reg.set(mp.QualifiedName(), mp)
+		return reg
+	}
+
+	validCases := []struct {
+		name string
+		auth *ProviderAuth
+	}{
+		{
+			name: "bearer with env expression",
+			auth: &ProviderAuth{Type: AuthTypeBearer, Token: "${env:API_TOKEN}"},
+		},
+		{
+			name: "api-key with header and custom scheme expression",
+			auth: &ProviderAuth{Type: AuthTypeAPIKey, Header: "x-api-key", Token: "${keychain:my-key}"},
+		},
+		{
+			name: "basic with username and password expression",
+			auth: &ProviderAuth{Type: AuthTypeBasic, Username: "svc-user", Password: "${file:/run/secrets/pw}"},
+		},
+		{
+			name: "basic with pre-encoded token expression",
+			auth: &ProviderAuth{Type: AuthTypeBasic, Token: "${env:BASIC_TOKEN}"},
+		},
+		{
+			name: "none auth",
+			auth: &ProviderAuth{Type: AuthTypeNone},
+		},
+		{
+			name: "oauth2 minimal without block",
+			auth: &ProviderAuth{Type: AuthTypeOAuth2},
+		},
+		{
+			name: "client-credentials with oauth block",
+			auth: &ProviderAuth{
+				Type: AuthTypeClientCredentials,
+				OAuth: &ProviderAuthOAuth{
+					ClientID:     "${env:CLIENT_ID}",
+					ClientSecret: "${env:CLIENT_SECRET}",
+					ResourceURI:  "https://mcp.example.com",
+					Scopes:       []string{"tools"},
+				},
+			},
+		},
+		{
+			name: "enterprise SEP-990 full",
+			auth: &ProviderAuth{
+				Type: AuthTypeEnterprise,
+				OAuth: &ProviderAuthOAuth{
+					IDPIssuer:       "https://acme.okta.com",
+					IDPClientID:     "${env:ACME_IDP_CLIENT_ID}",
+					IDPClientSecret: "${file:~/.secrets/idp-secret}",
+					AudienceIssuer:  "https://auth.mcp.internal.example.com",
+					ResourceURI:     "https://mcp.internal.example.com",
+					ClientID:        "mcp-public-client",
+					Scopes:          []string{"tools", "resources"},
+				},
+			},
+		},
+		{
+			name: "enterprise with expression issuer",
+			auth: &ProviderAuth{
+				Type: AuthTypeEnterprise,
+				OAuth: &ProviderAuthOAuth{
+					IDPIssuer: "${env:IDP_ISSUER}",
+				},
+			},
+		},
+		{
+			name: "custom scheme remains extensible",
+			auth: &ProviderAuth{
+				Type:  "mtls-custom",
+				Token: "${vault:secret/data/mtls#token}",
+			},
+		},
+	}
+
+	for _, tc := range validCases {
+		t.Run("valid/"+tc.name, func(t *testing.T) {
+			if err := newMCPRegistry(tc.auth).Validate(); err != nil {
+				t.Fatalf("expected MCP auth to be valid, got: %v", err)
+			}
+			if err := newProviderRegistry(tc.auth).Validate(); err != nil {
+				t.Fatalf("expected ModelProvider auth to be valid, got: %v", err)
+			}
+		})
+	}
+
+	invalidCases := []struct {
+		name      string
+		auth      *ProviderAuth
+		errSubstr string
+	}{
+		{
+			name:      "missing auth type",
+			auth:      &ProviderAuth{Token: "${env:TOKEN}"},
+			errSubstr: "auth.type is required",
+		},
+		{
+			name:      "bearer plaintext secret rejected",
+			auth:      &ProviderAuth{Type: AuthTypeBearer, Token: "sk-plaintext-secret"},
+			errSubstr: "not a plaintext literal",
+		},
+		{
+			name:      "bearer missing token",
+			auth:      &ProviderAuth{Type: AuthTypeBearer},
+			errSubstr: "requires token",
+		},
+		{
+			name:      "bearer with oauth rejected",
+			auth:      &ProviderAuth{Type: AuthTypeBearer, Token: "${env:TOK}", OAuth: &ProviderAuthOAuth{ClientID: "c"}},
+			errSubstr: "only accepts token",
+		},
+		{
+			name:      "api-key missing token",
+			auth:      &ProviderAuth{Type: AuthTypeAPIKey, Header: "x-api-key"},
+			errSubstr: "requires token",
+		},
+		{
+			name:      "basic plaintext password rejected",
+			auth:      &ProviderAuth{Type: AuthTypeBasic, Username: "alice", Password: "hunter2"},
+			errSubstr: "not a plaintext literal",
+		},
+		{
+			name:      "basic missing password",
+			auth:      &ProviderAuth{Type: AuthTypeBasic, Username: "alice"},
+			errSubstr: "requires either token or both username and password",
+		},
+		{
+			name:      "none with token rejected",
+			auth:      &ProviderAuth{Type: AuthTypeNone, Token: "${env:TOK}"},
+			errSubstr: "does not accept credentials",
+		},
+		{
+			name:      "enterprise missing oauth block",
+			auth:      &ProviderAuth{Type: AuthTypeEnterprise},
+			errSubstr: "requires auth.oauth.idpIssuer",
+		},
+		{
+			name:      "enterprise missing idpIssuer",
+			auth:      &ProviderAuth{Type: AuthTypeEnterprise, OAuth: &ProviderAuthOAuth{ClientID: "c"}},
+			errSubstr: "requires auth.oauth.idpIssuer",
+		},
+		{
+			name:      "enterprise plaintext idpClientSecret rejected",
+			auth:      &ProviderAuth{Type: AuthTypeEnterprise, OAuth: &ProviderAuthOAuth{IDPIssuer: "https://acme.okta.com", IDPClientID: "id", IDPClientSecret: "raw-secret"}},
+			errSubstr: "not a plaintext literal",
+		},
+		{
+			name:      "oauth2 plaintext clientSecret rejected",
+			auth:      &ProviderAuth{Type: AuthTypeOAuth2, OAuth: &ProviderAuthOAuth{ClientID: "id", ClientSecret: "raw-secret"}},
+			errSubstr: "not a plaintext literal",
+		},
+		{
+			name:      "audienceIssuer without idpIssuer rejected",
+			auth:      &ProviderAuth{Type: AuthTypeOAuth2, OAuth: &ProviderAuthOAuth{AudienceIssuer: "https://auth.example.com"}},
+			errSubstr: "audienceIssuer requires auth.oauth.idpIssuer",
+		},
+		{
+			name:      "idpClientId without idpIssuer rejected",
+			auth:      &ProviderAuth{Type: AuthTypeOAuth2, OAuth: &ProviderAuthOAuth{IDPClientID: "id"}},
+			errSubstr: "require auth.oauth.idpIssuer",
+		},
+		{
+			name:      "idpClientSecret without idpClientId rejected",
+			auth:      &ProviderAuth{Type: AuthTypeEnterprise, OAuth: &ProviderAuthOAuth{IDPIssuer: "https://acme.okta.com", IDPClientSecret: "${env:SEC}"}},
+			errSubstr: "idpClientSecret requires auth.oauth.idpClientId",
+		},
+		{
+			name:      "clientSecret without clientId rejected",
+			auth:      &ProviderAuth{Type: AuthTypeClientCredentials, OAuth: &ProviderAuthOAuth{ClientSecret: "${env:SEC}"}},
+			errSubstr: "clientSecret requires auth.oauth.clientId",
+		},
+		{
+			name:      "invalid literal idpIssuer URL rejected",
+			auth:      &ProviderAuth{Type: AuthTypeEnterprise, OAuth: &ProviderAuthOAuth{IDPIssuer: "not-a-url"}},
+			errSubstr: "valid http(s) URL",
+		},
+		{
+			name:      "malformed expression in optional field rejected",
+			auth:      &ProviderAuth{Type: AuthTypeEnterprise, OAuth: &ProviderAuthOAuth{IDPIssuer: "https://acme.okta.com", IDPClientID: "${env:}"}},
+			errSubstr: "malformed expression",
+		},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run("invalid/"+tc.name, func(t *testing.T) {
+			err := newMCPRegistry(tc.auth).Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.errSubstr) {
+				t.Fatalf("expected MCP validation error containing %q, got: %v", tc.errSubstr, err)
+			}
+			err = newProviderRegistry(tc.auth).Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.errSubstr) {
+				t.Fatalf("expected ModelProvider validation error containing %q, got: %v", tc.errSubstr, err)
+			}
+		})
+	}
+
+	// Extensible validation via ValidateWithOptions
+	t.Run("extensible ValidateWithOptions", func(t *testing.T) {
+		reg := newMCPRegistry(&ProviderAuth{
+			Type:  AuthTypeBearer,
+			Token: "${vault:secret/data/mcp}",
+		})
+		opts := &ValidateOptions{
+			AllowedExpressionSchemes: []string{"env", "file"},
+		}
+		if err := reg.ValidateWithOptions(opts); err == nil || !strings.Contains(err.Error(), `scheme "vault" is not allowed`) {
+			t.Fatalf("expected scheme allowlist error, got: %v", err)
+		}
+
+		customOpts := &ValidateOptions{
+			AllowedExpressionSchemes: []string{"env", "file", "vault"},
+			ExpressionValidators: map[string]ExpressionValidator{
+				"vault": func(target string) error {
+					if !strings.Contains(target, "#") {
+						return fmt.Errorf("must include '#<field>'")
+					}
+					return nil
+				},
+			},
+		}
+		if err := reg.ValidateWithOptions(customOpts); err == nil || !strings.Contains(err.Error(), "must include '#<field>'") {
+			t.Fatalf("expected custom vault validator error, got: %v", err)
+		}
+
+		regValid := newMCPRegistry(&ProviderAuth{
+			Type:  AuthTypeBearer,
+			Token: "${vault:secret/data/mcp#token}",
+		})
+		if err := regValid.ValidateWithOptions(customOpts); err != nil {
+			t.Fatalf("expected valid custom vault expression to pass, got: %v", err)
+		}
+	})
 }

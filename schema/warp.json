@@ -549,24 +549,78 @@
       "properties": {
         "type": {
           "type": "string",
-          "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\")"
+          "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\", \"oauth2\", \"client-credentials\", \"enterprise\", \"none\")"
         },
         "header": {
           "type": "string",
-          "description": "Custom header name if type is \"api-key\""
+          "description": "Custom header name if type is \"api-key\" (literal or expression)"
         },
-        "env": {
+        "token": {
           "type": "string",
-          "description": "Read credential from environment variable"
+          "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+          "description": "Secret expression for token-based schemes (e.g., \"${env:OPENAI_API_KEY}\")"
         },
-        "file": {
+        "username": {
           "type": "string",
-          "description": "Read credential from file path"
+          "description": "Username for \"basic\" auth (literal or expression)"
+        },
+        "password": {
+          "type": "string",
+          "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+          "description": "Secret expression for \"basic\" auth password (e.g., \"${env:BASIC_PASSWORD}\")"
+        },
+        "oauth": {
+          "$ref": "#/$defs/ProviderAuthOAuth",
+          "description": "OAuth configuration for \"oauth2\", \"client-credentials\", and \"enterprise\" schemes"
         }
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "ProviderAuth defines how to authenticate with the model provider."
+      "description": "ProviderAuth defines how to authenticate with a model provider or remote MCP server."
+    },
+    "ProviderAuthOAuth": {
+      "properties": {
+        "idpIssuer": {
+          "type": "string",
+          "description": "Enterprise IdP issuer URL used for OIDC discovery (literal URL or expression)"
+        },
+        "idpClientId": {
+          "type": "string",
+          "description": "Client ID registered at the enterprise IdP (literal or expression)"
+        },
+        "idpClientSecret": {
+          "type": "string",
+          "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+          "description": "Secret expression for the enterprise IdP client (e.g., \"${file:~/.secrets/idp-secret}\")"
+        },
+        "audienceIssuer": {
+          "type": "string",
+          "description": "Target authorization server issuer used as token-exchange audience and metadata discovery"
+        },
+        "resourceURI": {
+          "type": "string",
+          "description": "RFC 9728 resource identifier sent as the `resource` parameter"
+        },
+        "clientId": {
+          "type": "string",
+          "description": "OAuth client ID for the target authorization server (literal or expression)"
+        },
+        "clientSecret": {
+          "type": "string",
+          "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+          "description": "Secret expression for the target authorization server client (e.g., \"${env:MCP_CLIENT_SECRET}\")"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Scopes to request; empty means server-discovered defaults"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ProviderAuthOAuth declares the authorization servers and client credentials for OAuth-based schemes (oauth2, client-credentials, enterprise)."
     },
     "ProviderModel": {
       "properties": {
@@ -1991,24 +2045,78 @@
                 "properties": {
                   "type": {
                     "type": "string",
-                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\")"
+                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\", \"oauth2\", \"client-credentials\", \"enterprise\", \"none\")"
                   },
                   "header": {
                     "type": "string",
-                    "description": "Custom header name if type is \"api-key\""
+                    "description": "Custom header name if type is \"api-key\" (literal or expression)"
                   },
-                  "env": {
+                  "token": {
                     "type": "string",
-                    "description": "Read credential from environment variable"
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for token-based schemes (e.g., \"${env:OPENAI_API_KEY}\")"
                   },
-                  "file": {
+                  "username": {
                     "type": "string",
-                    "description": "Read credential from file path"
+                    "description": "Username for \"basic\" auth (literal or expression)"
+                  },
+                  "password": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for \"basic\" auth password (e.g., \"${env:BASIC_PASSWORD}\")"
+                  },
+                  "oauth": {
+                    "$ref": "#/$defs/ProviderAuthOAuth",
+                    "description": "OAuth configuration for \"oauth2\", \"client-credentials\", and \"enterprise\" schemes"
                   }
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "description": "ProviderAuth defines how to authenticate with the model provider."
+                "description": "ProviderAuth defines how to authenticate with a model provider or remote MCP server."
+              },
+              "ProviderAuthOAuth": {
+                "properties": {
+                  "idpIssuer": {
+                    "type": "string",
+                    "description": "Enterprise IdP issuer URL used for OIDC discovery (literal URL or expression)"
+                  },
+                  "idpClientId": {
+                    "type": "string",
+                    "description": "Client ID registered at the enterprise IdP (literal or expression)"
+                  },
+                  "idpClientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the enterprise IdP client (e.g., \"${file:~/.secrets/idp-secret}\")"
+                  },
+                  "audienceIssuer": {
+                    "type": "string",
+                    "description": "Target authorization server issuer used as token-exchange audience and metadata discovery"
+                  },
+                  "resourceURI": {
+                    "type": "string",
+                    "description": "RFC 9728 resource identifier sent as the `resource` parameter"
+                  },
+                  "clientId": {
+                    "type": "string",
+                    "description": "OAuth client ID for the target authorization server (literal or expression)"
+                  },
+                  "clientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the target authorization server client (e.g., \"${env:MCP_CLIENT_SECRET}\")"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Scopes to request; empty means server-discovered defaults"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuthOAuth declares the authorization servers and client credentials for OAuth-based schemes (oauth2, client-credentials, enterprise)."
               },
               "ProviderModel": {
                 "properties": {
@@ -2443,24 +2551,78 @@
                 "properties": {
                   "type": {
                     "type": "string",
-                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\")"
+                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\", \"oauth2\", \"client-credentials\", \"enterprise\", \"none\")"
                   },
                   "header": {
                     "type": "string",
-                    "description": "Custom header name if type is \"api-key\""
+                    "description": "Custom header name if type is \"api-key\" (literal or expression)"
                   },
-                  "env": {
+                  "token": {
                     "type": "string",
-                    "description": "Read credential from environment variable"
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for token-based schemes (e.g., \"${env:OPENAI_API_KEY}\")"
                   },
-                  "file": {
+                  "username": {
                     "type": "string",
-                    "description": "Read credential from file path"
+                    "description": "Username for \"basic\" auth (literal or expression)"
+                  },
+                  "password": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for \"basic\" auth password (e.g., \"${env:BASIC_PASSWORD}\")"
+                  },
+                  "oauth": {
+                    "$ref": "#/$defs/ProviderAuthOAuth",
+                    "description": "OAuth configuration for \"oauth2\", \"client-credentials\", and \"enterprise\" schemes"
                   }
                 },
                 "additionalProperties": false,
                 "type": "object",
-                "description": "ProviderAuth defines how to authenticate with the model provider."
+                "description": "ProviderAuth defines how to authenticate with a model provider or remote MCP server."
+              },
+              "ProviderAuthOAuth": {
+                "properties": {
+                  "idpIssuer": {
+                    "type": "string",
+                    "description": "Enterprise IdP issuer URL used for OIDC discovery (literal URL or expression)"
+                  },
+                  "idpClientId": {
+                    "type": "string",
+                    "description": "Client ID registered at the enterprise IdP (literal or expression)"
+                  },
+                  "idpClientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the enterprise IdP client (e.g., \"${file:~/.secrets/idp-secret}\")"
+                  },
+                  "audienceIssuer": {
+                    "type": "string",
+                    "description": "Target authorization server issuer used as token-exchange audience and metadata discovery"
+                  },
+                  "resourceURI": {
+                    "type": "string",
+                    "description": "RFC 9728 resource identifier sent as the `resource` parameter"
+                  },
+                  "clientId": {
+                    "type": "string",
+                    "description": "OAuth client ID for the target authorization server (literal or expression)"
+                  },
+                  "clientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the target authorization server client (e.g., \"${env:MCP_CLIENT_SECRET}\")"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Scopes to request; empty means server-discovered defaults"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuthOAuth declares the authorization servers and client credentials for OAuth-based schemes (oauth2, client-credentials, enterprise)."
               },
               "ResourceFilter": {
                 "properties": {

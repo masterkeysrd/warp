@@ -676,7 +676,7 @@ endpoints and default models.
 | `type`          | string   | ✅       | e.g., `ollama`, `openai`, `anthropic`.                                                           |
 | `endpoint`      | string   |          | API base URL (optional when the provider `type` has a standard default endpoint).                |
 | `defaultModels` | object   |          | Role-specific default models (`completion`, `decision`, `embedding`) for this provider.          |
-| `auth`          | object   |          | Authentication config (e.g., `type: bearer`, `env: OPENAI_API_KEY`).                             |
+| `auth`          | object   |          | Authentication config (e.g., `type: bearer`, `token: ${env:OPENAI_API_KEY}`).                  |
 | `headers`       | map      |          | Custom HTTP headers included in all requests to the provider.                                    |
 | `config`        | map      |          | Provider-specific settings and custom configuration parameters.                                  |
 | `models`        | object[] |          | Available models from this provider.                                                             |
@@ -685,12 +685,29 @@ endpoints and default models.
 
 #### `ProviderAuth` fields
 
-| Field    | Type   | Description                                                                 |
-|----------|--------|-----------------------------------------------------------------------------|
-| `type`   | string | The auth scheme (e.g., `bearer`, `api-key`, `basic`).                       |
-| `header` | string | Custom HTTP header name to use if `type` is `api-key` (e.g., `x-api-key`).  |
-| `env`    | string | Read the secret credential from this environment variable.                  |
-| `file`   | string | Read the secret credential from this file path.                             |
+`ProviderAuth` uses declarative value expressions (`${<scheme>:<ref>}`, such as `${env:OPENAI_API_KEY}` or `${file:~/.secrets/token}`) for all secret-bearing fields so raw secrets are never committed to manifests. Built-in validation supports `env` and `file` out of the box and accepts any custom scheme (e.g., `keychain`, `vault`, `op`) unless restricted via `ValidateOptions`.
+
+| Field      | Type   | Description                                                                                                          |
+|------------|--------|----------------------------------------------------------------------------------------------------------------------|
+| `type`     | string | The auth scheme (`bearer`, `api-key`, `basic`, `oauth2`, `client-credentials`, `enterprise`, `none`, or custom).     |
+| `header`   | string | Custom HTTP header name to use if `type` is `api-key` (literal or `${<scheme>:<ref>}` expression).                  |
+| `token`    | string | Secret expression for token-based schemes (`bearer`, `api-key`, or pre-encoded `basic`), e.g., `${env:API_TOKEN}`.   |
+| `username` | string | Username for `basic` auth (literal or `${<scheme>:<ref>}` expression).                                               |
+| `password` | string | Secret expression for `basic` auth password (e.g., `${file:/run/secrets/password}`).                                 |
+| `oauth`    | object | `ProviderAuthOAuth` configuration for `oauth2`, `client-credentials`, and `enterprise` schemes.                      |
+
+#### `ProviderAuthOAuth` fields
+
+| Field             | Type     | Description                                                                                                           |
+|-------------------|----------|-----------------------------------------------------------------------------------------------------------------------|
+| `idpIssuer`       | string   | Enterprise IdP issuer URL used for OIDC discovery (required when `type: enterprise`; literal URL or expression).       |
+| `idpClientId`     | string   | Client ID registered at the enterprise IdP (literal or `${<scheme>:<ref>}` expression).                               |
+| `idpClientSecret` | string   | Secret expression for the enterprise IdP client (e.g., `${file:~/.secrets/idp-secret}`).                              |
+| `audienceIssuer`  | string   | Target authorization server issuer used as token-exchange audience and metadata discovery (requires `idpIssuer`).     |
+| `resourceURI`     | string   | RFC 9728 resource identifier sent as the `resource` parameter (literal URI or expression).                            |
+| `clientId`        | string   | OAuth client ID registered at the target authorization server (literal or `${<scheme>:<ref>}` expression).           |
+| `clientSecret`    | string   | Secret expression for the target authorization server client (e.g., `${env:MCP_CLIENT_SECRET}`).                      |
+| `scopes`          | string[] | Scopes to request; empty means server-discovered defaults.                                                            |
 
 #### `ProviderModel` fields
 
@@ -892,7 +909,7 @@ An `MCP` resource describes a [Model Context Protocol](https://modelcontextproto
 | `command`     | string[] | *        | Command to start the MCP server (required if `type: stdio`). |
 | `endpoint`    | string   | *        | HTTP URL for the MCP server (required if `type` is `sse`, `http`, or `streamable-http`). |
 | `env`         | map      |          | Environment variables for the MCP server.       |
-| `auth`        | object   |          | `ProviderAuth` configuration (`type`, `header`, `env`, `file`) for remote MCP servers. |
+| `auth`        | object   |          | `ProviderAuth` configuration (`type`, `header`, `token`, `username`, `password`, `oauth`) for remote MCP servers. |
 | `headers`     | map      |          | Custom HTTP headers included in requests to remote MCP servers. |
 | `annotations` | object   |          | Default safety profile for all exposed tools.   |
 | `policies`    | object   |          | Controls which external MCP resources (`tools`, `prompts`, `resources`) are exposed by this server. |
@@ -996,7 +1013,30 @@ spec:
   endpoint: "https://$HOST:8080/sse"
   auth:
     type: bearer
-    env: MCP_REMOTE_TOKEN
+    token: ${env:MCP_REMOTE_TOKEN}
+```
+
+#### Full example Enterprise Managed Authorization (`mcps/enterprise.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: MCP
+metadata:
+  name: internal-tools
+spec:
+  type: http
+  endpoint: https://mcp.internal.example.com/mcp
+  auth:
+    type: enterprise
+    oauth:
+      idpIssuer: https://acme.okta.com
+      idpClientId: ${env:ACME_IDP_CLIENT_ID}
+      idpClientSecret: ${file:~/.secrets/idp-secret}
+      audienceIssuer: https://auth.mcp.internal.example.com
+      resourceURI: https://mcp.internal.example.com
+      clientId: ${env:MCP_CLIENT_ID}
+      clientSecret: ${env:MCP_CLIENT_SECRET}
+      scopes: [tools, resources]
 ```
 
 ---
@@ -1405,6 +1445,7 @@ loaded Workspace.
 | Unique model `aliases` per provider | A model alias is defined more than once within the same `ModelProvider`. |
 | No alias collision with model IDs or names | A model alias matches the `id` or `name` of a different model in the same `ModelProvider`. |
 | Valid thinking strategies           | Any `spec.models[].capabilities.thinking[].type` is not one of `toggle`, `effort`, `budget`, or `adaptive`. |
+| Valid `spec.auth` configuration     | `spec.auth` violates expression syntax (`${<scheme>:<ref>}` on secret fields), scheme constraints, or OAuth rules. |
 
 ### 7.10 MCP-specific
 
@@ -1413,6 +1454,7 @@ loaded Workspace.
 | Valid transport type                | `spec.type` is not one of `stdio`, `sse`, `http`, or `streamable-http`. |
 | Required stdio command              | `spec.type` is `stdio` (or defaulted) and `spec.command` is empty or omitted. |
 | Required remote endpoint            | `spec.type` is `sse`, `http`, or `streamable-http` and `spec.endpoint` is empty or omitted. |
+| Valid `spec.auth` configuration     | `spec.auth` has an empty `type`, plaintext secrets instead of `${<scheme>:<ref>}` expressions, `enterprise` without `oauth.idpIssuer`, `audienceIssuer`/`idpClientId`/`idpClientSecret` without `idpIssuer`, or secrets without corresponding client IDs. |
 
 ---
 

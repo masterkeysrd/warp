@@ -2,6 +2,7 @@ package warp
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -78,4 +79,67 @@ func ParseQualifiedName(qn string) (namespace string, kind Kind, name string, ok
 		return "", "", "", false
 	}
 	return parts[0], Kind(parts[1]), parts[2], true
+}
+
+var namespaceRegexp = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// IsValidNamespace reports whether ns satisfies the namespace naming rule
+// (^[a-z0-9][a-z0-9-]*$).
+func IsValidNamespace(ns string) bool {
+	return namespaceRegexp.MatchString(ns)
+}
+
+// ValidateNamespace returns an error if ns does not satisfy ^[a-z0-9][a-z0-9-]*$.
+func ValidateNamespace(ns string) error {
+	if !IsValidNamespace(ns) {
+		return fmt.Errorf("invalid namespace %q: must match ^[a-z0-9][a-z0-9-]*$", ns)
+	}
+	return nil
+}
+
+// validateResourceRef validates the separator and segment casing rules for a
+// WARP resource reference or resource glob pattern (Section 4.2 & 4.3).
+// Model references are a separate space and must not be passed here.
+func validateResourceRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("resource reference cannot be empty")
+	}
+	if strings.Contains(ref, ":") {
+		return fmt.Errorf("invalid resource reference %q: ':' is not allowed in resource references", ref)
+	}
+	if isResourceFilePath(ref) {
+		return nil
+	}
+	parts := strings.Split(ref, "/")
+	switch len(parts) {
+	case 1:
+		return nil
+	case 2:
+		ns, name := parts[0], parts[1]
+		if ns == "" || name == "" {
+			return fmt.Errorf("invalid resource reference %q: empty segment", ref)
+		}
+		if !hasGlobMeta(ns) {
+			if err := ValidateNamespace(ns); err != nil {
+				return fmt.Errorf("invalid resource reference %q: %w", ref, err)
+			}
+		}
+		return nil
+	case 3:
+		ns, kindStr, name := parts[0], parts[1], parts[2]
+		if ns == "" || kindStr == "" || name == "" {
+			return fmt.Errorf("invalid resource reference %q: empty segment", ref)
+		}
+		if !hasGlobMeta(ns) {
+			if err := ValidateNamespace(ns); err != nil {
+				return fmt.Errorf("invalid resource reference %q: %w", ref, err)
+			}
+		}
+		if !hasGlobMeta(kindStr) && !IsValidKind(Kind(kindStr)) {
+			return fmt.Errorf("invalid resource reference %q: unknown kind %q (must be a PascalCase resource kind)", ref, kindStr)
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid resource reference %q: too many '/' segments", ref)
+	}
 }

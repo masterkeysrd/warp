@@ -72,6 +72,10 @@
         "policies": {
           "$ref": "#/$defs/Policies",
           "description": "Policies defines security and access policies."
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "Sandbox references the Sandbox in which this agent's tools execute, or\nthe reserved value \"none\" (unsandboxed). When omitted,\nworkspace.spec.defaultSandbox (or the runtime default) applies."
         }
       },
       "additionalProperties": false,
@@ -331,6 +335,40 @@
       "type": "object",
       "description": "DecisionSpec contains the configuration details for a Decision resource."
     },
+    "FileSystemSpec": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this filesystem is active (defaults to true when omitted)"
+        },
+        "driver": {
+          "type": "string",
+          "description": "Reserved driver (host, overlay, memory, git) or a domain-qualified custom driver"
+        },
+        "config": {
+          "type": "object",
+          "description": "Driver-specific settings; opaque to WARP and templated (e.g. $ProjectDir)"
+        },
+        "auth": {
+          "$ref": "#/$defs/ProviderAuth",
+          "description": "Credentials for remote backends; never exposed inside the sandbox"
+        },
+        "persistence": {
+          "type": "string",
+          "description": "ephemeral or persistent (driver default when omitted)"
+        },
+        "readOnly": {
+          "type": "boolean",
+          "description": "Forces every mount of this filesystem to ro"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "driver"
+      ],
+      "description": "FileSystemSpec contains the configuration details for a FileSystem resource."
+    },
     "MCPPolicies": {
       "properties": {
         "tools": {
@@ -400,6 +438,10 @@
           },
           "type": "object",
           "description": "Tool-specific annotation overrides (key is tool name)"
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "Sandbox in which a stdio server process runs, or \"none\""
         }
       },
       "additionalProperties": false,
@@ -550,6 +592,10 @@
         },
         "mcps": {
           "$ref": "#/$defs/ResourceFilter"
+        },
+        "sandbox": {
+          "$ref": "#/$defs/SandboxPolicies",
+          "description": "Sandbox is the workspace-wide sandbox ceiling. Only valid on Workspace."
         }
       },
       "additionalProperties": false,
@@ -967,6 +1013,292 @@
       "type": "object",
       "description": "RuleTriggers specifies when a rule becomes active."
     },
+    "SandboxAccess": {
+      "properties": {
+        "read": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "When set, reads are limited to matching paths (plus paths matching write)"
+        },
+        "write": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "When set, writes are limited to matching paths"
+        },
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Paths that may never be read or written"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxAccess declares per-path read/write rules."
+    },
+    "SandboxEnv": {
+      "properties": {
+        "passthrough": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Globs of host environment variable names exposed to the sandbox"
+        },
+        "set": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Variables injected into the sandbox (literals or ${\u003cscheme\u003e:\u003cref\u003e} expressions)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxEnv declares environment exposure."
+    },
+    "SandboxExec": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "none, allowlist, or any (default)"
+        },
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Command base names or absolute paths permitted when mode is allowlist"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxExec declares command execution rules."
+    },
+    "SandboxLimits": {
+      "properties": {
+        "cpu": {
+          "type": "string",
+          "description": "CPU quota (e.g. \"2\", \"500m\")"
+        },
+        "memory": {
+          "type": "string",
+          "description": "Memory cap (e.g. \"2Gi\")"
+        },
+        "processes": {
+          "type": "integer",
+          "description": "Maximum number of concurrent processes"
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Maximum lifetime of the sandbox (e.g. \"30m\")"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxLimits declares resource limits."
+    },
+    "SandboxMount": {
+      "properties": {
+        "filesystem": {
+          "type": "string",
+          "description": "Reference to a FileSystem"
+        },
+        "path": {
+          "type": "string",
+          "description": "Absolute mount target (defaults to the host source path for host-backed filesystems)"
+        },
+        "mode": {
+          "type": "string",
+          "description": "ro (default) or rw"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "filesystem"
+      ],
+      "description": "SandboxMount attaches a FileSystem to a sandbox."
+    },
+    "SandboxNetwork": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "none (default), allowlist, or open"
+        },
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Host patterns allowed when mode is allowlist (e.g. *.pypi.org, registry.npmjs.org:443)"
+        },
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Host patterns that are always blocked"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxNetwork declares network egress rules."
+    },
+    "SandboxPolicies": {
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "description": "Every command Tool and stdio MCP must resolve to a sandbox"
+        },
+        "drivers": {
+          "$ref": "#/$defs/ResourceFilter",
+          "description": "Glob filter over SandboxProvider and FileSystem driver names"
+        },
+        "hostPaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Globs the rendered path of every host FileSystem must fall within (default [\"$WorkspaceDir/**\"])"
+        },
+        "hostWrite": {
+          "type": "string",
+          "description": "allow (default) or deny rw mounts of host filesystems"
+        },
+        "rootfs": {
+          "$ref": "#/$defs/SandboxRootFS",
+          "description": "Root filesystem ceiling"
+        },
+        "access": {
+          "$ref": "#/$defs/SandboxAccess",
+          "description": "Access rules ceiling"
+        },
+        "exec": {
+          "$ref": "#/$defs/SandboxExec",
+          "description": "Command execution ceiling"
+        },
+        "network": {
+          "$ref": "#/$defs/SandboxNetwork",
+          "description": "Network egress ceiling"
+        },
+        "env": {
+          "$ref": "#/$defs/SandboxEnv",
+          "description": "Environment ceiling (passthrough only)"
+        },
+        "limits": {
+          "$ref": "#/$defs/SandboxLimits",
+          "description": "Resource limits ceiling"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxPolicies is the workspace-wide, non-bypassable sandbox ceiling (workspace.spec.policies.sandbox)."
+    },
+    "SandboxProviderSpec": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this provider is active (defaults to true when omitted)"
+        },
+        "driver": {
+          "type": "string",
+          "description": "Reserved driver (local, native, container, microvm, virtual) or a domain-qualified custom driver"
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Driver endpoint (e.g. unix:///var/run/docker.sock); supports WARP templating"
+        },
+        "auth": {
+          "$ref": "#/$defs/ProviderAuth",
+          "description": "Credentials used only by the driver"
+        },
+        "config": {
+          "type": "object",
+          "description": "Driver-specific settings; opaque to WARP"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "driver"
+      ],
+      "description": "SandboxProviderSpec contains the configuration details for a SandboxProvider resource."
+    },
+    "SandboxRootFS": {
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Mode is rw, ro, or none. Defaults to rw when the driver supports\nrootfs.private, otherwise ro."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxRootFS configures the root filesystem of a sandbox."
+    },
+    "SandboxSpec": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this sandbox is active (defaults to true when omitted)"
+        },
+        "extends": {
+          "type": "string",
+          "description": "Reference to another Sandbox to inherit from"
+        },
+        "provider": {
+          "type": "string",
+          "description": "Reference to a SandboxProvider (inherited, else the runtime's default provider)"
+        },
+        "config": {
+          "type": "object",
+          "description": "Per-sandbox driver settings, shallow-merged over the provider's config"
+        },
+        "rootfs": {
+          "$ref": "#/$defs/SandboxRootFS",
+          "description": "Root filesystem settings"
+        },
+        "mounts": {
+          "items": {
+            "$ref": "#/$defs/SandboxMount"
+          },
+          "type": "array",
+          "description": "Filesystems attached to the sandbox"
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Absolute path where execution starts"
+        },
+        "access": {
+          "$ref": "#/$defs/SandboxAccess",
+          "description": "Per-path read/write rules"
+        },
+        "exec": {
+          "$ref": "#/$defs/SandboxExec",
+          "description": "Command execution rules (default mode: any)"
+        },
+        "network": {
+          "$ref": "#/$defs/SandboxNetwork",
+          "description": "Network egress rules (default mode: none)"
+        },
+        "env": {
+          "$ref": "#/$defs/SandboxEnv",
+          "description": "Environment exposure"
+        },
+        "limits": {
+          "$ref": "#/$defs/SandboxLimits",
+          "description": "Resource limits"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "SandboxSpec contains the configuration details for a Sandbox resource."
+    },
     "SkillSpec": {
       "properties": {
         "useWhen": {
@@ -1103,6 +1435,10 @@
         "annotations": {
           "$ref": "#/$defs/ToolAnnotation",
           "description": "Safety profile for Tool Execution Security"
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "Sandbox selected for this tool's execution, or \"none\""
         }
       },
       "additionalProperties": false,
@@ -1131,6 +1467,10 @@
         },
         "defaultAgent": {
           "type": "string"
+        },
+        "defaultSandbox": {
+          "type": "string",
+          "description": "Sandbox used by agents, tools, and stdio MCP servers that select none"
         },
         "plugins": {
           "items": {
@@ -1211,6 +1551,10 @@
                   },
                   "mcps": {
                     "$ref": "#/$defs/ResourceFilter"
+                  },
+                  "sandbox": {
+                    "$ref": "#/$defs/SandboxPolicies",
+                    "description": "Sandbox is the workspace-wide sandbox ceiling. Only valid on Workspace."
                   }
                 },
                 "additionalProperties": false,
@@ -1237,6 +1581,182 @@
                 "additionalProperties": false,
                 "type": "object",
                 "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
+              },
+              "SandboxAccess": {
+                "properties": {
+                  "read": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "When set, reads are limited to matching paths (plus paths matching write)"
+                  },
+                  "write": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "When set, writes are limited to matching paths"
+                  },
+                  "deny": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Paths that may never be read or written"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxAccess declares per-path read/write rules."
+              },
+              "SandboxEnv": {
+                "properties": {
+                  "passthrough": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Globs of host environment variable names exposed to the sandbox"
+                  },
+                  "set": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Variables injected into the sandbox (literals or ${\u003cscheme\u003e:\u003cref\u003e} expressions)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxEnv declares environment exposure."
+              },
+              "SandboxExec": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "none, allowlist, or any (default)"
+                  },
+                  "allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Command base names or absolute paths permitted when mode is allowlist"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxExec declares command execution rules."
+              },
+              "SandboxLimits": {
+                "properties": {
+                  "cpu": {
+                    "type": "string",
+                    "description": "CPU quota (e.g. \"2\", \"500m\")"
+                  },
+                  "memory": {
+                    "type": "string",
+                    "description": "Memory cap (e.g. \"2Gi\")"
+                  },
+                  "processes": {
+                    "type": "integer",
+                    "description": "Maximum number of concurrent processes"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "description": "Maximum lifetime of the sandbox (e.g. \"30m\")"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxLimits declares resource limits."
+              },
+              "SandboxNetwork": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "none (default), allowlist, or open"
+                  },
+                  "allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Host patterns allowed when mode is allowlist (e.g. *.pypi.org, registry.npmjs.org:443)"
+                  },
+                  "deny": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Host patterns that are always blocked"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxNetwork declares network egress rules."
+              },
+              "SandboxPolicies": {
+                "properties": {
+                  "required": {
+                    "type": "boolean",
+                    "description": "Every command Tool and stdio MCP must resolve to a sandbox"
+                  },
+                  "drivers": {
+                    "$ref": "#/$defs/ResourceFilter",
+                    "description": "Glob filter over SandboxProvider and FileSystem driver names"
+                  },
+                  "hostPaths": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Globs the rendered path of every host FileSystem must fall within (default [\"$WorkspaceDir/**\"])"
+                  },
+                  "hostWrite": {
+                    "type": "string",
+                    "description": "allow (default) or deny rw mounts of host filesystems"
+                  },
+                  "rootfs": {
+                    "$ref": "#/$defs/SandboxRootFS",
+                    "description": "Root filesystem ceiling"
+                  },
+                  "access": {
+                    "$ref": "#/$defs/SandboxAccess",
+                    "description": "Access rules ceiling"
+                  },
+                  "exec": {
+                    "$ref": "#/$defs/SandboxExec",
+                    "description": "Command execution ceiling"
+                  },
+                  "network": {
+                    "$ref": "#/$defs/SandboxNetwork",
+                    "description": "Network egress ceiling"
+                  },
+                  "env": {
+                    "$ref": "#/$defs/SandboxEnv",
+                    "description": "Environment ceiling (passthrough only)"
+                  },
+                  "limits": {
+                    "$ref": "#/$defs/SandboxLimits",
+                    "description": "Resource limits ceiling"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxPolicies is the workspace-wide, non-bypassable sandbox ceiling (workspace.spec.policies.sandbox)."
+              },
+              "SandboxRootFS": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "Mode is rw, ro, or none. Defaults to rw when the driver supports\nrootfs.private, otherwise ro."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxRootFS configures the root filesystem of a sandbox."
               },
               "ToolPolicies": {
                 "properties": {
@@ -1294,6 +1814,10 @@
                   },
                   "defaultAgent": {
                     "type": "string"
+                  },
+                  "defaultSandbox": {
+                    "type": "string",
+                    "description": "Sandbox used by agents, tools, and stdio MCP servers that select none"
                   },
                   "plugins": {
                     "items": {
@@ -1455,6 +1979,10 @@
                   "policies": {
                     "$ref": "#/$defs/Policies",
                     "description": "Policies defines security and access policies."
+                  },
+                  "sandbox": {
+                    "type": "string",
+                    "description": "Sandbox references the Sandbox in which this agent's tools execute, or\nthe reserved value \"none\" (unsandboxed). When omitted,\nworkspace.spec.defaultSandbox (or the runtime default) applies."
                   }
                 },
                 "additionalProperties": false,
@@ -1490,6 +2018,10 @@
                   },
                   "mcps": {
                     "$ref": "#/$defs/ResourceFilter"
+                  },
+                  "sandbox": {
+                    "$ref": "#/$defs/SandboxPolicies",
+                    "description": "Sandbox is the workspace-wide sandbox ceiling. Only valid on Workspace."
                   }
                 },
                 "additionalProperties": false,
@@ -1516,6 +2048,182 @@
                 "additionalProperties": false,
                 "type": "object",
                 "description": "ResourceFilter defines inclusion and exclusion rules based on glob patterns."
+              },
+              "SandboxAccess": {
+                "properties": {
+                  "read": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "When set, reads are limited to matching paths (plus paths matching write)"
+                  },
+                  "write": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "When set, writes are limited to matching paths"
+                  },
+                  "deny": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Paths that may never be read or written"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxAccess declares per-path read/write rules."
+              },
+              "SandboxEnv": {
+                "properties": {
+                  "passthrough": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Globs of host environment variable names exposed to the sandbox"
+                  },
+                  "set": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Variables injected into the sandbox (literals or ${\u003cscheme\u003e:\u003cref\u003e} expressions)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxEnv declares environment exposure."
+              },
+              "SandboxExec": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "none, allowlist, or any (default)"
+                  },
+                  "allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Command base names or absolute paths permitted when mode is allowlist"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxExec declares command execution rules."
+              },
+              "SandboxLimits": {
+                "properties": {
+                  "cpu": {
+                    "type": "string",
+                    "description": "CPU quota (e.g. \"2\", \"500m\")"
+                  },
+                  "memory": {
+                    "type": "string",
+                    "description": "Memory cap (e.g. \"2Gi\")"
+                  },
+                  "processes": {
+                    "type": "integer",
+                    "description": "Maximum number of concurrent processes"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "description": "Maximum lifetime of the sandbox (e.g. \"30m\")"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxLimits declares resource limits."
+              },
+              "SandboxNetwork": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "none (default), allowlist, or open"
+                  },
+                  "allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Host patterns allowed when mode is allowlist (e.g. *.pypi.org, registry.npmjs.org:443)"
+                  },
+                  "deny": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Host patterns that are always blocked"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxNetwork declares network egress rules."
+              },
+              "SandboxPolicies": {
+                "properties": {
+                  "required": {
+                    "type": "boolean",
+                    "description": "Every command Tool and stdio MCP must resolve to a sandbox"
+                  },
+                  "drivers": {
+                    "$ref": "#/$defs/ResourceFilter",
+                    "description": "Glob filter over SandboxProvider and FileSystem driver names"
+                  },
+                  "hostPaths": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Globs the rendered path of every host FileSystem must fall within (default [\"$WorkspaceDir/**\"])"
+                  },
+                  "hostWrite": {
+                    "type": "string",
+                    "description": "allow (default) or deny rw mounts of host filesystems"
+                  },
+                  "rootfs": {
+                    "$ref": "#/$defs/SandboxRootFS",
+                    "description": "Root filesystem ceiling"
+                  },
+                  "access": {
+                    "$ref": "#/$defs/SandboxAccess",
+                    "description": "Access rules ceiling"
+                  },
+                  "exec": {
+                    "$ref": "#/$defs/SandboxExec",
+                    "description": "Command execution ceiling"
+                  },
+                  "network": {
+                    "$ref": "#/$defs/SandboxNetwork",
+                    "description": "Network egress ceiling"
+                  },
+                  "env": {
+                    "$ref": "#/$defs/SandboxEnv",
+                    "description": "Environment ceiling (passthrough only)"
+                  },
+                  "limits": {
+                    "$ref": "#/$defs/SandboxLimits",
+                    "description": "Resource limits ceiling"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxPolicies is the workspace-wide, non-bypassable sandbox ceiling (workspace.spec.policies.sandbox)."
+              },
+              "SandboxRootFS": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "Mode is rw, ro, or none. Defaults to rw when the driver supports\nrootfs.private, otherwise ro."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxRootFS configures the root filesystem of a sandbox."
               },
               "ToolPolicies": {
                 "properties": {
@@ -2500,6 +3208,10 @@
                   "annotations": {
                     "$ref": "#/$defs/ToolAnnotation",
                     "description": "Safety profile for Tool Execution Security"
+                  },
+                  "sandbox": {
+                    "type": "string",
+                    "description": "Sandbox selected for this tool's execution, or \"none\""
                   }
                 },
                 "additionalProperties": false,
@@ -2595,6 +3307,10 @@
                     },
                     "type": "object",
                     "description": "Tool-specific annotation overrides (key is tool name)"
+                  },
+                  "sandbox": {
+                    "type": "string",
+                    "description": "Sandbox in which a stdio server process runs, or \"none\""
                   }
                 },
                 "additionalProperties": false,
@@ -2793,6 +3509,490 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "SandboxProvider"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/sandbox-provider-spec",
+            "$ref": "#/$defs/SandboxProviderSpec",
+            "$defs": {
+              "ProviderAuth": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\", \"oauth2\", \"client-credentials\", \"enterprise\", \"none\")"
+                  },
+                  "header": {
+                    "type": "string",
+                    "description": "Custom header name if type is \"api-key\" (literal or expression)"
+                  },
+                  "token": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for token-based schemes (e.g., \"${env:OPENAI_API_KEY}\")"
+                  },
+                  "username": {
+                    "type": "string",
+                    "description": "Username for \"basic\" auth (literal or expression)"
+                  },
+                  "password": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for \"basic\" auth password (e.g., \"${env:BASIC_PASSWORD}\")"
+                  },
+                  "oauth": {
+                    "$ref": "#/$defs/ProviderAuthOAuth",
+                    "description": "OAuth configuration for \"oauth2\", \"client-credentials\", and \"enterprise\" schemes"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuth defines how to authenticate with a model provider or remote MCP server."
+              },
+              "ProviderAuthOAuth": {
+                "properties": {
+                  "idpIssuer": {
+                    "type": "string",
+                    "description": "Enterprise IdP issuer URL used for OIDC discovery (literal URL or expression)"
+                  },
+                  "idpClientId": {
+                    "type": "string",
+                    "description": "Client ID registered at the enterprise IdP (literal or expression)"
+                  },
+                  "idpClientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the enterprise IdP client (e.g., \"${file:~/.secrets/idp-secret}\")"
+                  },
+                  "audienceIssuer": {
+                    "type": "string",
+                    "description": "Target authorization server issuer used as token-exchange audience and metadata discovery"
+                  },
+                  "resourceURI": {
+                    "type": "string",
+                    "description": "RFC 9728 resource identifier sent as the `resource` parameter"
+                  },
+                  "clientId": {
+                    "type": "string",
+                    "description": "OAuth client ID for the target authorization server (literal or expression)"
+                  },
+                  "clientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the target authorization server client (e.g., \"${env:MCP_CLIENT_SECRET}\")"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Scopes to request; empty means server-discovered defaults"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuthOAuth declares the authorization servers and client credentials for OAuth-based schemes (oauth2, client-credentials, enterprise)."
+              },
+              "SandboxProviderSpec": {
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this provider is active (defaults to true when omitted)"
+                  },
+                  "driver": {
+                    "type": "string",
+                    "description": "Reserved driver (local, native, container, microvm, virtual) or a domain-qualified custom driver"
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "description": "Driver endpoint (e.g. unix:///var/run/docker.sock); supports WARP templating"
+                  },
+                  "auth": {
+                    "$ref": "#/$defs/ProviderAuth",
+                    "description": "Credentials used only by the driver"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Driver-specific settings; opaque to WARP"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "driver"
+                ],
+                "description": "SandboxProviderSpec contains the configuration details for a SandboxProvider resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "Sandbox"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/sandbox-spec",
+            "$ref": "#/$defs/SandboxSpec",
+            "$defs": {
+              "SandboxAccess": {
+                "properties": {
+                  "read": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "When set, reads are limited to matching paths (plus paths matching write)"
+                  },
+                  "write": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "When set, writes are limited to matching paths"
+                  },
+                  "deny": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Paths that may never be read or written"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxAccess declares per-path read/write rules."
+              },
+              "SandboxEnv": {
+                "properties": {
+                  "passthrough": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Globs of host environment variable names exposed to the sandbox"
+                  },
+                  "set": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object",
+                    "description": "Variables injected into the sandbox (literals or ${\u003cscheme\u003e:\u003cref\u003e} expressions)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxEnv declares environment exposure."
+              },
+              "SandboxExec": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "none, allowlist, or any (default)"
+                  },
+                  "allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Command base names or absolute paths permitted when mode is allowlist"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxExec declares command execution rules."
+              },
+              "SandboxLimits": {
+                "properties": {
+                  "cpu": {
+                    "type": "string",
+                    "description": "CPU quota (e.g. \"2\", \"500m\")"
+                  },
+                  "memory": {
+                    "type": "string",
+                    "description": "Memory cap (e.g. \"2Gi\")"
+                  },
+                  "processes": {
+                    "type": "integer",
+                    "description": "Maximum number of concurrent processes"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "description": "Maximum lifetime of the sandbox (e.g. \"30m\")"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxLimits declares resource limits."
+              },
+              "SandboxMount": {
+                "properties": {
+                  "filesystem": {
+                    "type": "string",
+                    "description": "Reference to a FileSystem"
+                  },
+                  "path": {
+                    "type": "string",
+                    "description": "Absolute mount target (defaults to the host source path for host-backed filesystems)"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "description": "ro (default) or rw"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "filesystem"
+                ],
+                "description": "SandboxMount attaches a FileSystem to a sandbox."
+              },
+              "SandboxNetwork": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "none (default), allowlist, or open"
+                  },
+                  "allow": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Host patterns allowed when mode is allowlist (e.g. *.pypi.org, registry.npmjs.org:443)"
+                  },
+                  "deny": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Host patterns that are always blocked"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxNetwork declares network egress rules."
+              },
+              "SandboxRootFS": {
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "description": "Mode is rw, ro, or none. Defaults to rw when the driver supports\nrootfs.private, otherwise ro."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxRootFS configures the root filesystem of a sandbox."
+              },
+              "SandboxSpec": {
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this sandbox is active (defaults to true when omitted)"
+                  },
+                  "extends": {
+                    "type": "string",
+                    "description": "Reference to another Sandbox to inherit from"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "description": "Reference to a SandboxProvider (inherited, else the runtime's default provider)"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Per-sandbox driver settings, shallow-merged over the provider's config"
+                  },
+                  "rootfs": {
+                    "$ref": "#/$defs/SandboxRootFS",
+                    "description": "Root filesystem settings"
+                  },
+                  "mounts": {
+                    "items": {
+                      "$ref": "#/$defs/SandboxMount"
+                    },
+                    "type": "array",
+                    "description": "Filesystems attached to the sandbox"
+                  },
+                  "workdir": {
+                    "type": "string",
+                    "description": "Absolute path where execution starts"
+                  },
+                  "access": {
+                    "$ref": "#/$defs/SandboxAccess",
+                    "description": "Per-path read/write rules"
+                  },
+                  "exec": {
+                    "$ref": "#/$defs/SandboxExec",
+                    "description": "Command execution rules (default mode: any)"
+                  },
+                  "network": {
+                    "$ref": "#/$defs/SandboxNetwork",
+                    "description": "Network egress rules (default mode: none)"
+                  },
+                  "env": {
+                    "$ref": "#/$defs/SandboxEnv",
+                    "description": "Environment exposure"
+                  },
+                  "limits": {
+                    "$ref": "#/$defs/SandboxLimits",
+                    "description": "Resource limits"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "SandboxSpec contains the configuration details for a Sandbox resource."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "FileSystem"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "spec": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/masterkeysrd/warp/file-system-spec",
+            "$ref": "#/$defs/FileSystemSpec",
+            "$defs": {
+              "FileSystemSpec": {
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this filesystem is active (defaults to true when omitted)"
+                  },
+                  "driver": {
+                    "type": "string",
+                    "description": "Reserved driver (host, overlay, memory, git) or a domain-qualified custom driver"
+                  },
+                  "config": {
+                    "type": "object",
+                    "description": "Driver-specific settings; opaque to WARP and templated (e.g. $ProjectDir)"
+                  },
+                  "auth": {
+                    "$ref": "#/$defs/ProviderAuth",
+                    "description": "Credentials for remote backends; never exposed inside the sandbox"
+                  },
+                  "persistence": {
+                    "type": "string",
+                    "description": "ephemeral or persistent (driver default when omitted)"
+                  },
+                  "readOnly": {
+                    "type": "boolean",
+                    "description": "Forces every mount of this filesystem to ro"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "driver"
+                ],
+                "description": "FileSystemSpec contains the configuration details for a FileSystem resource."
+              },
+              "ProviderAuth": {
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "The auth scheme (e.g., \"bearer\", \"api-key\", \"basic\", \"oauth2\", \"client-credentials\", \"enterprise\", \"none\")"
+                  },
+                  "header": {
+                    "type": "string",
+                    "description": "Custom header name if type is \"api-key\" (literal or expression)"
+                  },
+                  "token": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for token-based schemes (e.g., \"${env:OPENAI_API_KEY}\")"
+                  },
+                  "username": {
+                    "type": "string",
+                    "description": "Username for \"basic\" auth (literal or expression)"
+                  },
+                  "password": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for \"basic\" auth password (e.g., \"${env:BASIC_PASSWORD}\")"
+                  },
+                  "oauth": {
+                    "$ref": "#/$defs/ProviderAuthOAuth",
+                    "description": "OAuth configuration for \"oauth2\", \"client-credentials\", and \"enterprise\" schemes"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuth defines how to authenticate with a model provider or remote MCP server."
+              },
+              "ProviderAuthOAuth": {
+                "properties": {
+                  "idpIssuer": {
+                    "type": "string",
+                    "description": "Enterprise IdP issuer URL used for OIDC discovery (literal URL or expression)"
+                  },
+                  "idpClientId": {
+                    "type": "string",
+                    "description": "Client ID registered at the enterprise IdP (literal or expression)"
+                  },
+                  "idpClientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the enterprise IdP client (e.g., \"${file:~/.secrets/idp-secret}\")"
+                  },
+                  "audienceIssuer": {
+                    "type": "string",
+                    "description": "Target authorization server issuer used as token-exchange audience and metadata discovery"
+                  },
+                  "resourceURI": {
+                    "type": "string",
+                    "description": "RFC 9728 resource identifier sent as the `resource` parameter"
+                  },
+                  "clientId": {
+                    "type": "string",
+                    "description": "OAuth client ID for the target authorization server (literal or expression)"
+                  },
+                  "clientSecret": {
+                    "type": "string",
+                    "pattern": "^\\$\\{[a-z][a-z0-9+.-]*:[^}\\r\\n]+\\}$",
+                    "description": "Secret expression for the target authorization server client (e.g., \"${env:MCP_CLIENT_SECRET}\")"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "description": "Scopes to request; empty means server-discovered defaults"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "ProviderAuthOAuth declares the authorization servers and client credentials for OAuth-based schemes (oauth2, client-credentials, enterprise)."
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "properties": {
@@ -2816,7 +4016,10 @@
         "ModelProvider",
         "Tool",
         "MCP",
-        "Plugin"
+        "Plugin",
+        "SandboxProvider",
+        "Sandbox",
+        "FileSystem"
       ],
       "description": "The type of WARP resource."
     },

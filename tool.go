@@ -148,6 +148,7 @@ type ToolSpec struct {
 	InputSchema  map[string]any    `yaml:"inputSchema,omitempty"`                      // JSON Schema object defining arguments the LLM must pass
 	OutputSchema map[string]any    `yaml:"outputSchema,omitempty"`                     // JSON Schema object defining the tool's output
 	Annotations  *ToolAnnotation   `yaml:"annotations,omitempty"`                      // Safety profile for Tool Execution Security
+	Sandbox      string            `yaml:"sandbox,omitempty" json:"sandbox,omitempty"` // Sandbox selected for this tool's execution, or "none"
 }
 
 // IsEnabled reports whether this Tool is enabled (true when Enabled is nil or *Enabled is true).

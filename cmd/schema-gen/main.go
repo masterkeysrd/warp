@@ -39,6 +39,7 @@ func main() {
 		Type: "string",
 		Enum: []any{
 			"Workspace", "Context", "Agent", "Skill", "Command", "Decision", "Rule", "ModelProvider", "Tool", "MCP", "Plugin",
+			"SandboxProvider", "Sandbox", "FileSystem",
 		},
 		Description: "The type of WARP resource.",
 	})
@@ -83,6 +84,9 @@ func main() {
 	addKind("Tool", &warp.ToolSpec{})
 	addKind("MCP", &warp.MCPSpec{})
 	addKind("Plugin", &warp.PluginSpec{})
+	addKind("SandboxProvider", &warp.SandboxProviderSpec{})
+	addKind("Sandbox", &warp.SandboxSpec{})
+	addKind("FileSystem", &warp.FileSystemSpec{})
 
 	schema.AllOf = allOf
 

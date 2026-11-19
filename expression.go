@@ -34,6 +34,40 @@ type ValidateOptions struct {
 	// AllowedExpressionSchemes, when non-empty, restricts expressions to only
 	// the listed schemes. When empty, any syntactically valid scheme is allowed.
 	AllowedExpressionSchemes []string
+
+	// SandboxDrivers registers the sandbox drivers implemented by the runtime,
+	// keyed by driver name (e.g. "virtual", "e2b.dev/sandbox"). Capability,
+	// command, and configuration checks run only for registered drivers.
+	SandboxDrivers map[string]DriverInfo
+
+	// FileSystemDrivers registers the filesystem drivers implemented by the
+	// runtime, keyed by driver name (e.g. "host", "acme.com/s3fs").
+	FileSystemDrivers map[string]DriverInfo
+
+	// StrictDrivers makes unregistered sandbox and filesystem drivers
+	// validation errors. Without it, unknown domain-qualified drivers produce
+	// a warning (see Registry.Warnings) and their checks are skipped.
+	StrictDrivers bool
+}
+
+func (o *ValidateOptions) sandboxDriver(name string) (DriverInfo, bool) {
+	if o == nil || o.SandboxDrivers == nil || name == "" {
+		return DriverInfo{}, false
+	}
+	info, ok := o.SandboxDrivers[name]
+	return info, ok
+}
+
+func (o *ValidateOptions) fileSystemDriver(name string) (DriverInfo, bool) {
+	if o == nil || o.FileSystemDrivers == nil || name == "" {
+		return DriverInfo{}, false
+	}
+	info, ok := o.FileSystemDrivers[name]
+	return info, ok
+}
+
+func (o *ValidateOptions) strictDrivers() bool {
+	return o != nil && o.StrictDrivers
 }
 
 // ParseExpression parses s if it is a single, complete expression of the form

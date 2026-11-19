@@ -47,18 +47,7 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 	}
 
 	rs := newResourceSet()
-	if err := loadAgentsDir(
-		p.fsys,
-		rs.Agents,
-		rs.Skills,
-		rs.Commands,
-		rs.Decisions,
-		rs.Rules,
-		rs.ModelProviders,
-		rs.Tools,
-		rs.MCPs,
-		p.BasePath,
-	); err != nil {
+	if err := loadAgentsDir(p.fsys, rs, p.BasePath); err != nil {
 		return nil, fmt.Errorf("namespaced provider %q: %w", p.namespace, err)
 	}
 
@@ -94,6 +83,18 @@ func (p *NamespacedFSProvider) GetResources(ctx context.Context) ([]Resource, er
 	for _, m := range rs.MCPs {
 		m.Namespace = p.namespace
 		out = append(out, m)
+	}
+	for _, sp := range rs.SandboxProviders {
+		sp.Namespace = p.namespace
+		out = append(out, sp)
+	}
+	for _, sb := range rs.Sandboxes {
+		sb.Namespace = p.namespace
+		out = append(out, sb)
+	}
+	for _, fsr := range rs.FileSystems {
+		fsr.Namespace = p.namespace
+		out = append(out, fsr)
 	}
 	return out, nil
 }

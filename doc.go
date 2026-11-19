@@ -38,7 +38,7 @@
 //
 // # Resource Kinds
 //
-// Twelve resource kinds are supported:
+// Fourteen resource kinds are supported:
 //
 //	Workspace      – root authority for the session; declares active projects
 //	                 (WORKSPACE.md, optionally without front-matter).
@@ -55,6 +55,9 @@
 //	ModelProvider  – configuration for an LLM provider.
 //	Tool           – a custom tool definition.
 //	MCP            – a Model Context Protocol server configuration.
+//	SandboxProvider – how isolated execution is provided (driver, endpoint, credentials).
+//	Sandbox        – what an execution environment may access (mounts, rules, limits).
+//	FileSystem     – data a sandbox can mount (host, overlay, memory, git, or custom).
 //
 // # Loading Resources
 //

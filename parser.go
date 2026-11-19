@@ -176,6 +176,24 @@ func Parse(filePath, content string) (*ParseResult, error) {
 			return nil, fmt.Errorf("failed to parse MCP spec: %w", err)
 		}
 		resource = &res
+	case KindSandboxProvider:
+		var res SandboxProvider
+		if err := yaml.Unmarshal([]byte(yamlPart), &res); err != nil {
+			return nil, fmt.Errorf("failed to parse SandboxProvider spec: %w", err)
+		}
+		resource = &res
+	case KindSandbox:
+		var res Sandbox
+		if err := yaml.Unmarshal([]byte(yamlPart), &res); err != nil {
+			return nil, fmt.Errorf("failed to parse Sandbox spec: %w", err)
+		}
+		resource = &res
+	case KindFileSystem:
+		var res FileSystem
+		if err := yaml.Unmarshal([]byte(yamlPart), &res); err != nil {
+			return nil, fmt.Errorf("failed to parse FileSystem spec: %w", err)
+		}
+		resource = &res
 	case KindPlugin:
 		var p Plugin
 		if err := yaml.Unmarshal([]byte(yamlPart), &p); err != nil {

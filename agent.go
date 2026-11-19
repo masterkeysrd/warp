@@ -290,6 +290,10 @@ type AgentSpec struct {
 	Tools []string `yaml:"tools,omitempty"`
 	// Policies defines security and access policies.
 	Policies *Policies `yaml:"policies,omitempty"`
+	// Sandbox references the Sandbox in which this agent's tools execute, or
+	// the reserved value "none" (unsandboxed). When omitted,
+	// workspace.spec.defaultSandbox (or the runtime default) applies.
+	Sandbox string `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the AgentSpec.

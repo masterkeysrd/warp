@@ -37,6 +37,12 @@ const (
 	KindPlugin Kind = "Plugin"
 	// KindRule represents a Rule resource.
 	KindRule Kind = "Rule"
+	// KindSandboxProvider represents a SandboxProvider resource.
+	KindSandboxProvider Kind = "SandboxProvider"
+	// KindSandbox represents a Sandbox resource.
+	KindSandbox Kind = "Sandbox"
+	// KindFileSystem represents a FileSystem resource.
+	KindFileSystem Kind = "FileSystem"
 )
 
 // Metadata holds the identifying and descriptive fields shared by every
@@ -187,6 +193,18 @@ func (b *BaseResource) DeepCopy() *BaseResource {
 	return out
 }
 
+// IsValidKind reports whether k is one of the 14 known WARP resource kinds.
+func IsValidKind(k Kind) bool {
+	switch k {
+	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindDecision,
+		KindModelProvider, KindTool, KindMCP, KindPlugin, KindRule,
+		KindSandboxProvider, KindSandbox, KindFileSystem:
+		return true
+	default:
+		return false
+	}
+}
+
 // ValidateBase verifies that the mandatory front-matter fields are present
 // and that Kind is a known value. It returns a descriptive error for the
 // first failing check it encounters.
@@ -197,12 +215,8 @@ func (b *BaseResource) ValidateBase() error {
 	if b.Kind == "" {
 		return fmt.Errorf("kind is required")
 	}
-	switch b.Kind {
-	case KindWorkspace, KindContext, KindAgent, KindSkill, KindCommand, KindDecision,
-		KindModelProvider, KindTool, KindMCP, KindPlugin, KindRule:
-		// valid
-	default:
-		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Plugin, Rule", b.Kind)
+	if !IsValidKind(b.Kind) {
+		return fmt.Errorf("unknown kind %q: must be one of Workspace, Context, Agent, Skill, Command, Decision, ModelProvider, Tool, MCP, Plugin, Rule, SandboxProvider, Sandbox, FileSystem", b.Kind)
 	}
 	if b.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
@@ -261,6 +275,8 @@ func (in *ModelDefaults) DeepCopy() *ModelDefaults {
 type Policies struct {
 	Tools *ToolPolicies   `yaml:"tools,omitempty"`
 	MCPs  *ResourceFilter `yaml:"mcps,omitempty"`
+	// Sandbox is the workspace-wide sandbox ceiling. Only valid on Workspace.
+	Sandbox *SandboxPolicies `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 }
 
 // DeepCopy returns a deep copy of the Policies.
@@ -271,6 +287,7 @@ func (in *Policies) DeepCopy() *Policies {
 	out := new(Policies)
 	out.Tools = in.Tools.DeepCopy()
 	out.MCPs = in.MCPs.DeepCopy()
+	out.Sandbox = in.Sandbox.DeepCopy()
 	return out
 }
 
@@ -408,6 +425,15 @@ type ResolvedAgent struct {
 	Rules           []Rule
 	MCPs            []*MCP
 	WorkspacePolicy *ToolPolicies
+	// ParentSandbox is the effective sandbox of the delegating agent when this
+	// agent is invoked as a subagent (set by ResolveSubagent). Its rules are
+	// intersected into every sandbox resolved for this agent so delegation can
+	// never widen access.
+	ParentSandbox *ResolvedSandbox
+
+	// resolver is the scope this agent was resolved in; used by Sandbox and
+	// SandboxForTool.
+	resolver Resolver
 }
 
 // ResolvedCommand holds a fully resolved Command with its executing agent,

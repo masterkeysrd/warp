@@ -2,6 +2,7 @@ package warp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -441,7 +442,8 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 		})
 	}
 
-	r.validateWorkspaceLocked(addIssue)
+	sv := newSandboxValidator(r, opts)
+	r.validateWorkspaceLocked(sv, addIssue)
 
 	// Iterate in deterministic order so validation errors are reproducible.
 	keys := make([]string, 0, len(r.resources))
@@ -466,6 +468,15 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 		switch typed := res.(type) {
 		case *Agent:
 			r.validateAgentLocked(name, typed, emit)
+			sv.validateAgent(name, typed, emit)
+		case *Tool:
+			sv.validateTool(name, typed, emit)
+		case *SandboxProvider:
+			sv.validateSandboxProvider(name, typed, emit)
+		case *Sandbox:
+			sv.validateSandbox(name, typed, emit)
+		case *FileSystem:
+			sv.validateFileSystem(name, typed, emit)
 		case *Rule:
 			r.validateRuleLocked(name, typed, emit)
 		case *Decision:
@@ -486,10 +497,12 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 			}
 		case *MCP:
 			r.validateMCPLocked(name, typed, opts, emit)
+			sv.validateMCP(name, typed, emit)
 		}
 	}
 
 	valWarnings := r.detectCrossProviderDuplicateAliasesLocked()
+	valWarnings = append(valWarnings, sv.warnings...)
 	r.mu.RUnlock()
 
 	r.mu.Lock()
@@ -502,7 +515,7 @@ func (r *Registry) ValidateWithOptions(opts *ValidateOptions) error {
 	return &ValidationError{Issues: issues}
 }
 
-func (r *Registry) validateWorkspaceLocked(addIssue func(qn string, kind Kind, ns, field string, err error)) {
+func (r *Registry) validateWorkspaceLocked(sv *sandboxValidator, addIssue func(qn string, kind Kind, ns, field string, err error)) {
 	if r.workspace == nil || r.workspace.Def == nil {
 		return
 	}
@@ -520,13 +533,31 @@ func (r *Registry) validateWorkspaceLocked(addIssue func(qn string, kind Kind, n
 		emit("", fmt.Errorf("workspace definition: %w", err))
 	}
 	if da := def.Spec.DefaultAgent; da != "" {
-		if !r.hasKindLocked(NamespaceWorkspace, KindAgent, da) {
+		if err := validateResourceRef(da); err != nil {
+			emit("spec.defaultAgent", fmt.Errorf("workspace defaultAgent: %w", err))
+		} else if !r.hasKindLocked(NamespaceWorkspace, KindAgent, da) {
 			emit("spec.defaultAgent", fmt.Errorf("workspace defaultAgent references missing agent: %s", da))
 		}
 	}
-	if dp := def.Spec.DefaultProvider; dp != "" && len(r.findProvidersLocked()) > 0 {
-		if !r.hasProviderLocked(dp) {
+	if dp := def.Spec.DefaultProvider; dp != "" {
+		if err := validateResourceRef(dp); err != nil {
+			emit("spec.defaultProvider", fmt.Errorf("workspace defaultProvider: %w", err))
+		} else if len(r.findProvidersLocked()) > 0 && !r.hasProviderLocked(dp) {
 			emit("spec.defaultProvider", fmt.Errorf("workspace defaultProvider references missing provider: %s", dp))
+		}
+	}
+	for i, wp := range def.Spec.Plugins {
+		field := fmt.Sprintf("spec.plugins[%d].namespace", i)
+		ns := wp.Namespace
+		if ns == "" && wp.Source != "" {
+			ns = inferPluginNamespace(wp.Source)
+		}
+		if ns != "" {
+			if err := ValidateNamespace(ns); err != nil {
+				emit(field, fmt.Errorf("workspace plugin %q: %w", wp.Source, err))
+			} else if ns == NamespaceLocal || isStandardNamespace(ns) {
+				emit(field, fmt.Errorf("workspace plugin %q cannot use reserved namespace %q", wp.Source, ns))
+			}
 		}
 	}
 	if def.Spec.ModelAliases != nil {
@@ -566,6 +597,7 @@ func (r *Registry) validateWorkspaceLocked(addIssue func(qn string, kind Kind, n
 			}
 		}
 	}
+	sv.validateWorkspace(def, emit)
 }
 
 func (r *Registry) validateAgentLocked(name string, agent *Agent, emit func(field string, err error)) {
@@ -583,7 +615,9 @@ func (r *Registry) validateAgentLocked(name string, agent *Agent, emit func(fiel
 		}
 	}
 	if agent.Spec.Extends != "" {
-		if !r.hasKindLocked(ns, KindAgent, agent.Spec.Extends) {
+		if err := validateResourceRef(agent.Spec.Extends); err != nil {
+			emit("spec.extends", fmt.Errorf("agent %s extends: %w", name, err))
+		} else if !r.hasKindLocked(ns, KindAgent, agent.Spec.Extends) {
 			emit("spec.extends", fmt.Errorf("agent %s extends missing agent: %s", name, agent.Spec.Extends))
 		} else if err := r.checkInheritanceCycleLocked(agent); err != nil {
 			emit("spec.extends", err)
@@ -652,27 +686,12 @@ func (r *Registry) validateAgentLocked(name string, agent *Agent, emit func(fiel
 			}
 		}
 	}
-	for _, skillRef := range agent.Spec.Skills {
-		if !hasGlobMeta(skillRef) && !r.hasKindLocked(ns, KindSkill, skillRef) {
-			emit("spec.skills", fmt.Errorf("agent %s references missing skill: %s", name, skillRef))
-		}
-	}
-	for _, cmdRef := range agent.Spec.Commands {
-		if !hasGlobMeta(cmdRef) && !r.hasKindLocked(ns, KindCommand, cmdRef) {
-			emit("spec.commands", fmt.Errorf("agent %s references missing command: %s", name, cmdRef))
-		}
-	}
-	for _, saRef := range agent.Spec.Subagents {
-		if !hasGlobMeta(saRef) && !r.hasKindLocked(ns, KindAgent, saRef) {
-			emit("spec.subagents", fmt.Errorf("agent %s references missing subagent: %s", name, saRef))
-		}
-	}
-	for _, ruleRef := range agent.Spec.Rules {
-		if !hasGlobMeta(ruleRef) && !r.hasKindLocked(ns, KindRule, ruleRef) {
-			emit("spec.rules", fmt.Errorf("agent %s references missing rule: %s", name, ruleRef))
-		}
-	}
-	r.validateToolRefListLocked(ns, fmt.Sprintf("agent %s", name), "spec.tools", agent.Spec.Tools, emit)
+	owner := fmt.Sprintf("agent %s", name)
+	r.validateRefListLocked(ns, owner, "spec.skills", "skill", KindSkill, agent.Spec.Skills, emit)
+	r.validateRefListLocked(ns, owner, "spec.commands", "command", KindCommand, agent.Spec.Commands, emit)
+	r.validateRefListLocked(ns, owner, "spec.subagents", "subagent", KindAgent, agent.Spec.Subagents, emit)
+	r.validateRefListLocked(ns, owner, "spec.rules", "rule", KindRule, agent.Spec.Rules, emit)
+	r.validateToolRefListLocked(ns, owner, "spec.tools", agent.Spec.Tools, emit)
 }
 
 func (r *Registry) validateModelProviderLocked(name string, mp *ModelProvider, opts *ValidateOptions, emit func(field string, err error)) {
@@ -746,19 +765,16 @@ func (r *Registry) validateCommandLocked(name string, cmd *Command, emit func(fi
 			emit("spec.models", fmt.Errorf("command %s: model %q does not support completion capability", name, mRef))
 		}
 	}
-	for _, skillRef := range cmd.Spec.Skills {
-		if !hasGlobMeta(skillRef) && skillRef != "*" && !r.hasKindLocked(ns, KindSkill, skillRef) {
-			emit("spec.skills", fmt.Errorf("command %s references missing skill: %s", name, skillRef))
+	owner := fmt.Sprintf("command %s", name)
+	r.validateRefListLocked(ns, owner, "spec.skills", "skill", KindSkill, cmd.Spec.Skills, emit)
+	r.validateRefListLocked(ns, owner, "spec.rules", "rule", KindRule, cmd.Spec.Rules, emit)
+	r.validateToolRefListLocked(ns, owner, "spec.tools", cmd.Spec.Tools, emit)
+	if cmd.Spec.Agent != "" {
+		if err := validateResourceRef(cmd.Spec.Agent); err != nil {
+			emit("spec.agent", fmt.Errorf("command %s: %w", name, err))
+		} else if !hasGlobMeta(cmd.Spec.Agent) && !r.hasKindLocked(ns, KindAgent, cmd.Spec.Agent) {
+			emit("spec.agent", fmt.Errorf("command %s references missing agent: %s", name, cmd.Spec.Agent))
 		}
-	}
-	for _, ruleRef := range cmd.Spec.Rules {
-		if !hasGlobMeta(ruleRef) && ruleRef != "*" && !r.hasKindLocked(ns, KindRule, ruleRef) {
-			emit("spec.rules", fmt.Errorf("command %s references missing rule: %s", name, ruleRef))
-		}
-	}
-	r.validateToolRefListLocked(ns, fmt.Sprintf("command %s", name), "spec.tools", cmd.Spec.Tools, emit)
-	if cmd.Spec.Agent != "" && !hasGlobMeta(cmd.Spec.Agent) && !r.hasKindLocked(ns, KindAgent, cmd.Spec.Agent) {
-		emit("spec.agent", fmt.Errorf("command %s references missing agent: %s", name, cmd.Spec.Agent))
 	}
 	if cmd.Spec.Context != "" {
 		switch cmd.Spec.Context {
@@ -793,8 +809,27 @@ func (r *Registry) validateMCPLocked(name string, mcp *MCP, opts *ValidateOption
 	}
 }
 
+func (r *Registry) validateRefListLocked(ns, prefix, field, targetLabel string, kind Kind, refs []string, emit func(field string, err error)) {
+	for _, ref := range refs {
+		if err := validateResourceRef(ref); err != nil {
+			emit(field, fmt.Errorf("%s: %w", prefix, err))
+			continue
+		}
+		if hasGlobMeta(ref) {
+			continue
+		}
+		if !r.hasKindLocked(ns, kind, ref) {
+			emit(field, fmt.Errorf("%s references missing %s: %s", prefix, targetLabel, ref))
+		}
+	}
+}
+
 func (r *Registry) validateToolRefListLocked(ns, prefix, field string, refs []string, emit func(field string, err error)) {
 	for _, toolRef := range refs {
+		if err := validateResourceRef(toolRef); err != nil {
+			emit(field, fmt.Errorf("%s: %w", prefix, err))
+			continue
+		}
 		if hasGlobMeta(toolRef) || toolRef == "*" {
 			continue
 		}
@@ -940,7 +975,9 @@ func (r *Registry) validateDecisionLocked(name string, dec *Decision, emit func(
 func (r *Registry) validateRuleLocked(name string, rule *Rule, emit func(field string, err error)) {
 	ns := rule.GetNamespace()
 	if dec := rule.Spec.Triggers.Decision; dec != "" {
-		if !r.hasKindLocked(ns, KindDecision, dec) {
+		if err := validateResourceRef(dec); err != nil {
+			emit("spec.triggers.decision", fmt.Errorf("rule %s: %w", name, err))
+		} else if !r.hasKindLocked(ns, KindDecision, dec) {
 			emit("spec.triggers.decision", fmt.Errorf("rule %s: trigger references missing decision: %s", name, dec))
 		}
 	}
@@ -1347,27 +1384,52 @@ func matchResourcePattern(pat, shortName, nsName, qualifiedName string) bool {
 // perspective of fromNamespace. Must be called with r.mu held for reading.
 func (r *Registry) resolveRefLocked(fromNamespace string, kind Kind, ref string) Resource {
 	if strings.HasPrefix(ref, NamespaceLocal+"/") {
-		suffix := ref[len(NamespaceLocal):]
+		parts := strings.Split(ref, "/")
+		var name string
+		switch len(parts) {
+		case 3:
+			if Kind(parts[1]) != kind {
+				return nil
+			}
+			name = parts[2]
+		case 2:
+			name = parts[1]
+		default:
+			return nil
+		}
 		if fromNamespace != "" {
-			if res, ok := r.resources[fromNamespace+suffix]; ok && res.GetKind() == kind {
+			if res, ok := r.resources[MakeQualifiedName(fromNamespace, kind, name)]; ok && res.GetKind() == kind {
 				return res
 			}
 		}
-		if res, ok := r.resources[NamespaceWorkspace+suffix]; ok && res.GetKind() == kind {
+		if res, ok := r.resources[MakeQualifiedName(NamespaceWorkspace, kind, name)]; ok && res.GetKind() == kind {
 			return res
 		}
 		return nil
 	}
 	if strings.Contains(ref, "/") {
-		if res, ok := r.resources[ref]; ok && res.GetKind() == kind {
-			return res
-		}
-		// Support relative file path references such as "skills/go.md" or "tools/ls.yaml"
-		slug := slugifyPath(ref)
-		baseSlug := slugifyPath(path.Base(ref))
-		for _, res := range r.resources {
-			if res.GetKind() == kind && (res.GetName() == slug || res.GetName() == baseSlug) {
+		parts := strings.Split(ref, "/")
+		switch len(parts) {
+		case 3:
+			if Kind(parts[1]) == kind {
+				if res, ok := r.resources[ref]; ok && res.GetKind() == kind {
+					return res
+				}
+			}
+		case 2:
+			qn := MakeQualifiedName(parts[0], kind, parts[1])
+			if res, ok := r.resources[qn]; ok && res.GetKind() == kind {
 				return res
+			}
+		}
+		if isResourceFilePath(ref) {
+			// Support relative file path references such as "skills/go.md" or "tools/ls.yaml"
+			slug := slugifyPath(ref)
+			baseSlug := slugifyPath(path.Base(ref))
+			for _, res := range r.resources {
+				if res.GetKind() == kind && (res.GetName() == slug || res.GetName() == baseSlug) {
+					return res
+				}
 			}
 		}
 		return nil
@@ -1585,10 +1647,11 @@ func (r *Registry) isAllowedInBaseScopeLocked(ns string) bool {
 }
 
 func inferPluginNamespace(source string) string {
+	source = strings.TrimRight(filepath.ToSlash(source), "/")
 	if lastSlash := strings.LastIndex(source, "/"); lastSlash != -1 {
-		return source[lastSlash+1:]
+		return strings.ToLower(source[lastSlash+1:])
 	}
-	return source
+	return strings.ToLower(source)
 }
 
 // isStandardNamespace reports whether ns is one of the three fixed global
@@ -1785,6 +1848,9 @@ func resolveAgentChain(resolver Resolver, ref string, visited map[string]struct{
 	if len(ag.Spec.Triggers) > 0 {
 		parent.Spec.Triggers = make([]string, len(ag.Spec.Triggers))
 		copy(parent.Spec.Triggers, ag.Spec.Triggers)
+	}
+	if ag.Spec.Sandbox != "" {
+		parent.Spec.Sandbox = ag.Spec.Sandbox
 	}
 
 	// Merge: parent is the base; append child lists and instructions after.
@@ -2385,6 +2451,12 @@ func isResourceEnabled(res Resource) bool {
 		return v.Spec.IsEnabled()
 	case *Tool:
 		return v.Spec.IsEnabled()
+	case *SandboxProvider:
+		return v.Spec.IsEnabled()
+	case *Sandbox:
+		return v.Spec.IsEnabled()
+	case *FileSystem:
+		return v.Spec.IsEnabled()
 	default:
 		return true
 	}
@@ -2695,6 +2767,7 @@ func resolveExecutableAgent(resolver Resolver, ref string) (*ResolvedAgent, erro
 		Rules:           rules,
 		MCPs:            mcps,
 		WorkspacePolicy: wsPolicy,
+		resolver:        resolver,
 	}, nil
 }
 
@@ -2856,7 +2929,24 @@ func (ra *ResolvedAgent) ResolveSubagent(resolver Resolver, ref string) (*Resolv
 		return nil, fmt.Errorf("subagent %q is not enabled for agent %q", ref, agentName)
 	}
 
-	return resolveExecutableAgent(resolver, target.QualifiedName())
+	child, err := resolveExecutableAgent(resolver, target.QualifiedName())
+	if err != nil {
+		return nil, err
+	}
+	// Delegation can never widen sandbox access: the delegating agent's
+	// effective sandbox is intersected into every sandbox of the subagent.
+	if ra.resolver != nil {
+		parentSandbox, sbErr := ra.Sandbox()
+		switch {
+		case sbErr == nil:
+			child.ParentSandbox = parentSandbox
+		case errors.Is(sbErr, ErrNoDefaultSandbox):
+			child.ParentSandbox = ra.ParentSandbox.DeepCopy()
+		default:
+			return nil, fmt.Errorf("resolve delegating agent sandbox: %w", sbErr)
+		}
+	}
+	return child, nil
 }
 
 // ResolveModels returns the prioritized list of resolved completion models for this

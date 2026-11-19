@@ -865,3 +865,83 @@ func TestLoadWithOptions_UserProvidersAndSubprojectDiscovery(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadWorkspace_PluginNamespaceLowercasingAndValidation(t *testing.T) {
+	t.Run("inferred plugin namespace is lowercased", func(t *testing.T) {
+		wsDir := t.TempDir()
+		pluginDir := filepath.Join(wsDir, "plugins", "FinanceSkills")
+		skillsDir := filepath.Join(pluginDir, ".agents", "skills")
+		if err := os.MkdirAll(skillsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pluginDir, "PLUGIN.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Plugin\nmetadata:\n  name: finance-skills\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(skillsDir, "analysis.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Skill\nmetadata:\n  name: analysis\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		wsMd := "---\napiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: ws\nspec:\n  plugins:\n    - source: ./plugins/FinanceSkills\n---\n"
+		if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		reg, err := LoadWorkspace(wsDir)
+		if err != nil {
+			t.Fatalf("LoadWorkspace failed: %v", err)
+		}
+		res, ok := reg.ResolveResource("financeskills/Skill/analysis")
+		if !ok {
+			t.Fatal("expected skill to be registered under lowercased inferred namespace financeskills")
+		}
+		if res.GetNamespace() != "financeskills" {
+			t.Errorf("namespace = %q, want %q", res.GetNamespace(), "financeskills")
+		}
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("Validate failed: %v", err)
+		}
+	})
+
+	t.Run("explicit invalid plugin namespace fails LoadWorkspace", func(t *testing.T) {
+		wsDir := t.TempDir()
+		pluginDir := filepath.Join(wsDir, "plugins", "valid-plugin")
+		if err := os.MkdirAll(filepath.Join(pluginDir, ".agents"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pluginDir, "PLUGIN.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Plugin\nmetadata:\n  name: valid-plugin\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		wsMd := "---\napiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: ws\nspec:\n  plugins:\n    - source: ./plugins/valid-plugin\n      namespace: InvalidNS\n---\n"
+		if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := LoadWorkspace(wsDir); err == nil || !strings.Contains(err.Error(), "invalid namespace") {
+			t.Fatalf("expected invalid namespace error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid inferred plugin namespace fails LoadWorkspace and InstallPlugin", func(t *testing.T) {
+		wsDir := t.TempDir()
+		pluginDir := filepath.Join(wsDir, "plugins", "bad_plugin")
+		if err := os.MkdirAll(filepath.Join(pluginDir, ".agents"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pluginDir, "PLUGIN.md"), []byte("---\napiVersion: warp/v1alpha1\nkind: Plugin\nmetadata:\n  name: bad-plugin\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		wsMd := "---\napiVersion: warp/v1alpha1\nkind: Workspace\nmetadata:\n  name: ws\nspec:\n  plugins:\n    - source: ./plugins/bad_plugin\n---\n"
+		if err := os.WriteFile(filepath.Join(wsDir, "WORKSPACE.md"), []byte(wsMd), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := LoadWorkspace(wsDir); err == nil || !strings.Contains(err.Error(), "invalid namespace") {
+			t.Fatalf("expected invalid namespace error from LoadWorkspace, got: %v", err)
+		}
+		if err := InstallPlugin(wsDir, "./plugins/bad_plugin", "latest", nil); err == nil || !strings.Contains(err.Error(), "invalid namespace") {
+			t.Fatalf("expected invalid namespace error from InstallPlugin, got: %v", err)
+		}
+	})
+}

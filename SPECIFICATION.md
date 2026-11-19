@@ -29,6 +29,9 @@ execute Warp resources without modification.
    - [3.9 MCP](#39-mcp)
    - [3.10 Plugin](#310-plugin)
    - [3.11 Rule](#311-rule)
+   - [3.12 SandboxProvider](#312-sandboxprovider)
+   - [3.13 Sandbox](#313-sandbox)
+   - [3.14 FileSystem](#314-filesystem)
 4. [Cross-References](#4-cross-references)
 5. [Discovery and Loading](#5-discovery-and-loading)
    - [5.1 Phase 1: Workspace Discovery](#51-phase-1-workspace-discovery)
@@ -47,6 +50,7 @@ execute Warp resources without modification.
    - [12.3 Tool Policy & Approval Pipeline (allow < ask < deny)](#123-tool-policy--approval-pipeline-allow--ask--deny)
    - [12.4 Tool & MCP Execution Contracts](#124-tool--mcp-execution-contracts)
    - [12.5 Decision Evaluation (System 1 Classifiers & Rule Activation)](#125-decision-evaluation-system-1-classifiers--rule-activation)
+   - [12.6 Sandbox Execution & Enforcement](#126-sandbox-execution--enforcement)
 
 ---
 
@@ -75,7 +79,7 @@ Standard resources follow this structure:
 
 ### YAML Resources
 
-Resources that are pure configuration (e.g. `ModelProvider`, `Tool`, `MCP`)
+Resources that are pure configuration (e.g. `ModelProvider`, `Tool`, `MCP`, `SandboxProvider`, `Sandbox`, `FileSystem`)
 may omit the Markdown body and instruction delimiters. These files must have a
 `.yaml` or `.yml` extension and contain only a valid YAML document.
 
@@ -88,7 +92,7 @@ Every resource kind shares the following top-level YAML fields.
 | Field                  | Type   | Required | Description                                                                                |
 |------------------------|--------|:--------:|--------------------------------------------------------------------------------------------|
 | `apiVersion`           | string | ✅       | Schema version. Currently always `warp/v1alpha1`.                                          |
-| `kind`                 | string | ✅       | Resource type. One of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Plugin`, `Rule`. |
+| `kind`                 | string | ✅       | Resource type. One of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `ModelProvider`, `Tool`, `MCP`, `Plugin`, `Rule`, `SandboxProvider`, `Sandbox`, `FileSystem`. |
 | `metadata.name`        | string | ✅       | Unique identifier for the resource within its kind.                                        |
 | `metadata.description` | string |          | Short human-readable summary.                                                              |
 | `metadata.displayName` | string |          | Pretty-printed label for UIs.                                                              |
@@ -118,8 +122,9 @@ created automatically with its root set to `$CWD`.
 | `defaultModels`   | object   |          | —        | Role-specific default models (`completion`, `decision`, `embedding`) across the workspace.                                    |
 | `modelAliases`    | map      |          | `{}`     | Map of shorthand aliases (e.g. `fast`, `@default`) to target provider-qualified or unqualified model references or aliases.  |
 | `defaultAgent`    | string   |          |          | Default agent to use for this workspace if none is specified.                                                                 |
+| `defaultSandbox`  | string   |          |          | `Sandbox` used by agents, tools, and stdio MCP servers that do not select one. When omitted, the runtime-provided `system/Sandbox/default` applies (see [Section 12.6](#126-sandbox-execution--enforcement)). |
 | `plugins`         | object[] |          | `[]`     | External repositories to load as plugins into this workspace.                                                                 |
-| `policies`        | object   |          | —        | Security and access policies (e.g., tool execution restrictions).                                                             |
+| `policies`        | object   |          | —        | Security and access policies (e.g., tool execution restrictions, sandbox ceiling).                                            |
 
 #### `ModelDefaults` fields
 
@@ -167,6 +172,7 @@ When resolving the prioritized model list for a capability role (`completion`, `
 |---------|--------|---------------------------------------------------------------------------------------------|
 | `tools` | object | Restrictions on which tools agents are allowed to use (`ToolPolicies`).                     |
 | `mcps`  | object | `ResourceFilter` (`include`/`exclude`) restricting which MCP servers and MCP tools agents can use. |
+| `sandbox` | object | Workspace-wide sandbox ceiling (`SandboxPolicies`). See [`SandboxPolicies` fields](#sandboxpolicies-fields). |
 
 #### `ToolPolicies` fields
 
@@ -193,6 +199,23 @@ Workspace tool policies establish an organizational security ceiling. Tool filte
 1. **Workspace Policy Filter (Ceiling)**: The complete list of effective tools is first filtered against `workspace.spec.policies.tools` (if defined). Workspace tool policies act as a filter, not a hard registry validation error. Tools evaluating to `deny` are omitted. Tools evaluating to `allow` or `ask` pass through to the agent level.
 2. **Agent Policy Filter (Narrowing)**: The remaining tools are then filtered against the agent's merged `spec.policies.tools` (if defined). Tools evaluating to `deny` are omitted from `ResolvedAgent.Tools`.
 3. **Effective Tool Action**: For any exposed tool, the effective action (`ra.ToolAction(tool)`) is the stricter of the workspace action and the agent action (`stricter(workspace, agent)` where `allow < ask < deny`). An agent can narrow policy (e.g., asking or denying a tool that the workspace allows), but can never bypass or widen a workspace restriction (e.g., if the workspace sets `dangerous: ask`, an agent specifying `dangerous: allow` still results in `ask`). Tools resolved for skills via `ToolsForSkill` are similarly filtered against the workspace tool policy ceiling.
+
+#### `SandboxPolicies` fields
+
+`workspace.spec.policies.sandbox` is the non-bypassable ceiling for every effective sandbox in the workspace (see [Effective Sandbox Resolution](#effective-sandbox-resolution)). Agents, tools, and sandboxes can narrow it but never widen it.
+
+| Field        | Type           | Default                | Description |
+|--------------|----------------|------------------------|-------------|
+| `required`   | boolean        | `false`                | When `true`, every `Tool` with `spec.command` and every `stdio` `MCP` must resolve to a sandbox. Resolving to `none` is a validation error, and the implicit runtime default becomes strict (fail-closed). |
+| `drivers`    | object         | —                      | `ResourceFilter` (`include`/`exclude`) of glob patterns matched against the driver names of `SandboxProvider` and `FileSystem` resources (e.g. `include: ["container", "virtual", "acme.com/*"]`, or `exclude: ["local"]` to forbid unconfined execution). |
+| `hostPaths`  | string[]       | `["$WorkspaceDir/**"]` | Globs that the rendered host path of every `host` `FileSystem` must fall within. |
+| `hostWrite`  | string         | `allow`                | `allow` or `deny`. With `deny`, `host` filesystems may only be mounted `ro`; writes must go through an `overlay` filesystem. |
+| `rootfs`     | object         | —                      | `SandboxRootFS` ceiling. The effective mode is the strictest of all layers (`none` < `ro` < `rw`). |
+| `access`     | object         | —                      | `SandboxAccess` ceiling, intersected with every sandbox's access rules. |
+| `exec`       | object         | —                      | `SandboxExec` ceiling. |
+| `network`    | object         | —                      | `SandboxNetwork` ceiling. |
+| `env`        | object         | —                      | `SandboxEnv` ceiling. Only `passthrough` is allowed; `set` is a validation error at this level. |
+| `limits`     | object         | —                      | `SandboxLimits` ceiling. The effective limit per field is the minimum across layers. |
 
 #### Full example
 
@@ -282,6 +305,7 @@ runtime.
 | `rules`       | string[] |          | `[]`    | Names, qualified refs, or globs of `Rule` resources that apply to this agent. Explicitly attached rules act as always-on (`triggers.always: true`). Ambient rules with `triggers.always: true` in scope are also included automatically. |
 | `tools`       | string[] |          | `[]`    | Names, qualified refs, or globs of `Tool` resources loaded into the agent's base context. Default is `[]` (none). Use `["*"]` to include all effective tools in scope. |
 | `policies`    | object   |          | —       | Security and access policies (specifically `tools` execution restrictions) for this agent.         |
+| `sandbox`     | string   |          | —       | Reference to the `Sandbox` in which this agent's tools execute, or the reserved value `none` (unsandboxed; rejected when `workspace.spec.policies.sandbox.required` is `true`). When omitted, `workspace.spec.defaultSandbox` (or the runtime default) applies. |
 
 > `instructions` is **not** written in the YAML front-matter. It is populated
 > automatically from the Markdown body below the closing `---`.
@@ -292,7 +316,7 @@ When `spec.extends` is set the engine performs a **recursive merge**:
 
 1. The parent agent is resolved (which may itself extend another agent, forming a chain).
 2. A deep copy of the resolved parent is made as the merge base, with `metadata`, `namespace`, and `directory` updated to reflect the child agent.
-3. Scalar and override fields (`models`, `temperature`, `thinking`, and `triggers`) on the child replace the parent's values when specified (non-empty / non-nil).
+3. Scalar and override fields (`models`, `temperature`, `thinking`, `triggers`, and `sandbox`) on the child replace the parent's values when specified (non-empty / non-nil).
 4. The child's `skills`, `commands`, `subagents`, `rules`, and `tools` lists are **appended** to the parent's lists.
 5. The child's `policies` block is merged with the parent's:
    - Action settings (`dangerous`, `openWorld`) in the child override those of the parent if specified (non-empty).
@@ -853,6 +877,7 @@ A `Tool` resource describes a custom command-line tool or a host-native tool tha
 | `inputSchema`  | map      |          | JSON Schema object defining arguments the LLM must pass.                    |
 | `outputSchema`| map      |          | JSON Schema object defining the tool's output.                              |
 | `annotations` | object   |          | Safety profile for Tool Execution Security.                                 |
+| `sandbox`     | string   |          | Reference to a `Sandbox` for this tool's execution, or `none`. When set, it selects the provider, mounts, and root filesystem for this tool; its rules are still intersected with the calling agent's sandbox and the workspace ceiling (see [Effective Sandbox Resolution](#effective-sandbox-resolution)). |
 
 > `instructions` is **not** written in the YAML front-matter. It is populated
 > automatically from the Markdown body below the closing `---`. This Markdown body
@@ -920,6 +945,7 @@ An `MCP` resource describes a [Model Context Protocol](https://modelcontextproto
 | `annotations` | object   |          | Default safety profile for all exposed tools.   |
 | `policies`    | object   |          | Controls which external MCP resources (`tools`, `prompts`, `resources`) are exposed by this server. |
 | `overrides`   | map      |          | Tool-specific annotation overrides (keyed by tool name). |
+| `sandbox`     | string   |          | Reference to a `Sandbox` in which the server process runs, or `none`. Only valid when `type` is `stdio`. Because MCP servers are shared across agents, agent sandboxes do **not** apply to the server process; only this sandbox (or `workspace.spec.defaultSandbox`) and the workspace ceiling apply. |
 
 #### `MCPPolicies` fields
 
@@ -1163,6 +1189,422 @@ spec:
 
 ---
 
+### Sandboxing Overview
+
+Sections [3.12](#312-sandboxprovider)–[3.14](#314-filesystem) define three cooperating kinds that separate **what is allowed** (portable policy) from **how it is provided** (runtime-specific implementation):
+
+| Kind              | Role | Attached via |
+|-------------------|------|--------------|
+| `SandboxProvider` | **How** isolation is implemented: a driver name plus opaque driver configuration. | `Sandbox.spec.provider` |
+| `Sandbox`         | **What** an execution environment may access: root filesystem, mounts, working directory, path access rules, command execution, network, environment, and limits. | `Agent.spec.sandbox`, `Tool.spec.sandbox`, `MCP.spec.sandbox`, `Workspace.spec.defaultSandbox` |
+| `FileSystem`      | **What data** is available: a physical, virtual, or remote filesystem that a sandbox mounts. | `Sandbox.spec.mounts[].filesystem` |
+
+```
+Agent / Tool / MCP ──sandbox──▶ Sandbox ──provider──▶ SandboxProvider
+                                   │
+                                   └──mounts──▶ FileSystem
+```
+
+Design principles:
+
+1. **Agents attach sandboxes, never filesystems.** A filesystem is meaningful only inside a sandbox, which defines where it is mounted and which rules apply. Additional filesystems are added by creating a sandbox that `extends` another.
+2. **Drivers are names, not resources.** Both `SandboxProvider` and `FileSystem` select a driver by name and pass it an opaque `config` map. Installing, discovering, and validating drivers is the runtime's responsibility (see [Section 12.6](#126-sandbox-execution--enforcement)).
+3. **Zero configuration.** None of these kinds are required. A runtime that supports sandboxing provides built-in resources in the `system` namespace, so a project consisting only of a `ModelProvider` and an `AGENTS.md` runs in the runtime's default sandbox with the current working directory mounted.
+4. **Fail closed when explicit.** When a sandbox is declared explicitly, a runtime that cannot enforce every feature it uses must refuse to run rather than silently degrade.
+5. **Ceilings, not overrides.** `workspace.spec.policies.sandbox` sets a ceiling that every effective sandbox is intersected with; the strictest rule always prevails.
+
+**Driver names.** The unqualified driver names listed in this specification (`local`, `native`, `container`, `microvm`, `virtual`, `host`, `overlay`, `memory`, `git`) are reserved with the semantics defined here; runtimes **may** implement any subset of them. Custom drivers **must** use a domain-qualified name whose first segment contains a dot (e.g. `e2b.dev/sandbox`, `acme.com/s3fs`).
+
+---
+
+### 3.12 SandboxProvider
+
+A `SandboxProvider` describes **how** isolated execution is provided: which driver implements it, where that driver is reached, and with what credentials. It plays the same role for sandboxes that `ModelProvider` plays for LLMs.
+
+#### `spec` fields
+
+| Field      | Type    | Required | Description |
+|------------|---------|:--------:|-------------|
+| `enabled`  | boolean |          | Whether this provider is active (defaults to `true` when omitted). |
+| `driver`   | string  | ✅       | Driver name. Either a reserved driver listed below or a domain-qualified custom driver. |
+| `endpoint` | string  |          | Driver endpoint (e.g. `unix:///var/run/docker.sock`, `https://api.e2b.dev`). Supports WARP templating. |
+| `auth`     | object  |          | `ProviderAuth` configuration. Secret-bearing fields **must** use `${<scheme>:<ref>}` expressions. |
+| `config`   | map     |          | Driver-specific settings. Opaque to WARP; only the driver interprets and validates it. |
+
+#### Reserved sandbox drivers
+
+Reserved driver names describe an **execution model**, not a product. The concrete technology (e.g. Docker vs. Podman, Seatbelt vs. Landlock) is selected by the runtime or through `config`/`endpoint`.
+
+| Driver      | Execution model | Isolation | Notes |
+|-------------|-----------------|-----------|-------|
+| `local`     | Processes run directly on the host. The runtime controls only how they are launched (working directory, environment, timeout, exec allowlist at launch). | None at the OS level. | Retains sandbox semantics (`workdir`, `env`, built-in tool `access` enforcement) without process confinement. Intended for runtimes already inside an outer boundary (e.g. a CI container or VM). Typically reports `exec`, `exec.native`, `env.isolation`, `limits.timeout`. |
+| `native`    | Host processes confined by OS sandbox primitives (e.g. macOS Seatbelt, Linux Landlock/bubblewrap, Windows AppContainer). | Kernel-enforced; shares the host filesystem. | No private root filesystem: its view is the host itself, restricted by rules. Cannot remap mount paths. Typically adds `access.rules`, `network.none`, `rootfs.readonly`. |
+| `container` | OCI containers via any compatible engine (e.g. Docker, Podman, containerd). | Namespaces and cgroups; private root filesystem. | The root filesystem is the container image. Typical `config` keys: `engine`, `image`, `runtime` (e.g. `runc`, `runsc`, `kata`), `user`. |
+| `microvm`   | Lightweight virtual machines (e.g. Firecracker, Cloud Hypervisor). | Hardware virtualization; private kernel and root filesystem. | Typical `config` keys: `image` or `rootfs`, `kernel`, `vcpus`, `memory`. |
+| `virtual`   | In-memory runtime without real OS processes. | By construction: no system calls reach the host. | Commands (e.g. an emulated shell, coreutils, interpreters such as WASM or Pyodide) are implemented by the runtime itself. The root filesystem is an in-memory tree. |
+
+`local` differs from `sandbox: none`: `none` selects no sandbox at all, whereas `local` applies sandbox semantics and, through the [capability check](#capability-check-fail-closed), rejects any feature it cannot enforce (e.g. `network.mode: none` or process-level `access` rules) instead of silently ignoring it.
+
+#### Capability Vocabulary
+
+Every driver reports the capabilities it can enforce to the runtime (see [Driver Registry](#driver-registry)). A runtime may extend a driver's capabilities with its own enforcement layer (for example, an egress proxy that provides `network.allowlist` for any driver). The following capability names are reserved:
+
+| Capability          | Meaning |
+|---------------------|---------|
+| `exec`              | Can execute a `Tool.spec.command`, by any means (native process or emulation). |
+| `exec.native`       | Can execute arbitrary host OS binaries as real processes. |
+| `exec.allowlist`    | Can restrict execution to the commands listed in `exec.allow`, including commands spawned by other commands. |
+| `rootfs.private`    | Provides a root filesystem private to the sandbox. |
+| `rootfs.readonly`   | Can make the root filesystem read-only. |
+| `rootfs.none`       | Can run with no root filesystem (mounts only). |
+| `mounts`            | Can attach `FileSystem`s. |
+| `mounts.remap`      | Can mount a filesystem at a path different from its host source path. |
+| `access.rules`      | Enforces per-path `access` rules. |
+| `network.none`      | Can block all network egress. |
+| `network.allowlist` | Can restrict egress to host patterns. |
+| `env.isolation`     | The sandbox sees only explicitly exposed environment variables. |
+| `limits.cpu`, `limits.memory`, `limits.processes`, `limits.timeout` | Can enforce the corresponding limit. |
+
+Vendor-specific capabilities **must** use the `x-<vendor>/` prefix (e.g. `x-e2b/gpu`).
+
+#### Full example (`providers/container.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: SandboxProvider
+metadata:
+  name: container-gvisor
+  description: Local Docker Engine using the gVisor runtime.
+spec:
+  driver: container
+  endpoint: unix:///var/run/docker.sock
+  config:
+    engine: docker
+    runtime: runsc
+    image: ghcr.io/acme/agent-base:1.4
+    user: "1000:1000"
+```
+
+#### Full example (`providers/e2b.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: SandboxProvider
+metadata:
+  name: cloud
+spec:
+  driver: e2b.dev/sandbox
+  auth:
+    type: api-key
+    header: X-API-Key
+    token: ${env:E2B_API_KEY}
+  config:
+    template: python-3.12
+    region: eu
+```
+
+---
+
+### 3.13 Sandbox
+
+A `Sandbox` describes **what** an execution environment may access. Sandboxes are portable: the same `Sandbox` can run on different providers by changing only `spec.provider`.
+
+A sandbox's view of the filesystem has two layers:
+
+```
+/                ← root filesystem: supplied by the provider, private, ephemeral
+├── bin, usr, tmp, ...
+└── /reports     ← mount: a declared FileSystem, possibly shared and/or persistent
+```
+
+Real, shared, or persistent data is only reachable through mounts; the root filesystem is the sandbox's private scratch space.
+
+#### `spec` fields
+
+| Field      | Type     | Required | Default | Description |
+|------------|----------|:--------:|---------|-------------|
+| `enabled`  | boolean  |          | `true`  | Whether this sandbox is active. |
+| `extends`  | string   |          | —       | Reference to another `Sandbox` to inherit from (see [Sandbox Inheritance](#sandbox-inheritance)). |
+| `provider` | string   |          | inherited, else the runtime's default provider | Reference to a `SandboxProvider`. |
+| `config`   | map      |          | `{}`    | Per-sandbox driver settings, shallow-merged over `provider.spec.config` (e.g. a different `image`). |
+| `rootfs`   | object   |          | driver default | Root filesystem settings (`SandboxRootFS`). |
+| `mounts`   | object[] |          | `[]`    | Filesystems attached to the sandbox (`SandboxMount`). |
+| `workdir`  | string   |          | see below | Absolute path where execution starts; relative paths are resolved against it. |
+| `access`   | object   |          | —       | Per-path read/write rules (`SandboxAccess`). |
+| `exec`     | object   |          | `{mode: any}` | Command execution rules (`SandboxExec`). |
+| `network`  | object   |          | `{mode: none}` | Network egress rules (`SandboxNetwork`). |
+| `env`      | object   |          | —       | Environment exposure (`SandboxEnv`). |
+| `limits`   | object   |          | —       | Resource limits (`SandboxLimits`). |
+
+#### `SandboxRootFS` fields
+
+| Field  | Type   | Default | Description |
+|--------|--------|---------|-------------|
+| `mode` | string | `rw` when the driver supports `rootfs.private`, otherwise `ro` | `rw` (private, writable root; requires `rootfs.private`), `ro` (read-only root; requires `rootfs.readonly`), or `none` (no root filesystem: `/` is an empty, read-only directory containing only mount points; requires `rootfs.none`). |
+
+The root filesystem's **contents** are driver-specific and configured through `config` (e.g. `image` for `container`). Drivers without a private root (e.g. `local`, `native`) expose only the host system paths required for execution, read-only. With `mode: none`, drivers **must not** add implicit paths; a driver that needs them (e.g. host system libraries for native execution) must refuse to run.
+
+To make specific paths writable inside a read-only root filesystem, mount a writable filesystem there (e.g. a `memory` filesystem at `/tmp`). `access` rules cannot widen a layer's mode.
+
+#### `SandboxMount` fields
+
+| Field        | Type   | Required | Default | Description |
+|--------------|--------|:--------:|---------|-------------|
+| `filesystem` | string | ✅       | —       | Reference to a `FileSystem`. |
+| `path`       | string | *        | host source path | Absolute mount target inside the sandbox. Optional for `host`-backed filesystems (including `overlay` over a `host` source), where it defaults to the rendered host path; required otherwise. Drivers without `mounts.remap` require it to equal the host source path. |
+| `mode`       | string |          | `ro`    | `ro` or `rw`. Read-only is the default. A `FileSystem` with `readOnly: true` forces `ro`. |
+
+#### Working Directory (`workdir`)
+
+`workdir` must be an absolute path that falls within a mount, or within the root filesystem when `rootfs.mode` is not `none`. It determines the working directory of `Tool.spec.command` processes, the starting directory of shells, and the base for relative paths in built-in tools and in `access` globs.
+
+When omitted, `workdir` resolves to the first match of:
+
+1. The `workdir` inherited through `extends`.
+2. The mount path of the runtime-provided `system/FileSystem/cwd`, when mounted.
+3. The path of the only mount, when exactly one is declared.
+4. `/`.
+
+#### `SandboxAccess` fields
+
+| Field   | Type     | Description |
+|---------|----------|-------------|
+| `read`  | string[] | Globs that may be read. When set, reads are limited to matching paths (plus paths matching `write`). |
+| `write` | string[] | Globs that may be written. When set, writes are limited to matching paths. A path matching `write` is also readable. |
+| `deny`  | string[] | Globs that may never be read or written. Always take precedence. |
+
+Globs apply to the entire sandbox view (root filesystem and mounts). Absolute globs match sandbox paths; relative globs are resolved against `workdir`, so rules remain valid when mount paths change.
+
+**Evaluation.** For each operation (`read` or `write`) on a path:
+
+1. If the path matches `deny`, the operation is denied.
+2. If the layer's mode (`rootfs.mode` or the mount's `mode`) does not permit the operation, it is denied.
+3. If the list for that operation is set, the operation is allowed only when the path matches it (`write` matches also grant `read`).
+4. Otherwise, the layer's mode decides.
+
+Declaring only `write` therefore restricts writes without restricting reads.
+
+#### `SandboxExec` fields
+
+| Field   | Type     | Default | Description |
+|---------|----------|---------|-------------|
+| `mode`  | string   | `any`   | `none` (no command execution; tools with `spec.command` cannot run), `allowlist` (only commands in `allow`; requires `exec.allowlist`), or `any`. |
+| `allow` | string[] | `[]`    | Command names (matched against the executable's base name) or absolute paths permitted when `mode: allowlist`. Applies to every command executed in the sandbox, including commands spawned by other commands. |
+
+`exec.mode: none` restricts only process or emulated command execution. Built-in tools (a `Tool` without `spec.command`) still operate on the sandbox view subject to `access` rules.
+
+#### `SandboxNetwork` fields
+
+| Field   | Type     | Default | Description |
+|---------|----------|---------|-------------|
+| `mode`  | string   | `none`  | `none` (no egress), `allowlist` (only hosts in `allow`), or `open` (any host not in `deny`). |
+| `allow` | string[] | `[]`    | Host patterns allowed when `mode: allowlist` (e.g. `api.github.com`, `*.pypi.org`, `registry.npmjs.org:443`). |
+| `deny`  | string[] | `[]`    | Host patterns that are always blocked. Take precedence over `allow`. |
+
+Network rules govern traffic originating **inside** the sandbox. Traffic a `FileSystem` driver performs to reach its backend (e.g. an object-storage API) is infrastructure traffic and is not subject to these rules.
+
+#### `SandboxEnv` fields
+
+| Field         | Type     | Description |
+|---------------|----------|-------------|
+| `passthrough` | string[] | Globs of host environment variable names exposed to the sandbox (e.g. `PATH`, `LANG`). |
+| `set`         | map      | Variables injected into the sandbox. Values may be literals or `${<scheme>:<ref>}` expressions. |
+
+When `env` is omitted, no host variables pass through. Drivers may set a minimal, documented baseline (e.g. `PATH`, `HOME`).
+
+#### `SandboxLimits` fields
+
+| Field       | Type    | Description |
+|-------------|---------|-------------|
+| `cpu`       | string  | CPU quota (e.g. `"2"`, `"500m"`). |
+| `memory`    | string  | Memory cap (e.g. `"2Gi"`). |
+| `processes` | integer | Maximum number of concurrent processes. |
+| `timeout`   | string  | Maximum lifetime of the sandbox (e.g. `"30m"`). |
+
+#### Sandbox Inheritance
+
+When `spec.extends` is set, the engine merges the resolved parent chain into the child:
+
+1. `mounts` are merged by `path`; a child mount replaces a parent mount at the same `path`.
+2. `config` is shallow-merged; child keys replace parent keys.
+3. `provider`, `rootfs`, `workdir`, `access`, `exec`, `network`, `env`, and `limits` are replaced as a whole when specified on the child.
+4. Circular inheritance chains (including self-extension) are detected and return an error.
+
+A child may grant more than its parent: a parent sandbox is a template, not a security boundary. The workspace ceiling (`policies.sandbox`) is the boundary and applies to every sandbox regardless of inheritance.
+
+#### Effective Sandbox Resolution
+
+For a tool invocation by an agent, the runtime (or `ra.SandboxForTool(tool)`) resolves the effective sandbox in two steps.
+
+**1. Selection.** The provider, `config`, `rootfs`, `mounts`, and `workdir` are taken, unmerged, from the most specific sandbox selected:
+
+1. `tool.spec.sandbox`
+2. `agent.spec.sandbox` (after `extends` merging)
+3. `workspace.spec.defaultSandbox`
+4. The runtime-provided `system/Sandbox/default`
+
+The reserved value `none` at any step selects no sandbox (rejected when `policies.sandbox.required` is `true`). For `stdio` MCP servers, selection is `mcp.spec.sandbox` → `workspace.spec.defaultSandbox` → `system/Sandbox/default`.
+
+**2. Rule intersection.** The rule sections are intersected across the workspace ceiling, the agent's sandbox, and the tool's sandbox (when different from the agent's). When the agent is invoked as a subagent, the delegating agent's effective rules are also intersected, so delegation can never widen access.
+
+| Section   | Combination |
+|-----------|-------------|
+| `rootfs`  | Strictest mode (`none` < `ro` < `rw`). |
+| `access`  | An operation is allowed only if every layer allows it; `deny` in any layer wins. |
+| `exec`    | Strictest mode (`none` < `allowlist` < `any`); a command must be allowed by every `allowlist` layer. |
+| `network` | Strictest mode (`none` < `allowlist` < `open`); a host must be allowed by every `allowlist` layer and denied by none. |
+| `env`     | `passthrough` is intersected; `set` is merged, with the more specific layer winning. |
+| `limits`  | Minimum per field. |
+
+Every mount is additionally checked against `policies.sandbox.drivers`, `hostPaths`, and `hostWrite`.
+
+**3. Capability check.** Every feature used by the effective sandbox must be supported by the provider's driver (see [Section 12.6](#126-sandbox-execution--enforcement)).
+
+The result is a `ResolvedSandbox` carrying the `Provider`, `Driver`, merged `Config`, `RootFS`, `Mounts` (each with `FileSystem`, `Path`, and `Mode`), `Workdir`, and the effective `Access`, `Exec`, `Network`, `Env`, and `Limits`. It exposes `AllowsPath(path, op)`, `AllowsCommand(name)`, and `AllowsHost(host)` so runtimes can enforce rules for built-in tools that do not spawn processes.
+
+#### Full example (`sandboxes/dev.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: Sandbox
+metadata:
+  name: dev
+  description: Day-to-day coding sandbox; writes go to a copy-on-write layer.
+spec:
+  provider: container-gvisor
+  mounts:
+    - filesystem: src-overlay
+      path: /workspace
+      mode: rw
+  workdir: /workspace
+  access:
+    deny: ["**/.env", "**/*.pem", ".git/config"]
+  network:
+    mode: allowlist
+    allow: ["proxy.golang.org", "sum.golang.org", "api.github.com"]
+  env:
+    passthrough: ["LANG", "TERM"]
+    set:
+      GITHUB_TOKEN: ${env:GITHUB_TOKEN}
+  limits:
+    memory: 4Gi
+    timeout: 45m
+```
+
+#### Full example: extending the runtime default (`sandboxes/ml.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: Sandbox
+metadata:
+  name: ml
+spec:
+  extends: system/Sandbox/default    # keeps the default provider and the cwd mount
+  mounts:
+    - filesystem: datasets
+      path: /data
+```
+
+#### Full example: data-only agent on object storage (`sandboxes/s3-analyst.yaml`)
+
+```yaml
+apiVersion: warp/v1alpha1
+kind: Sandbox
+metadata:
+  name: s3-analyst
+spec:
+  provider: virtual                  # in-memory runtime; no real OS processes
+  rootfs:
+    mode: none                       # the view contains only the mounts below
+  mounts:
+    - { filesystem: reports, path: /reports, mode: rw }
+    - { filesystem: scratch, path: /tmp, mode: rw }
+  workdir: /reports
+  access:
+    write: ["drafts/**", "/tmp/**"]  # relative globs resolve against workdir
+    deny: ["**/payroll/**"]
+  exec:
+    mode: allowlist
+    allow: [bash, ls, cat, grep, jq]
+  network:
+    mode: none
+```
+
+---
+
+### 3.14 FileSystem
+
+A `FileSystem` describes **data** that a sandbox can mount: a physical directory, a virtual filesystem, or a remote store. The filesystem declares *what the data is*; the mounting sandbox declares *where it appears and with what access*.
+
+#### `spec` fields
+
+| Field         | Type    | Required | Default | Description |
+|---------------|---------|:--------:|---------|-------------|
+| `enabled`     | boolean |          | `true`  | Whether this filesystem is active. |
+| `driver`      | string  | ✅       | —       | Driver name. Either a reserved driver listed below or a domain-qualified custom driver. |
+| `config`      | map     |          | `{}`    | Driver-specific settings. Opaque to WARP. Supports WARP templating (e.g. `$ProjectDir`, `$WorkspaceDir`). |
+| `auth`        | object  |          | —       | `ProviderAuth` for remote backends. Credentials are used by the driver and are never exposed inside the sandbox. |
+| `persistence` | string  |          | driver default | `ephemeral` (exists only for the lifetime of one sandbox instance) or `persistent` (outlives the sandbox; the backend determines where data is stored). |
+| `readOnly`    | boolean |          | `false` | Forces every mount of this filesystem to `ro`. |
+
+#### Reserved filesystem drivers
+
+| Driver    | Kind | `config` | Default persistence | Notes |
+|-----------|------|----------|---------------------|-------|
+| `host`    | Physical | `path` (required, templated) | `persistent` | A directory on the host. Constrained by `policies.sandbox.hostPaths` and `hostWrite`. `ephemeral` is invalid. |
+| `overlay` | Copy-on-write | `source` (required, reference to another `FileSystem`) | `ephemeral` | Writes go to an upper layer and never reach the source. How the resulting changes are reviewed, applied, or discarded is runtime-defined. |
+| `memory`  | Virtual | `size` (e.g. `512Mi`) | `ephemeral` | In-memory scratch space. `persistent` is invalid. |
+| `git`     | Virtual | `url` (required), `ref`, `depth` | `ephemeral` | A checkout of a repository at a ref. Uses `spec.auth` for private repositories. |
+
+#### Filesystem Driver Capabilities
+
+Filesystem drivers report the operations they support so that tools fail clearly instead of corrupting data (e.g. object stores typically lack atomic rename). Reserved capability names: `write`, `rename`, `append`. Mounting a filesystem `rw` whose driver lacks `write` is a validation error.
+
+#### Full examples (`filesystems/*.yaml`)
+
+```yaml
+# Physical: the live project directory
+apiVersion: warp/v1alpha1
+kind: FileSystem
+metadata: { name: src }
+spec:
+  driver: host
+  config: { path: $ProjectDir }
+---
+# Copy-on-write layer over the physical directory
+apiVersion: warp/v1alpha1
+kind: FileSystem
+metadata: { name: src-overlay }
+spec:
+  driver: overlay
+  config: { source: src }
+---
+# Virtual scratch space
+apiVersion: warp/v1alpha1
+kind: FileSystem
+metadata: { name: scratch }
+spec:
+  driver: memory
+  config: { size: 1Gi }
+---
+# Custom driver: remote object storage
+apiVersion: warp/v1alpha1
+kind: FileSystem
+metadata: { name: reports }
+spec:
+  driver: acme.com/s3fs
+  persistence: persistent
+  auth:
+    type: bearer
+    token: ${env:AWS_SESSION_TOKEN}
+  config:
+    bucket: acme-reports
+    prefix: finance/
+    region: us-east-1
+```
+
+---
+
 ## 4. Cross-References
 
 Resources within a WARP workspace do not exist in isolation; they reference each other to establish relationships, delegate execution, compose skills, configure policies, and trigger dynamic rules.
@@ -1186,12 +1628,20 @@ The following table summarizes all cross-referencing fields supported across WAR
 | `Skill` | `spec.tools` | `Tool` | Tools or glob patterns associated with and unlocked when this skill is active. |
 | `Rule` | `spec.triggers.decision` | `Decision` | Decision evaluated to determine whether this rule triggers dynamically. |
 | `Rule` | `spec.triggers.tools` | `Tool` | Tools or glob patterns whose invocation triggers this rule's injection. |
+| `Workspace` | `spec.defaultSandbox` | `Sandbox` | Sandbox used when an agent, tool, or stdio MCP server selects none. |
+| `Agent` | `spec.sandbox` | `Sandbox` | Sandbox in which the agent's tools execute. |
+| `Tool` | `spec.sandbox` | `Sandbox` | Sandbox selected for this tool's execution. |
+| `MCP` | `spec.sandbox` | `Sandbox` | Sandbox in which a stdio MCP server process runs. |
+| `Sandbox` | `spec.extends` | `Sandbox` | Base sandbox from which mounts and settings are inherited. |
+| `Sandbox` | `spec.provider` | `SandboxProvider` | Provider implementing the sandbox. |
+| `Sandbox` | `spec.mounts[].filesystem` | `FileSystem` | Filesystem attached to the sandbox. |
+| `FileSystem` | `spec.config.source` (`overlay` driver) | `FileSystem` | Source filesystem underneath a copy-on-write overlay. |
 
 ### 4.2 Reference Forms
 
 A resource reference can take one of four canonical forms:
 
-1. **Qualified Name (`namespace/kind/name`)**:
+1. **Qualified Name (`namespace/Kind/name`)**:
    Unambiguously directs the loader or resolver to exactly one resource in the registry across all namespaces and kinds (e.g. `system/Skill/python`, `workspace/Tool/bash`, `plugin-git/Tool/git-status`).
 2. **Namespace-Prefixed Name (`namespace/name`)**:
    Scopes the reference to a specific namespace when the target `Kind` is inferred from the referencing context (e.g. `system/finance` in `spec.skills` targets `system/Skill/finance`; `plugin-git/git-status` in `spec.tools` targets `plugin-git/Tool/git-status`).
@@ -1201,9 +1651,35 @@ A resource reference can take one of four canonical forms:
 4. **Glob Patterns (`*`, `?`)**:
    Wildcard patterns supporting standard shell glob characters (e.g. `*`, `test-*`, `postgres__*`, `plugin-git/*`, `system/*`). Conforming resolvers match glob patterns against a candidate resource's short name, namespace-prefixed name, and qualified name using forward-slash `path.Match` semantics across all loaded resources of the expected kind.
 
+#### Separator Semantics
+
+Each separator character carries exactly one meaning across all WARP references and expressions:
+
+| Separator | Meaning | Examples |
+|-----------|---------|----------|
+| `/`       | Hierarchy: namespace, kind, and name segments of a resource reference. | `system/Sandbox/default`, `plugin-git/git-status` |
+| `:`       | Scheme: separates a scheme from its reference inside a value expression. | `${env:OPENAI_API_KEY}`, `${vault:openai/apiKey}` |
+| `@`       | Alias or version. | `@fast`, `anthropic/@default`, `github.com/acme/finance-skills@v1.2.0` |
+| `__`      | MCP tool: separates an MCP server name from a materialized tool name. | `github__search_repositories` |
+
+Resource references **must not** use `:` as a segment separator. A `${...}` expression containing `:` is a value expression (see [`ProviderAuth` fields](#providerauth-fields)); a `${...}` without `:` is template shorthand (see [Section 11](#11-templating)). Value expressions are resolved by the runtime and are never rendered into instruction text.
+
+#### Segment Casing
+
+The number of segments determines the reference form, and casing makes each segment's role unambiguous:
+
+- The **`Kind` segment** of a Qualified Name is case-sensitive and **must** exactly match a kind name in PascalCase (e.g. `Skill`, `Tool`, `SandboxProvider`). A three-segment reference whose middle segment is not a known kind is a validation error.
+- **Namespaces** **must** be lowercase and match `^[a-z0-9][a-z0-9-]*$`. Namespaces inferred from a plugin `source` (see [Section 9.3](#93-resolution-and-the-default-namespace-rule)) are lowercased.
+
+As a result, `a/B/c` is always a Qualified Name and `a/b` is always a Namespace-Prefixed Name.
+
+#### Model References
+
+Model references (`spec.models`, `defaultModels`, `modelAliases` targets, and `ResolveModel` arguments) form a **separate reference space**. They are resolved against `ModelProvider` catalogs as described in [Model Resolution Precedence](#model-resolution-precedence-resolvemodels--resolvemodel), not by the resource reference forms above. In particular, `<provider>/<model>` is not a Namespace-Prefixed Name, and model IDs may themselves contain `/` (e.g. `ddalcu/Qwen3.8-27B-MLX-Serve-4bit`).
+
 ### 4.3 Reference Resolution & Offline Validation
 
-A conforming loader **must** verify that every static referenced resource resolves to a loaded resource of the correct kind, applying the [resolution hierarchy](#54-resource-resolution-hierarchy). A non-glob reference that cannot be satisfied is a validation error.
+A conforming loader **must** verify that every static referenced resource resolves to a loaded resource of the correct kind, applying the [resolution hierarchy](#54-resource-resolution-hierarchy). A non-glob reference that cannot be satisfied is a validation error. A reference that violates the [separator](#separator-semantics) or [casing](#segment-casing) rules is a validation error.
 
 - **Offline MCP Tool Validation**: In offline validation scenarios (where external MCP processes have not yet connected or dynamically materialized tools into the registry via `SetMCPTools`), any tool reference in `<mcp_name>__<tool_name>` form is validated against loaded `kind: MCP` resources. The reference is valid if `<mcp_name>` matches a loaded `MCP` server in the resolution hierarchy and `<tool_name>` is not excluded by that MCP's policy filters.
 - **Glob Tolerances**: Glob patterns that resolve to zero resources do not cause load-time validation failures unless explicitly required by runtime policy.
@@ -1338,8 +1814,15 @@ WORKSPACE.md              # Root Authority — defines projects
 │   │   └── coding.md
 │   ├── rules/
 │   │   └── style.md
-│   └── commands/
-│       └── review.md
+│   ├── commands/
+│   │   └── review.md
+│   ├── providers/
+│   │   ├── anthropic.yaml   # kind: ModelProvider
+│   │   └── container.yaml   # kind: SandboxProvider
+│   ├── sandboxes/
+│   │   └── dev.yaml
+│   └── filesystems/
+│       └── src-overlay.yaml
 services/
 ├── api/
 │   ├── AGENTS.md          # Context — identity for the api project
@@ -1379,7 +1862,7 @@ loaded Workspace, collecting all structural and cross-reference failures in dete
 | `apiVersion` is present      | Field is empty or absent.                                          |
 | `kind` is present            | Field is empty or absent.                                          |
 | `metadata.name` is present   | Field is empty or absent.                                          |
-| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `Rule`, `ModelProvider`, `Tool`, `MCP`, `Plugin`. |
+| `kind` is a known value      | Value is not one of `Workspace`, `Context`, `Agent`, `Skill`, `Command`, `Decision`, `Rule`, `ModelProvider`, `Tool`, `MCP`, `Plugin`, `SandboxProvider`, `Sandbox`, `FileSystem`. |
 
 ### 7.2 Agent-specific
 
@@ -1393,6 +1876,7 @@ loaded Workspace, collecting all structural and cross-reference failures in dete
 | Declared `spec.models` resolve and support completion | When providers exist, a listed concrete model or alias reference (excluding `@inherit` and valid glob/negation patterns) does not resolve to any declared model or resolves to a `ProviderModel` whose `capabilities.completion` is explicitly `false`; or a provider-prefixed `@inherit` or malformed glob/negation pattern is declared. |
 | Valid `spec.thinking` strategy | `spec.thinking.type` is not one of `toggle`, `effort`, `budget`, or `adaptive`, or `budgetTokens < 0`. |
 | Thinking capability match | When `spec.thinking` is declared, every resolved model in `spec.models` that defines thinking capabilities must support `spec.thinking.type`, allowed effort levels (`spec.thinking.effort`), and maximum budget tokens (`spec.thinking.budgetTokens <= maxBudgetTokens`). |
+| Valid `spec.sandbox` reference | `spec.sandbox` is neither `none` nor a reference matching a loaded `Sandbox` in the resolution hierarchy; or it is `none` while `workspace.spec.policies.sandbox.required` is `true`. |
 
 ### 7.3 Skill-specific
 
@@ -1418,6 +1902,9 @@ loaded Workspace, collecting all structural and cross-reference failures in dete
 | All `spec.projects` paths exist     | A listed path (when not `"*"`) does not exist on the filesystem. |
 | Valid `spec.modelAliases`           | An alias entry has an empty key, an empty target model reference, or uses the reserved `inherit` / `@inherit` alias. |
 | `spec.defaultModels` capabilities match role | When providers exist, a model in `defaultModels` uses reserved `@inherit`, does not resolve, or resolves to a `ProviderModel` lacking the required role capability (`completion`, `decision`, or `embedding`). |
+| Valid `spec.defaultSandbox` reference | `spec.defaultSandbox` does not match a loaded `Sandbox` in the resolution hierarchy. |
+| Valid `policies.sandbox` values | `hostWrite` is not `allow` or `deny`; a mode in `rootfs`, `exec`, or `network` is not a valid value; or `env.set` is declared. |
+| Sandbox requirement satisfied | `policies.sandbox.required` is `true` and a `Tool` with `spec.command` or a `stdio` `MCP` resolves to no sandbox. |
 
 ### 7.6 Plugin-specific
 
@@ -1461,6 +1948,50 @@ loaded Workspace, collecting all structural and cross-reference failures in dete
 | Required stdio command              | `spec.type` is `stdio` (or defaulted) and `spec.command` is empty or omitted. |
 | Required remote endpoint            | `spec.type` is `sse`, `http`, or `streamable-http` and `spec.endpoint` is empty or omitted. |
 | Valid `spec.auth` configuration     | `spec.auth` has an empty `type`, plaintext secrets instead of `${<scheme>:<ref>}` expressions, `enterprise` without `oauth.idpIssuer`, `audienceIssuer`/`idpClientId`/`idpClientSecret` without `idpIssuer`, or secrets without corresponding client IDs. |
+| Valid `spec.sandbox`                | `spec.sandbox` is set while `spec.type` is not `stdio`; or it is neither `none` nor a reference matching a loaded `Sandbox`; or it is `none` while `workspace.spec.policies.sandbox.required` is `true`. |
+
+### 7.11 Tool-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Valid `spec.sandbox` reference      | `spec.sandbox` is neither `none` nor a reference matching a loaded `Sandbox`; or it is `none` while `workspace.spec.policies.sandbox.required` is `true`. |
+| Executable in sandbox               | The tool declares `spec.command` and its effective sandbox has `exec.mode: none`, uses a driver lacking the `exec` capability, or has `exec.mode: allowlist` without `spec.command[0]` in `allow`; or the driver reports its available commands and `spec.command[0]` is not among them. |
+
+### 7.12 SandboxProvider-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| `spec.driver` present               | Field is empty or absent. |
+| Valid driver name                   | An unqualified name that is not a reserved sandbox driver (`local`, `native`, `container`, `microvm`, `virtual`), or a qualified name whose first segment is not domain-qualified. |
+| Driver allowed                      | The driver is excluded by `workspace.spec.policies.sandbox.drivers`. |
+| Driver known (strict)               | Strict driver validation is enabled and the driver is not registered. |
+| Valid `spec.config`                 | The registered driver rejects `spec.config`. |
+| Valid `spec.auth` configuration     | `spec.auth` violates expression syntax (`${<scheme>:<ref>}` on secret fields) or scheme constraints. |
+
+### 7.13 Sandbox-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| Valid `spec.extends` reference      | The reference does not match a loaded `Sandbox`, or the inheritance chain is circular. |
+| Provider resolves                   | The effective provider does not match a loaded `SandboxProvider` (including runtime-provided providers). |
+| Mount filesystems resolve           | A `mounts[].filesystem` does not match a loaded `FileSystem`. |
+| Valid mount paths                   | A mount `path` is not absolute; is required but missing; differs from the host source path when the driver lacks `mounts.remap`; or two mounts share the same `path`. |
+| Valid mount modes                   | `mode` is not `ro` or `rw`; is `rw` on a `readOnly` filesystem, on a filesystem whose driver lacks `write`, or on a `host` filesystem while `hostWrite` is `deny`. |
+| Valid `workdir`                     | `workdir` is not absolute, or falls outside every mount while `rootfs.mode` is `none`. |
+| Valid modes                         | `rootfs.mode` is not `rw`, `ro`, or `none`; `exec.mode` is not `none`, `allowlist`, or `any`; or `network.mode` is not `none`, `allowlist`, or `open`. |
+| Consistent lists                    | `exec.allow` is set while `exec.mode` is not `allowlist`, or `network.allow` is set while `network.mode` is not `allowlist`. |
+| Capabilities supported              | The provider's driver is registered and does not report a capability required by a feature in use (e.g. `rootfs.mode: none` without `rootfs.none`, `network.mode: allowlist` without `network.allowlist`). |
+| Valid `env.set` values              | A value violates `${<scheme>:<ref>}` expression syntax or scheme constraints. |
+
+### 7.14 FileSystem-specific
+
+| Rule                                | Error condition                                                |
+|-------------------------------------|----------------------------------------------------------------|
+| `spec.driver` present / valid / allowed / known | Same conditions as for `SandboxProvider`, using the reserved filesystem drivers (`host`, `overlay`, `memory`, `git`). |
+| Valid `spec.persistence`            | Not `ephemeral` or `persistent`, or not supported by the driver (`host` cannot be `ephemeral`; `memory` cannot be `persistent`). |
+| Host path ceiling                   | The rendered `config.path` of a `host` filesystem falls outside `workspace.spec.policies.sandbox.hostPaths`. |
+| Valid overlay source                | An `overlay` filesystem's `config.source` does not match a loaded `FileSystem`, or overlay sources form a cycle. |
+| Valid `spec.config`                 | The registered driver rejects `spec.config`. |
 
 ---
 
@@ -1496,7 +2027,7 @@ function parse(filePath, fileContent):
         return error "missing front-matter delimiters"
 
   6. Decode segments[1] as YAML.
-  7. IF kind is not in {Workspace, Context, Agent, Skill, Command, Decision, Rule, ModelProvider, Tool, MCP, Plugin}:
+  7. IF kind is not in {Workspace, Context, Agent, Skill, Command, Decision, Rule, ModelProvider, Tool, MCP, Plugin, SandboxProvider, Sandbox, FileSystem}:
      return error "unsupported kind"
 
   8. Populate resource from YAML and segments[2] (instructions).
@@ -1565,10 +2096,11 @@ spec:
 When a workspace declares a plugin, all exported resources from that plugin are registered in the loader's registry under a specific namespace.
 
 **The Default Namespace Rule:**
-If the consumer does not explicitly provide a `namespace` in the `WORKSPACE.md` definition, the loader **must** infer the namespace using the last segment of the `source` URI.
+If the consumer does not explicitly provide a `namespace` in the `WORKSPACE.md` definition, the loader **must** infer the namespace using the last segment of the `source` URI, lowercased. Explicit and inferred namespaces must satisfy the [namespace casing rule](#segment-casing) (`^[a-z0-9][a-z0-9-]*$`).
 
 *Example:*
 - `source: github.com/acme/finance-skills` → inferred namespace: `finance-skills`
+- `source: github.com/acme/FinanceSkills` → inferred namespace: `financeskills`
 - Resources inside the plugin will be accessible via `finance-skills/Skill/analysis`.
 
 This ensures that plugin creators do not dictate namespaces (preventing collisions), while providing a zero-configuration fallback for consumers.
@@ -1617,7 +2149,7 @@ hierarchy. Plugins and adapters **must not** register resources under these name
 | `local`     | 100      | Project-local `.agents/` directory.                  |
 | `workspace` | 80       | Workspace-global `.agents/` directory.               |
 | `user`      | 60       | User configuration directory (e.g. `~/.config/warp/`).|
-| `system`    | 40       | Embedded builtin resources shipped with the runtime.  |
+| `system`    | 40       | Embedded builtin resources shipped with the runtime, including runtime-provided sandboxes and filesystems ([Section 12.6](#126-sandbox-execution--enforcement)). |
 
 Any namespace not listed above receives priority **0**. Resources in higher-priority namespaces
 shadow same-named resources in lower-priority namespaces when queries use `Effective = true`.
@@ -1796,7 +2328,7 @@ CLI tools execute external executables using a structured, non-shell execution c
 
 #### Built-in & Host-Native Tools (`spec.command` omitted or empty)
 
-A `Tool` resource may omit `spec.command` to define built-in runtime tools (such as sandboxed file editing, web search, or human interaction). Built-in tools are dispatched internally by the host runtime while continuing to participate in WARP naming conventions, parameter validation (`inputSchema`), dynamic skill unlocking, and policy enforcement.
+A `Tool` resource may omit `spec.command` to define built-in runtime tools (such as sandboxed file editing, web search, or human interaction). Built-in tools are dispatched internally by the host runtime while continuing to participate in WARP naming conventions, parameter validation (`inputSchema`), dynamic skill unlocking, and policy enforcement. Built-in tools that access files or the network **must** enforce the effective sandbox's `access` and `network` rules (see [Section 12.6](#126-sandbox-execution--enforcement)).
 
 #### Model Context Protocol (`kind: MCP`)
 
@@ -1826,5 +2358,92 @@ Decisions provide fast, structured semantic classifications ("System 1" evaluati
 4. **Rule Activation & Routing**:
    - Rules can trigger based on semantic intent by specifying `triggers.decision: <decision_ref>`.
    - Runtimes can evaluate decisions ahead of time (e.g. during prompt intake) or dynamically within an agent loop to activate relevant rules, skills, or subagents based on the structured decision outcome.
+
+### 12.6 Sandbox Execution & Enforcement
+
+WARP **declares** sandboxes; it never creates or runs them. This section defines what a conforming runtime must do to honor `SandboxProvider`, `Sandbox`, and `FileSystem` declarations.
+
+#### Runtime-Provided Resources
+
+A runtime that supports sandboxing registers built-in resources in the `system` namespace before loading user resources. These are ordinary resources: they use the same schema, can be referenced and extended, and participate in validation and policy checks.
+
+A conforming runtime that supports sandboxing **must** provide:
+
+| Resource                  | Requirement |
+|---------------------------|-------------|
+| `system/FileSystem/cwd`   | A `host` filesystem whose path is the runtime's working directory (for hosted runtimes, the working directory of the session). |
+| `system/Sandbox/default`  | The runtime's default sandbox. It **must** mount `system/FileSystem/cwd`. |
+
+A runtime **may** provide additional providers, sandboxes, and filesystems (e.g. `system/SandboxProvider/native`, `system/SandboxProvider/virtual`, `system/Sandbox/readonly`). The provider used by `system/Sandbox/default` is the runtime's default provider, which applies to any `Sandbox` that resolves no `provider`.
+
+Selection step 4 always uses the qualified name `system/Sandbox/default`; to change the default for a workspace, set `workspace.spec.defaultSandbox`.
+
+**Safety floor.** `system/Sandbox/default`:
+
+- **should** use a provider whose driver provides OS-level or stronger isolation (`native`, `container`, `microvm`, or `virtual`) when one is available; a runtime that falls back to `local` **must** surface a clear warning;
+- **must not** mount host paths outside the workspace root, other than read-only system paths required for execution;
+- **must not** pass host environment variables beyond a minimal, documented baseline (e.g. `PATH`, `HOME`, `LANG`, `TERM`);
+- **should** use `network.mode: none` (runtimes that offer interactive egress approval may prompt instead);
+- **should** deny common secret files (e.g. `**/.env*`, `**/*.pem`, `**/*.key`).
+
+#### Explicit vs. Implicit Enforcement
+
+- **Explicit** sandboxes, selected through `tool.spec.sandbox`, `agent.spec.sandbox`, `mcp.spec.sandbox`, or `workspace.spec.defaultSandbox`, are **guarantees**. The runtime **must** enforce every feature they use or refuse to execute (fail-closed).
+- The **implicit** default (`system/Sandbox/default` reached only through selection step 4) is **best-effort**. A runtime that cannot enforce it, or that has no sandbox support, **may** execute unsandboxed but **must** surface a clear warning.
+- When `workspace.spec.policies.sandbox.required` is `true`, the implicit default is treated as explicit.
+
+#### Capability Check (Fail-Closed)
+
+Before starting a sandbox, the runtime verifies that the provider's driver, together with any runtime-level enforcement layers, supports every capability required by the effective sandbox:
+
+| Feature in use | Required capability |
+|----------------|---------------------|
+| Any `Tool.spec.command` or `stdio` MCP | `exec` |
+| `exec.mode: allowlist` | `exec.allowlist` |
+| `rootfs.mode: rw` | `rootfs.private` |
+| `rootfs.mode: ro` | `rootfs.readonly` |
+| `rootfs.mode: none` | `rootfs.none` |
+| Any mount | `mounts` |
+| A mount `path` different from its host source path | `mounts.remap` |
+| `access` rules | `access.rules` |
+| `network.mode: none` | `network.none` |
+| `network.mode: allowlist` | `network.allowlist` |
+| `env` declared | `env.isolation` |
+| A field in `limits` | The corresponding `limits.*` capability |
+
+If any capability is missing, the runtime **must not** start the sandbox.
+
+#### Built-in Tool Enforcement
+
+Built-in tools (a `Tool` without `spec.command`) execute inside the runtime rather than inside the sandbox. They **must** nonetheless operate on the sandbox view: resolve relative paths against `workdir`, map paths through mounts, and enforce the effective `access` and `network` rules (e.g. via `ResolvedSandbox.AllowsPath` and `AllowsHost`).
+
+#### Credentials
+
+Credentials declared in `SandboxProvider.spec.auth` and `FileSystem.spec.auth` are resolved by the runtime and used only by the corresponding driver. They **must not** be exposed inside the sandbox (environment, filesystem, or tool output) unless explicitly injected through `env.set`.
+
+#### Driver Registry
+
+Drivers are implemented by runtimes, not declared as resources. Runtimes make driver metadata available to validation so that configuration and capabilities can be checked before execution:
+
+```go
+type DriverInfo struct {
+    Capabilities   []string                         // e.g. "exec", "mounts.remap", "write"
+    Commands       []string                         // optional: commands offered (e.g. by a virtual runtime)
+    ValidateConfig func(config map[string]any) error // optional: validates spec.config
+}
+
+opts := warp.ValidateOptions{
+    SandboxDrivers:    map[string]warp.DriverInfo{"virtual": virtualInfo, "e2b.dev/sandbox": e2bInfo},
+    FileSystemDrivers: map[string]warp.DriverInfo{"host": hostInfo, "acme.com/s3fs": s3Info},
+    StrictDrivers:     true, // unknown drivers are validation errors instead of warnings
+}
+```
+
+- Without `StrictDrivers`, offline validation accepts unknown domain-qualified drivers with a warning and skips their capability, command, and configuration checks.
+- At execution time, an unknown driver is always an error.
+
+#### Runtime-Defined Behavior
+
+The following concerns are intentionally left to runtimes: sandbox instance lifecycle and reuse, how changes in an `overlay` filesystem are reviewed, applied, or discarded, how denials are reported to users and models, and how `ask` approvals are presented in interactive or headless environments.
 
 

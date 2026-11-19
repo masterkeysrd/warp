@@ -6019,3 +6019,364 @@ func TestSpecEnabled_And_PoliciesMCPs(t *testing.T) {
 		}
 	})
 }
+
+func TestIsValidNamespaceAndInferPluginNamespace(t *testing.T) {
+	validNS := []string{"local", "workspace", "user", "system", "finance-skills", "plugin1", "a", "001"}
+	for _, ns := range validNS {
+		if !IsValidNamespace(ns) {
+			t.Errorf("IsValidNamespace(%q) = false, want true", ns)
+		}
+		if err := ValidateNamespace(ns); err != nil {
+			t.Errorf("ValidateNamespace(%q) unexpected error: %v", ns, err)
+		}
+	}
+
+	invalidNS := []string{"", "FinanceSkills", "My-Plugin", "-leading", "my_plugin", "my.plugin", "ns:sub", "ns/sub", "UPPER"}
+	for _, ns := range invalidNS {
+		if IsValidNamespace(ns) {
+			t.Errorf("IsValidNamespace(%q) = true, want false", ns)
+		}
+		if err := ValidateNamespace(ns); err == nil {
+			t.Errorf("ValidateNamespace(%q) = nil, want error", ns)
+		}
+	}
+
+	inferTests := []struct {
+		source string
+		want   string
+	}{
+		{"github.com/acme/finance-skills", "finance-skills"},
+		{"github.com/acme/FinanceSkills", "financeskills"},
+		{"github.com/acme/FinanceSkills/", "financeskills"},
+		{"./plugins/MyPlugin", "myplugin"},
+		{"MyPlugin", "myplugin"},
+	}
+	for _, tc := range inferTests {
+		if got := inferPluginNamespace(tc.source); got != tc.want {
+			t.Errorf("inferPluginNamespace(%q) = %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}
+
+func TestValidate_ResourceRefSeparatorAndCasing(t *testing.T) {
+	baseRegistry := func() *Registry {
+		reg := NewRegistry(nil)
+		reg.set("system/Skill/foo", makeSkillResource(NamespaceSystem, "foo"))
+		reg.set("system/Command/cmd", makeCommandResource(NamespaceSystem, "cmd"))
+		reg.set("system/Rule/rule", &Rule{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindRule, Namespace: NamespaceSystem, Metadata: Metadata{Name: "rule"}},
+		})
+		reg.set("system/Decision/dec", &Decision{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindDecision, Namespace: NamespaceSystem, Metadata: Metadata{Name: "dec"}},
+			Spec:         DecisionSpec{Questions: []DecisionQuestion{{Name: "ok", Type: DecisionQuestionPredicate}}},
+		})
+		reg.set("system/Tool/tool", makeToolResource(NamespaceSystem, "tool"))
+		reg.set("system/Agent/base", agentWithSpec(NamespaceSystem, "base", AgentSpec{}))
+		reg.set("system/ModelProvider/ollama", &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceSystem, Metadata: Metadata{Name: "ollama"}},
+			Spec: ModelProviderSpec{
+				Type:     "ollama",
+				Endpoint: "http://localhost:11434",
+				Models: []ProviderModel{
+					{ID: "llama3:8b", Name: "llama3:8b", Aliases: []string{"fast"}},
+				},
+			},
+		})
+		reg.set("system/ModelProvider/mlx", &ModelProvider{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindModelProvider, Namespace: NamespaceSystem, Metadata: Metadata{Name: "mlx"}},
+			Spec: ModelProviderSpec{
+				Type:     "openai-compatible",
+				Endpoint: "http://localhost:8080/v1",
+				Models: []ProviderModel{
+					{ID: "ddalcu/Qwen3.8-27B", Name: "ddalcu/Qwen3.8-27B"},
+				},
+			},
+		})
+		return reg
+	}
+
+	t.Run("valid qualified, namespace-prefixed, globs, file paths, and model refs with colons pass", func(t *testing.T) {
+		reg := baseRegistry()
+		ws := &Workspace{
+			Def: &WorkspaceDef{
+				BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+				Spec: WorkspaceDefSpec{
+					DefaultAgent:  "system/Agent/base",
+					DefaultModels: &ModelDefaults{Completion: "ollama/llama3:8b"},
+					ModelAliases:  map[string]string{"local-qwen": "mlx/ddalcu/Qwen3.8-27B", "llama": "ollama/llama3:8b"},
+					Plugins: []WorkspacePlugin{
+						{Source: "github.com/acme/FinanceSkills"},
+						{Source: "github.com/acme/Other", Namespace: "other-ns"},
+					},
+				},
+			},
+		}
+		reg.workspace = ws
+		reg.set("workspace/Skill/skills-go", makeSkillResource(NamespaceWorkspace, "skills-go"))
+		reg.set("workspace/Agent/worker", agentWithSpec(NamespaceWorkspace, "worker", AgentSpec{
+			Extends:   "system/Agent/base",
+			Models:    []string{"ollama/llama3:8b", "mlx/ddalcu/Qwen3.8-27B"},
+			Skills:    []string{"system/Skill/foo", "system/foo", "system/Skill/*", "system/*", "plugin-*/*", "skills/go.md"},
+			Commands:  []string{"system/Command/cmd", "system/cmd", "system/*"},
+			Subagents: []string{"system/Agent/base", "system/base", "system/*"},
+			Rules:     []string{"system/Rule/rule", "system/rule", "system/*"},
+			Tools:     []string{"system/Tool/tool", "system/tool", "system/Tool/*"},
+		}))
+		reg.set("workspace/Skill/sk", &Skill{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindSkill, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "sk"}},
+			Spec:         SkillSpec{Tools: []string{"system/Tool/tool", "system/*"}},
+		})
+		reg.set("workspace/Command/c", &Command{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "c"}},
+			Spec: CommandSpec{
+				Agent:  "system/Agent/base",
+				Models: []string{"ollama/llama3:8b"},
+				Skills: []string{"system/Skill/foo", "system/*"},
+				Rules:  []string{"system/Rule/rule", "system/*"},
+				Tools:  []string{"system/Tool/tool", "system/*"},
+			},
+		})
+		reg.set("workspace/Rule/r", &Rule{
+			BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindRule, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "r"}},
+			Spec: RuleSpec{
+				Triggers: RuleTriggers{
+					Decision: "system/Decision/dec",
+					Tools:    []string{"system/Tool/tool", "system/*"},
+				},
+			},
+		})
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("expected valid references (including model refs with ':') to pass, got: %v", err)
+		}
+	})
+
+	invalidCases := []struct {
+		name  string
+		setup func(reg *Registry)
+		want  string
+	}{
+		{
+			name: "colon in agent.spec.extends",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Extends: "system:Agent/base"}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in agent.spec.skills static ref",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"system:Skill/foo"}}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in agent.spec.skills glob",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"system:Skill/*"}}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in agent.spec.commands",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Commands: []string{"system:cmd"}}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in agent.spec.subagents",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Subagents: []string{"system:Agent/base"}}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in agent.spec.rules",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Rules: []string{"system:rule"}}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in agent.spec.tools glob",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Tools: []string{"system:*"}}))
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in skill.spec.tools",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Skill/bad", &Skill{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindSkill, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         SkillSpec{Tools: []string{"system:tool"}},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in command.spec.agent",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Command/bad", &Command{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         CommandSpec{Agent: "system:base"},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in command.spec.skills",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Command/bad", &Command{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         CommandSpec{Skills: []string{"system:foo"}},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in command.spec.rules",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Command/bad", &Command{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         CommandSpec{Rules: []string{"system:rule"}},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in command.spec.tools",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Command/bad", &Command{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindCommand, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         CommandSpec{Tools: []string{"system:tool"}},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in rule.spec.triggers.decision",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Rule/bad", &Rule{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindRule, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         RuleSpec{Triggers: RuleTriggers{Decision: "system:dec"}},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in rule.spec.triggers.tools",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Rule/bad", &Rule{
+					BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindRule, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "bad"}},
+					Spec:         RuleSpec{Triggers: RuleTriggers{Tools: []string{"system:tool"}}},
+				})
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "colon in workspace.spec.defaultAgent",
+			setup: func(reg *Registry) {
+				reg.workspace = &Workspace{
+					Def: &WorkspaceDef{
+						BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+						Spec:         WorkspaceDefSpec{DefaultAgent: "system:base"},
+					},
+				}
+			},
+			want: "':' is not allowed",
+		},
+		{
+			name: "lowercase kind in 3-segment qualified name",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"system/skill/foo"}}))
+			},
+			want: `unknown kind "skill"`,
+		},
+		{
+			name: "unknown kind in 3-segment qualified name",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"system/Unknown/foo"}}))
+			},
+			want: `unknown kind "Unknown"`,
+		},
+		{
+			name: "lowercase kind in 3-segment glob",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"system/skill/*"}}))
+			},
+			want: `unknown kind "skill"`,
+		},
+		{
+			name: "uppercase namespace in 3-segment ref",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"System/Skill/foo"}}))
+			},
+			want: "invalid namespace",
+		},
+		{
+			name: "uppercase namespace in 2-segment ref",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"System/foo"}}))
+			},
+			want: "invalid namespace",
+		},
+		{
+			name: "invalid chars in namespace in 2-segment glob",
+			setup: func(reg *Registry) {
+				reg.set("workspace/Agent/bad", agentWithSpec(NamespaceWorkspace, "bad", AgentSpec{Skills: []string{"bad_ns/*"}}))
+			},
+			want: "invalid namespace",
+		},
+		{
+			name: "uppercase explicit plugin namespace in workspace",
+			setup: func(reg *Registry) {
+				reg.workspace = &Workspace{
+					Def: &WorkspaceDef{
+						BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+						Spec:         WorkspaceDefSpec{Plugins: []WorkspacePlugin{{Source: "github.com/acme/tools", Namespace: "MyTools"}}},
+					},
+				}
+			},
+			want: "invalid namespace",
+		},
+		{
+			name: "invalid inferred plugin namespace in workspace",
+			setup: func(reg *Registry) {
+				reg.workspace = &Workspace{
+					Def: &WorkspaceDef{
+						BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+						Spec:         WorkspaceDefSpec{Plugins: []WorkspacePlugin{{Source: "github.com/acme/bad_plugin"}}},
+					},
+				}
+			},
+			want: "invalid namespace",
+		},
+		{
+			name: "reserved plugin namespace in workspace",
+			setup: func(reg *Registry) {
+				reg.workspace = &Workspace{
+					Def: &WorkspaceDef{
+						BaseResource: BaseResource{APIVersion: APIVersion, Kind: KindWorkspace, Namespace: NamespaceWorkspace, Metadata: Metadata{Name: "ws"}},
+						Spec:         WorkspaceDefSpec{Plugins: []WorkspacePlugin{{Source: "github.com/acme/tools", Namespace: "system"}}},
+					},
+				}
+			},
+			want: "reserved namespace",
+		},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := baseRegistry()
+			tc.setup(reg)
+			err := reg.Validate()
+			if err == nil {
+				t.Fatalf("expected validation error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("expected error containing %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}

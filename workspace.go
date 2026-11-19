@@ -93,6 +93,7 @@ type WorkspaceDefSpec struct {
 	DefaultModels   *ModelDefaults    `yaml:"defaultModels,omitempty" json:"defaultModels,omitempty"`
 	ModelAliases    map[string]string `yaml:"modelAliases,omitempty" json:"modelAliases,omitempty"`
 	DefaultAgent    string            `yaml:"defaultAgent,omitempty"`
+	DefaultSandbox  string            `yaml:"defaultSandbox,omitempty" json:"defaultSandbox,omitempty"` // Sandbox used by agents, tools, and stdio MCP servers that select none
 	Plugins         []WorkspacePlugin `yaml:"plugins,omitempty"`
 	Policies        *Policies         `yaml:"policies,omitempty"`
 	Instructions    string            `yaml:"instructions,omitempty"`

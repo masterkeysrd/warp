@@ -48,6 +48,7 @@ type MCPSpec struct {
 	Annotations *ToolAnnotation           `yaml:"annotations,omitempty" json:"annotations,omitempty"` // Default safety profile for all exposed tools
 	Policies    *MCPPolicies              `yaml:"policies,omitempty" json:"policies,omitempty"`       // Controls which external MCP resources are exposed
 	Overrides   map[string]ToolAnnotation `yaml:"overrides,omitempty" json:"overrides,omitempty"`     // Tool-specific annotation overrides (key is tool name)
+	Sandbox     string                    `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`         // Sandbox in which a stdio server process runs, or "none"
 }
 
 // IsEnabled reports whether this MCP server is enabled (true when Enabled is nil or *Enabled is true).

@@ -58,6 +58,9 @@ You are a helpful assistant that specializes in financial analysis...
 | `ModelProvider` | Configuration for an LLM provider (auth expressions, base URL, available models, default models, thinking config). |
 | `Tool`          | A custom tool definition (input schema, execution binding, and safety annotations). |
 | `MCP`           | A Model Context Protocol server configuration (`stdio`, `sse`, `http`, or `streamable-http`). |
+| `SandboxProvider` | How isolated execution is provided: a driver name (`local`, `native`, `container`, `microvm`, `virtual`, or a domain-qualified custom driver), endpoint, credentials, and opaque driver config. |
+| `Sandbox`       | What an execution environment may access: provider, root filesystem, mounts, workdir, path access rules, command execution, network, environment, and limits (supports `extends`). |
+| `FileSystem`    | Data a sandbox can mount: a host directory, copy-on-write overlay, in-memory scratch space, git checkout, or a custom (remote) driver. |
 
 ## Loading & Resolving Resources
 

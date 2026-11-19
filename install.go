@@ -58,6 +58,9 @@ func InstallPlugin(workspaceDir, source, version string, imports []string) error
 	}
 
 	inferredNamespace := inferPluginNamespace(source)
+	if err := ValidateNamespace(inferredNamespace); err != nil {
+		return fmt.Errorf("plugin %q: %w", source, err)
+	}
 
 	newPlugin := WorkspacePlugin{
 		Source:    source,
@@ -380,6 +383,15 @@ func DiscoverPluginResources(source, version string) ([]DiscoveredResource, *Plu
 	}
 	for p, m := range tempReg.MCPs {
 		appendResource(p, m.Kind, m.GetName(), m.GetMetadata().Description)
+	}
+	for p, sp := range tempReg.SandboxProviders {
+		appendResource(p, sp.Kind, sp.GetName(), sp.GetMetadata().Description)
+	}
+	for p, sb := range tempReg.Sandboxes {
+		appendResource(p, sb.Kind, sb.GetName(), sb.GetMetadata().Description)
+	}
+	for p, fsr := range tempReg.FileSystems {
+		appendResource(p, fsr.Kind, fsr.GetName(), fsr.GetMetadata().Description)
 	}
 
 	sort.Slice(resources, func(i, j int) bool {

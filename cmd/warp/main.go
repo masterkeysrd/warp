@@ -265,15 +265,11 @@ func executeFmt(out io.Writer, args []string) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", filePath, err)
 		}
-		parsed, err := warp.Parse(filePath, string(data))
+		doc, err := warp.ParseDocument(filePath, string(data))
 		if err != nil {
 			return fmt.Errorf("parse %s: %w", filePath, err)
 		}
-		res, ok := parsed.Resource.(warp.Resource)
-		if !ok {
-			return fmt.Errorf("%s is not a formattable resource", filePath)
-		}
-		formatted, err := warp.Format(res)
+		formatted, err := doc.Format()
 		if err != nil {
 			return fmt.Errorf("format %s: %w", filePath, err)
 		}

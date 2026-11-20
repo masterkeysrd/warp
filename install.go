@@ -10,7 +10,7 @@ import (
 
 	"github.com/masterkeysrd/warp/internal/fetcher"
 	"github.com/masterkeysrd/warp/internal/hasher"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // InstallPlugin downloads a plugin, computes its hashes, writes them to warp.lock,

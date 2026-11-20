@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // ErrMissingFrontMatter is returned by Parse when a file does not contain
@@ -59,8 +59,10 @@ func Parse(filePath, content string) (*ParseResult, error) {
 	if isYamlFile {
 		yamlPart = content
 	} else {
-		parts := strings.SplitN(content, "---", 3)
-		if len(parts) < 3 || strings.TrimSpace(parts[0]) != "" {
+		// Delimiters must be whole "---" lines so that a "---" inside a YAML
+		// value (e.g. description: "a --- b") does not split the front-matter.
+		_, fm, body, ok := splitFrontMatter(content)
+		if !ok {
 			switch {
 			case isWorkspaceFile:
 				// WORKSPACE.md with no front-matter: infer the Workspace metadata.
@@ -96,8 +98,8 @@ func Parse(filePath, content string) (*ParseResult, error) {
 				return nil, ErrMissingFrontMatter
 			}
 		}
-		yamlPart = parts[1]
-		markdownPart = strings.TrimSpace(parts[2])
+		yamlPart = fm
+		markdownPart = strings.TrimSpace(body)
 	}
 
 	// First pass: determine the kind.
@@ -231,151 +233,16 @@ func slugifyPath(filePath string) string {
 	return strings.ToLower(name)
 }
 
-func marshalYAML(v any) ([]byte, error) {
-	var buf strings.Builder
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return []byte(buf.String()), nil
-}
-
 // Format serializes a Resource into its canonical Markdown/YAML representation.
 // It uses a triple-dash delimiter to separate the YAML front-matter from the
 // Markdown instructions for resources that support them (Agents, Skills, etc.).
+//
+// Format builds the file from scratch, so it is intended for generated
+// resources. To edit an existing file without losing comments, blank lines or
+// unknown fields, use ParseDocument and Document.Bytes instead.
 func Format(res Resource) ([]byte, error) {
-	var yamlPart []byte
-	var markdownPart string
-	useDelimiters := false
-
-	// Extract instructions and clear them from the struct before marshaling
-	// to avoid duplication in the YAML block.
-	switch r := res.(type) {
-	case *WorkspaceDef:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Context:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Agent:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Skill:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Command:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Decision:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Rule:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	case *Tool:
-		// If a Tool has instructions, use delimiters. Otherwise, just marshal as YAML.
-		if r.Spec.Instructions != "" {
-			useDelimiters = true
-			cp := r.DeepCopy()
-			markdownPart = cp.Spec.Instructions
-			cp.Spec.Instructions = ""
-			b, err := marshalYAML(cp)
-			if err != nil {
-				return nil, err
-			}
-			yamlPart = b
-		} else {
-			b, err := marshalYAML(res)
-			if err != nil {
-				return nil, err
-			}
-			yamlPart = b
-		}
-	case *Plugin:
-		useDelimiters = true
-		cp := r.DeepCopy()
-		markdownPart = cp.Spec.Instructions
-		cp.Spec.Instructions = ""
-		b, err := marshalYAML(cp)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	default:
-		// For resources without Instructions, just marshal directly.
-		b, err := marshalYAML(res)
-		if err != nil {
-			return nil, err
-		}
-		yamlPart = b
-	}
-
-	if !useDelimiters {
-		return yamlPart, nil
-	}
-
-	var buf strings.Builder
-	buf.WriteString("---\n")
-	buf.Write(yamlPart)
-	buf.WriteString("---\n")
-	if markdownPart != "" {
-		buf.WriteString(markdownPart)
-		if !strings.HasSuffix(markdownPart, "\n") {
-			buf.WriteByte('\n')
-		}
-	}
-
-	return []byte(buf.String()), nil
+	d := &Document{Resource: res, Kind: res.GetKind(), fresh: true}
+	return d.Format()
 }
 
 // RecommendedExtension returns the standard file extension (.md or .yaml)
